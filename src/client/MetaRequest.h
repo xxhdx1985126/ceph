@@ -29,6 +29,7 @@ public:
   utime_t  op_stamp;
   ceph_mds_request_head head;
   filepath path, path2;
+  string snapname2; //the same as dir_result_t::snapname2
   bufferlist data;
   int inode_drop; //the inode caps this operation will drop
   int inode_unless; //unless we have these caps already

@@ -77,6 +77,11 @@ void parse_syn_options(vector<const char*>& args)
       } else if (strcmp(args[i], "mksnapfile") == 0) {
 	syn_modes.push_back(SYNCLIENT_MODE_MKSNAPFILE);
 	syn_sargs.push_back(args[++i]); // path
+      } else if (strcmp(args[i], "snapdiff") == 0) {
+	syn_modes.push_back(SYNCLIENT_MODE_SNAPDIFF);
+	syn_sargs.push_back(args[++i]);
+	syn_sargs.push_back(args[++i]);
+	syn_sargs.push_back(args[++i]);
       } else if (strcmp(args[i],"rmfile") == 0) {
         syn_modes.push_back( SYNCLIENT_MODE_RMFILE );
       } else if (strcmp(args[i],"writefile") == 0) {
@@ -925,6 +930,18 @@ int SyntheticClient::run()
 	did_run_me();
       }
       break;
+    case SYNCLIENT_MODE_SNAPDIFF:
+      {
+        string basedir = get_sarg(0);
+	string snapname1 = get_sarg(1);
+	string snapname2 = get_sarg(2);
+        if (run_me()) {
+          dout(2) << "snapdiff: " << basedir << ", " << snapname1 << ", " << snapname2 << dendl;
+          full_walk(basedir, snapname1, snapname2);
+        }
+        did_run_me();
+      }
+      break;
 
     default:
       ceph_abort();
@@ -1587,9 +1604,16 @@ int SyntheticClient::clean_dir(string& basedir)
 }
 
 
-int SyntheticClient::full_walk(string& basedir) 
+int SyntheticClient::full_walk(string& basedir, string snapname1, string snapname2) 
 {
   if (time_to_stop()) return -1;
+
+  if (snapname1.length()) {
+    if (snapname2.length()) {
+      basedir += client->cct->_conf->client_snapdir + "/" + snapname1;
+    } else 
+      return -1;
+  }
 
   list<string> dirq;
   list<frag_info_t> statq;
@@ -1611,7 +1635,7 @@ int SyntheticClient::full_walk(string& basedir)
 
     // read dir
     list<string> contents;
-    int r = client->getdir(dir.c_str(), contents, perms);
+    int r = client->getdir(dir.c_str(), contents, perms, snapname2);
     if (r < 0) {
       dout(1) << "getdir on " << dir << " returns " << r << dendl;
       continue;

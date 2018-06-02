@@ -185,9 +185,9 @@ struct MDRequestImpl : public MutationImpl {
   vector<CDentry*> dn[2];
   CDentry *straydn;
   CInode *in[2];
-  snapid_t snapid;
   utime_t rstats_propagate_time = utime_t();
   set<ScatterLock*> locks_inflight;
+  snapid_t snapid, snapid2;
 
   CInode *tracei;
   CDentry *tracedn;

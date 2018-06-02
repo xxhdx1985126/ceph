@@ -91,6 +91,7 @@
 #define SYNCLIENT_MODE_RMSNAP 1001
 
 #define SYNCLIENT_MODE_MKSNAPFILE 1002
+#define SYNCLIENT_MODE_SNAPDIFF	1003
 
 
 
@@ -223,7 +224,7 @@ class SyntheticClient {
     return prefix + rest;
   }
 
-  int full_walk(string& fromdir);
+  int full_walk(string& fromdir, string snapname1="", string snapname2="");
   int random_walk(int n);
 
   int dump_placement(string& fn);

@@ -2159,6 +2159,8 @@ void Client::send_request(MetaRequest *request, MetaSession *session,
 	r->set_osdmap_epoch(o.get_epoch());
       });
   }
+  bufferlist& req_bl = r->get_data();
+  encode(request->snapname2, req_bl);
 
   if (request->mds == -1) {
     request->sent_stamp = ceph_clock_now();
@@ -7648,6 +7650,7 @@ int Client::_readdir_get_frag(dir_result_t *dirp)
     req->head.args.readdir.offset_hash = dirp->offset_high();
   }
   req->dirp = dirp;
+  req->snapname2 = dirp->snapname2;
   
   bufferlist dirbl;
   int res = make_request(req, dirp->perms, NULL, NULL, -1, &dirbl);
@@ -8108,7 +8111,7 @@ static int _getdir_cb(void *p, struct dirent *de, struct ceph_statx *stx, off_t 
 }
 
 int Client::getdir(const char *relpath, list<string>& contents,
-		   const UserPerm& perms)
+		   const UserPerm& perms, string snapname2)
 {
   ldout(cct, 3) << "getdir(" << relpath << ")" << dendl;
   {
@@ -8125,6 +8128,7 @@ int Client::getdir(const char *relpath, list<string>& contents,
   getdir_result gr;
   gr.contents = &contents;
   gr.num = 0;
+  d->snapname2 = snapname2;
   r = readdir_r_cb(d, _getdir_cb, (void *)&gr);
 
   closedir(d);

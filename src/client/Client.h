@@ -192,6 +192,8 @@ struct dir_result_t {
   unsigned next_offset;  // offset of next chunk (last_name's + 1)
   string last_name;      // last entry in previous chunk
 
+  string snapname2;	 // serve as the other snapname other than that in the dir's path when doing snap diff
+
   uint64_t release_count;
   uint64_t ordered_count;
   unsigned cache_index;
@@ -989,7 +991,7 @@ public:
   int readdirplus_r(dir_result_t *dirp, struct dirent *de, struct ceph_statx *stx, unsigned want, unsigned flags, Inode **out);
 
   int getdir(const char *relpath, list<string>& names,
-	     const UserPerm& perms);  // get the whole dir at once.
+	     const UserPerm& perms, string snapname2="");  // get the whole dir at once.
 
   /**
    * Returns the length of the buffer that got filled in, or -errno.

@@ -3791,6 +3791,20 @@ void Server::handle_client_readdir(MDRequestRef& mdr)
   if (!check_access(mdr, diri, MAY_READ))
     return;
 
+  bool do_snap_diff = false;
+  string snapname2;
+  auto req_data_ptr = req->get_data().cbegin();
+
+  if (!req_data_ptr.end())
+    decode(snapname2, req_data_ptr);
+
+  if (mdr->snapid && snapname2.length() > 0) {
+    SnapRealm *realm = diri->find_snaprealm();
+    mdr->snapid2 = realm->resolve_snapname(snapname2, diri->ino());
+    do_snap_diff = true;
+    dout(10) << "do_snap_diff, " << *diri << "snapname2: " << snapname2 << dendl;
+  }
+
   // which frag?
   frag_t fg = (__u32)req->head.args.readdir.frag;
   unsigned req_flags = (__u32)req->head.args.readdir.flags;
@@ -3895,8 +3909,15 @@ void Server::handle_client_readdir(MDRequestRef& mdr)
     if (dnl->is_null())
       continue;
 
-    if (dn->last < snapid || dn->first > snapid) {
+    if (!do_snap_diff && (dn->last < snapid || dn->first > snapid)) {
       dout(20) << "skipping non-overlapping snap " << *dn << dendl;
+      continue;
+    }
+
+    bool f = dnl->is_remote() ? mdcache->get_inode(dnl->get_remote_ino)->is_file() : dnl->get_inode()->is_file();
+
+    if (do_snap_diff && f && !( dn->last >= mdr->snapid2 && dn->first <= mdr->snapid2 && dn->first > snapid)) {
+      dout(20) << "skipping dentries that DON'T overlap with (snapid(" << snapid << "), snapid2(" << mdr->snapid2 << ")], for snap diff: " << *dn << dendl;
       continue;
     }
 
@@ -3951,7 +3972,7 @@ void Server::handle_client_readdir(MDRequestRef& mdr)
     unsigned start_len = dnbl.length();
 
     // dentry
-    dout(12) << "including    dn " << *dn << dendl;
+    dout(12) << "including    dn " << *dn << ", do_snap_diff " << do_snap_diff << ", " << snapid << ", " << mdr->snapid2 << dendl;
     encode(dn->get_name(), dnbl);
     mds->locker->issue_client_lease(dn, client, dnbl, now, mdr->session);
 
