@@ -2256,7 +2256,7 @@ void MDCache::predirty_journal_parents(MutationRef mut, EMetaBlob *blob,
     }
     if (stop) {
       dout(10) << "predirty_journal_parents stop.  marking nestlock on " << *pin << dendl;
-      mds->locker->mark_updated_scatterlock(&pin->nestlock);
+      mds->locker->mark_updated_scatterlock(&pin->nestlock, in->nestlock.get_propagate_times());
       mut->ls->dirty_dirfrag_nest.push_back(&pin->item_dirty_dirfrag_nest);
       mut->add_updated_lock(&pin->nestlock);
       if (do_parent_mtime || linkunlink) {
@@ -12260,6 +12260,26 @@ void C_MDS_RetryRequest::finish(int r)
   cache->dispatch_request(mdr);
 }
 
+C_MDS_RetryRequests_WithLock::C_MDS_RetryRequests_WithLock(MDCache* c, MDRequestRef r, ScatterLock* l)
+  : MDSInternalContext(c->mds), cache(c), lock(l)
+{
+  mdrs.insert(r);
+}
+
+C_MDS_RetryRequests_WithLock::C_MDS_RetryRequests_WithLock(MDCache* c, set<MDRequestRef> s, ScatterLock* l)
+  : MDSInternalContext(c->mds), lock(l)
+{
+  mdrs.insert(s.begin(), s.end());
+}
+
+void C_MDS_RetryRequests_WithLock::finish(int r)
+{
+  for (auto mdr : mdrs) {
+    mdr->retry++;
+    mdr->locks_inflight.erase(lock);
+    cache->dispatch_request(mdr);
+  }
+}
 
 class C_MDS_EnqueueScrub : public Context
 {

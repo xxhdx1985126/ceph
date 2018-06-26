@@ -51,6 +51,8 @@ class MMDSSlaveRequest : public Message {
 
   static const int OP_ABORT =  20;  // used for recovery only
   //static const int OP_COMMIT = 21;  // used for recovery only
+  static const int OP_PROPAGATERSTATS = 21;
+  static const int OP_PROPAGATERSTATSACK = -21;
 
 
   const static char *get_opname(int o) {
@@ -85,6 +87,8 @@ class MMDSSlaveRequest : public Message {
 
     case OP_ABORT: return "abort";
       //case OP_COMMIT: return "commit";
+    case OP_PROPAGATERSTATS: return "propagate_rstats";
+    case OP_PROPAGATERSTATSACK: return "propagate_rstats_ack";
 
     default: ceph_abort(); return 0;
     }

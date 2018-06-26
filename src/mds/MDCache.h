@@ -1264,4 +1264,13 @@ class C_MDS_RetryRequest : public MDSInternalContext {
   void finish(int r) override;
 };
 
+class C_MDS_RetryRequests_WithLock : public MDSInternalContext {
+  MDCache* cache;
+  set<MDRequestRef> mdrs;
+  ScatterLock* lock;
+ public:
+  C_MDS_RetryRequests_WithLock(MDCache* c, MDRequestRef r, ScatterLock* lock);
+  C_MDS_RetryRequests_WithLock(MDCache* c, set<MDRequestRef> s, ScatterLock* lock);
+  void finish(int r) override;
+};
 #endif

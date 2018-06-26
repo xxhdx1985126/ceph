@@ -23,6 +23,7 @@ class ScatterLock : public SimpleLock {
   struct more_bits_t {
     xlist<ScatterLock*>::item item_updated;
     utime_t update_stamp;
+    set<utime_t> propagate_times;
 
     explicit more_bits_t(ScatterLock *lock) :
       item_updated(lock)
@@ -92,6 +93,18 @@ public:
   }
 
   void set_update_stamp(utime_t t) { more()->update_stamp = t; }
+
+  set<utime_t>* get_propagate_times() {
+    return _more ? &_more->propagate_times : NULL;
+  }
+
+  void add_propagate_time(utime_t t) { more()->propagate_times.insert(t); }
+
+  void add_propagate_times(set<utime_t> ts) { more()->propagate_times.insert(ts.begin(), ts.end()); }
+
+  void clear_propagate_time(utime_t t) { more()->propagate_times.erase(t); }
+
+  void clear_propagate_times() { more()->propagate_times.clear(); }
 
   void set_scatter_wanted() {
     state_flags |= SCATTER_WANTED;

@@ -106,6 +106,18 @@ public:
   }
 };
 
+class C_MDS_TryFindInode : public ServerContext {
+  MDRequestRef mdr;
+public:
+  C_MDS_TryFindInode(Server *s, MDRequestRef& r) : ServerContext(s), mdr(r) {}
+  void finish(int r) override {
+    if (r == -ESTALE) // :( find_ino_peers failed
+      server->respond_to_request(mdr, r);
+    else
+      server->dispatch_client_request(mdr);
+  }
+};
+
 void Server::create_logger()
 {
   PerfCountersBuilder plb(g_ceph_context, "mds_server", l_mdss_first, l_mdss_last);
@@ -2135,6 +2147,13 @@ void Server::handle_slave_request_reply(MMDSSlaveRequest *m)
     handle_slave_rename_notify_ack(mdr, m);
     break;
 
+  case MMDSSlaveRequest::OP_PROPAGATERSTATSACK:
+    mdr->retry++;
+    mdr->more()->waiting_on_slave.erase(from);
+    if (mdr->more()->waiting_on_slave.empty())
+      mdcache->dispatch_request(mdr);
+    break;
+
   default:
     ceph_abort();
   }
@@ -2261,6 +2280,34 @@ void Server::dispatch_slave_request(MDRequestRef& mdr)
       mdr->more()->inode_import.claim(mdr->slave_request->inode_export);
     // finish off request.
     mdcache->request_finish(mdr);
+    break;
+
+  case MMDSSlaveRequest::OP_PROPAGATERSTATS:
+    {
+      vector<CDentry*> dns;
+      CInode* cur = NULL;
+      int r = mdcache->path_traverse(mdr, NULL, NULL, mdr->slave_request->srcdnpath, &dns, &cur, MDS_TRAVERSE_FORWARD);
+      if (r > 0)
+  	return;
+      if (r < 0) {
+  	if (r == -ESTALE) {
+  	  dout(10) << "FAIL on ESTALE but attempting recovery" << dendl;
+  	  mdcache->find_ino_peers(mdr->slave_request->srcdnpath.get_ino(), new C_MDS_TryFindInode(this, mdr));
+  	  return;
+  	}
+  	MMDSSlaveRequest* reply = new MMDSSlaveRequest(mdr->reqid, mdr->attempt, MMDSSlaveRequest::OP_PROPAGATERSTATSACK);
+  	derr << "Failed to find the target directory, reply to auth as successfull" << dendl;
+  	mds->send_message_mds(reply, mdr->slave_to_mds);
+  	return;
+      }
+      
+      Locker* locker = mds->locker;
+      
+      if (locker->propagate_rstats(mdr, cur)) {
+  	MMDSSlaveRequest* reply = new MMDSSlaveRequest(mdr->reqid, mdr->attempt, MMDSSlaveRequest::OP_PROPAGATERSTATSACK);
+  	mds->send_message_mds(reply, mdr->slave_to_mds);
+      }
+    }
     break;
 
   default: 
@@ -2756,18 +2803,6 @@ void Server::apply_allocated_inos(MDRequestRef& mdr, Session *session)
     mds->sessionmap.mark_dirty(session);
   }
 }
-
-class C_MDS_TryFindInode : public ServerContext {
-  MDRequestRef mdr;
-public:
-  C_MDS_TryFindInode(Server *s, MDRequestRef& r) : ServerContext(s), mdr(r) {}
-  void finish(int r) override {
-    if (r == -ESTALE) // :( find_ino_peers failed
-      server->respond_to_request(mdr, r);
-    else
-      server->dispatch_client_request(mdr);
-  }
-};
 
 CDir *Server::traverse_to_auth_dir(MDRequestRef& mdr, vector<CDentry*> &trace, filepath refpath)
 {
@@ -4875,6 +4910,34 @@ void Server::handle_set_vxattr(MDRequestRef& mdr, CInode *cur,
     auto &pi = cur->project_inode();
     cur->set_export_pin(rank);
     pip = &pi.inode;
+  } else if (name.find("ceph.rstats.propagate") == 0) {
+    if (!cur->is_dir()) {
+      respond_to_request(mdr, -EINVAL);
+      return;
+    }
+
+    if (!mds->locker->acquire_locks(mdr, rdlocks, wrlocks, xlocks))
+      return;
+
+    if (cur->is_replicated() && !mdr->retry) {
+      for (auto &p : cur->get_replicas()) {
+  	MMDSSlaveRequest* req = new MMDSSlaveRequest(mdr->reqid, mdr->attempt,
+  	    MMDSSlaveRequest::OP_PROPAGATERSTATS);
+  	cur->make_path(req->srcdnpath);
+	req->op_stamp = mdr->get_op_stamp();
+	mds->send_message_mds(req, p.first);
+	mdr->more()->waiting_on_slave.insert(p.first);
+      }
+      return;
+    }
+    assert(mdr->more()->waiting_on_slave.empty());
+
+    Locker* locker = mds->locker;
+
+    if (locker->propagate_rstats(mdr, cur)) {
+      respond_to_request(mdr, 0);
+    }
+    return;
   } else {
     dout(10) << " unknown vxattr " << name << dendl;
     respond_to_request(mdr, -EINVAL);

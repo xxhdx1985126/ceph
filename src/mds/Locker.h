@@ -54,6 +54,8 @@ private:
   Locker(MDSRank *m, MDCache *c);
 
   SimpleLock *get_lock(int lock_type, MDSCacheObjectInfo &info);
+
+  bool propagate_rstats(MDRequestRef mdr, CInode* to);
   
   void dispatch(Message *m);
   void handle_lock(MLock *m);
@@ -138,9 +140,9 @@ protected:
   void handle_simple_lock(SimpleLock *lock, MLock *m);
 
 public:
-  bool simple_sync(SimpleLock *lock, bool *need_issue=0);
+  bool simple_sync(SimpleLock *lock, bool *need_issue=0, MDSInternalContextBase* c = NULL);
 protected:
-  void simple_lock(SimpleLock *lock, bool *need_issue=0);
+  bool simple_lock(SimpleLock *lock, bool *need_issue=0, MDSInternalContextBase* c = NULL);
   void simple_excl(SimpleLock *lock, bool *need_issue=0);
   void simple_xlock(SimpleLock *lock);
 
@@ -150,7 +152,7 @@ public:
   void scatter_eval(ScatterLock *lock, bool *need_issue);        // public for MDCache::adjust_subtree_auth()
 
   void scatter_tick();
-  void scatter_nudge(ScatterLock *lock, MDSInternalContextBase *c, bool forcelockchange=false);
+  bool scatter_nudge(ScatterLock *lock, MDSInternalContextBase *c, bool forcelockchange=false);
 
 protected:
   void handle_scatter_lock(ScatterLock *lock, MLock *m);
@@ -163,13 +165,18 @@ protected:
   void scatter_writebehind_finish(ScatterLock *lock, MutationRef& mut);
 
   xlist<ScatterLock*> updated_scatterlocks;
+  Mutex scatter_tick_mutex;
+  set<MDRequestRef> mdrs_inflight;
+
 public:
-  void mark_updated_scatterlock(ScatterLock *lock);
+  void mark_updated_scatterlock(ScatterLock *lock, set<utime_t>* propagate_times = NULL);
 
 
   void handle_reqrdlock(SimpleLock *lock, MLock *m);
 
-
+  xlist<ScatterLock*>& get_updated_scatterlocks() {
+    return updated_scatterlocks;
+  }
 
   // caps
 
@@ -227,7 +234,7 @@ public:
   void file_eval(ScatterLock *lock, bool *need_issue);
 protected:
   void handle_file_lock(ScatterLock *lock, MLock *m);
-  void scatter_mix(ScatterLock *lock, bool *need_issue=0);
+  bool scatter_mix(ScatterLock *lock, bool *need_issue=0, MDSInternalContextBase* c = NULL);
   void file_excl(ScatterLock *lock, bool *need_issue=0);
   void file_xsyn(SimpleLock *lock, bool *need_issue=0);
 
@@ -236,6 +243,7 @@ public:
 
 private:
   xlist<ScatterLock*> updated_filelocks;
+
 public:
   void mark_updated_Filelock(ScatterLock *lock);
 
