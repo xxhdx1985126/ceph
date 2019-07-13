@@ -839,21 +839,11 @@ return 0;
 
 void RGWListBucket_ObjStore_S3::send_common_versioned_response()
 {
-  
   if (!s->bucket_tenant.empty()) {
     s->formatter->dump_string("Tenant", s->bucket_tenant);
   }
   s->formatter->dump_string("Name", s->bucket_name);
   s->formatter->dump_string("Prefix", prefix);
-  s->formatter->dump_string("KeyMarker", marker.name);
-  s->formatter->dump_string("VersionIdMarker", marker.instance);
-  if (is_truncated && !next_marker.empty()) {
-    s->formatter->dump_string("NextKeyMarker", next_marker.name);
-    if (next_marker.instance.empty())
-      s->formatter->dump_string("NextVersionIdMarker", "null");  
-    else
-      s->formatter->dump_string("NextVersionIdMarker", next_marker.instance);
-  }
   s->formatter->dump_int("MaxKeys", max);
   if (!delimiter.empty()) {
     s->formatter->dump_string("Delimiter", delimiter);
@@ -889,7 +879,6 @@ void RGWListBucket_ObjStore_S3::send_versioned_response()
       s->formatter->dump_string("NextVersionIdMarker", next_marker.instance);
     }
   }
-
   bool encode_key = false;
   if (strcasecmp(encoding_type.c_str(), "url") == 0) {
     s->formatter->dump_string("EncodingType", "url");
@@ -947,10 +936,9 @@ void RGWListBucket_ObjStore_S3::send_versioned_response()
       }
       s->formatter->close_section();
     }
-
-  s->formatter->close_section();
+    s->formatter->close_section();
+  }
   rgw_flush_formatter_and_reset(s, s->formatter);
-}
 }
 
 
@@ -1920,7 +1908,7 @@ static inline int get_obj_attrs(RGWRados *store, struct req_state *s, rgw_obj& o
 
   read_op.params.attrs = &attrs;
 
-  return read_op.prepare();
+  return read_op.prepare(s->yield);
 }
 
 static inline void set_attr(map<string, bufferlist>& attrs, const char* key, const std::string& value)
@@ -2592,11 +2580,11 @@ int RGWCopyObj_ObjStore_S3::get_params()
   }
 
   copy_source = s->info.env->get("HTTP_X_AMZ_COPY_SOURCE");
-  md_directive = s->info.env->get("HTTP_X_AMZ_METADATA_DIRECTIVE");
-  if (md_directive) {
-    if (strcasecmp(md_directive, "COPY") == 0) {
+  auto tmp_md_d = s->info.env->get("HTTP_X_AMZ_METADATA_DIRECTIVE");
+  if (tmp_md_d) {
+    if (strcasecmp(tmp_md_d, "COPY") == 0) {
       attrs_mod = RGWRados::ATTRSMOD_NONE;
-    } else if (strcasecmp(md_directive, "REPLACE") == 0) {
+    } else if (strcasecmp(tmp_md_d, "REPLACE") == 0) {
       attrs_mod = RGWRados::ATTRSMOD_REPLACE;
     } else if (!source_zone.empty()) {
       attrs_mod = RGWRados::ATTRSMOD_NONE; // default for intra-zone_group copy
@@ -2605,6 +2593,7 @@ int RGWCopyObj_ObjStore_S3::get_params()
       ldpp_dout(this, 0) << s->err.message << dendl;
       return -EINVAL;
     }
+    md_directive = tmp_md_d;
   }
 
   if (source_zone.empty() &&
@@ -4131,7 +4120,7 @@ bool RGWHandler_REST_S3Website::web_dir() const {
   obj_ctx.set_prefetch_data(obj);
 
   RGWObjState* state = nullptr;
-  if (store->get_obj_state(&obj_ctx, s->bucket_info, obj, &state, false) < 0) {
+  if (store->get_obj_state(&obj_ctx, s->bucket_info, obj, &state, false, s->yield) < 0) {
     return false;
   }
   if (! state->exists) {

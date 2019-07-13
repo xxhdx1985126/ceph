@@ -61,6 +61,7 @@ namespace ceph {
 // ============================================================================
 
 #include "common/condition_variable_debug.h"
+#include "common/containers.h"
 #include "common/mutex_debug.h"
 #include "common/shared_mutex_debug.h"
 
@@ -135,3 +136,21 @@ namespace ceph {
 #endif	// CEPH_DEBUG_MUTEX
 
 #endif	// WITH_SEASTAR
+
+namespace ceph {
+
+template <class LockT,
+          class LockFactoryT>
+ceph::containers::tiny_vector<LockT> make_lock_container(
+  const std::size_t num_instances,
+  LockFactoryT&& lock_factory)
+{
+  return {
+    num_instances, [&](const std::size_t i, auto emplacer) {
+      // this will be called `num_instances` times
+      new (emplacer.data()) LockT {lock_factory(i)};
+    }
+  };
+}
+} // namespace ceph
+
