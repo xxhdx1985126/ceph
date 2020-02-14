@@ -7,11 +7,11 @@ tasks:
 - cbt:
     benchmarks:
       radosbench:
-        concurrent_ops: 16
-        concurrent_procs: 2
+        concurrent_ops: 64
+        concurrent_procs: 8
         op_size: [4096]
         pool_profile: 'replicated'
-        write_time: 3
+        write_time: 60
         write_only: true
         acceptable:
           bandwidth: '(or (greater) (near 0.05))'
