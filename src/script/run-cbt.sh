@@ -103,7 +103,7 @@ if ! $use_existing; then
            --without-dashboard --memstore \
            -o "memstore_device_bytes=34359738368" \
            --crimson --nodaemon --redirect-output \
-           --osd-args "--memory 4G"
+           --osd-args "--memory 32G"
     fi
     cd -
 fi
