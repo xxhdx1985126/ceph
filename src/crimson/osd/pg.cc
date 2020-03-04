@@ -19,9 +19,11 @@
 #include "messages/MOSDPGInfo.h"
 #include "messages/MOSDPGLog.h"
 #include "messages/MOSDPGNotify.h"
+#include "messages/MOSDPGPush.h"
 #include "messages/MOSDPGQuery.h"
 #include "messages/MOSDRepOp.h"
 #include "messages/MOSDRepOpReply.h"
+#include "messages/MOSDPGRecoveryDeleteReply.h"
 
 #include "osd/OSDMap.h"
 
@@ -97,7 +99,8 @@ PG::PG(
 	pool,
 	coll_ref,
 	shard_services,
-	profile)),
+	profile,
+	*this)),
     peering_state(
       shard_services.get_cct(),
       pg_shard,
@@ -1113,10 +1116,170 @@ size_t PG::start_backfill_ops(
 }
 
 std::optional<crimson::osd::blocking_future<>> PG::recover_missing(
-      const hobject_t &hoid, eversion_t need)
+  const hobject_t &soid, eversion_t need)
 {
-    return std::nullopt;
+  if (peering_state.get_missing_loc().is_deleted(soid)) {
+    return backend->get_recovering(soid).make_blocking_future(backend->recover_delete(soid, need));
+  } else {
+    return backend->get_recovering(soid).make_blocking_future(
+	backend->recover_object(soid, need).handle_exception(
+	  [=, soid = std::move(soid)] (auto e) {
+	  on_failed_recover({ get_pg_whoami() }, soid, need);
+	  return seastar::make_ready_future<>();
+	})
+      );
+  }
 }
 
+size_t PG::prep_object_replica_deletes(
+  const hobject_t& soid,
+  eversion_t need,
+  std::vector<crimson::osd::blocking_future<>> *in_progress)
+{
+  in_progress->push_back(
+      backend->get_recovering(soid).make_blocking_future(
+	backend->push_delete(soid, need).then([=] {
+	  object_stat_sum_t stat_diff;
+	  stat_diff.num_objects_recovered = 1;
+	  on_global_recover(soid, stat_diff, true);
+	  return seastar::make_ready_future<>();
+	})
+      )
+    );
+  return 1;
+}
+
+void PG::on_local_recover(
+  const hobject_t& soid,
+  const ObjectRecoveryInfo& _recovery_info,
+  bool is_delete,
+  ceph::os::Transaction& t)
+{
+  peering_state.recover_got(soid,
+      _recovery_info.version, is_delete, t);
+
+  if (is_primary()) {
+    if (!is_delete) {
+      auto& obc = backend->get_recovering(soid).obc; //TODO: move to pg backend?
+      obc->obs.exists = true;
+      obc->obs.oi = _recovery_info.oi;
+      assert(obc->get_recovery_read());
+    }
+    if (!is_unreadable_object(soid)) {
+      backend->get_recovering(soid).set_readable();
+    }
+  }
+}
+
+void PG::on_global_recover (
+  const hobject_t& soid,
+  const object_stat_sum_t& stat_diff,
+  bool is_delete)
+{
+  peering_state.object_recovered(soid, stat_diff);
+  auto& wfor = backend->get_recovering(soid);
+  if (!is_delete)
+    wfor.obc->drop_recovery_read();
+  wfor.set_recovered();
+  backend->remove_recovering(soid);
+}
+
+void PG::on_peer_recover(
+  pg_shard_t peer,
+  const hobject_t &oid,
+  const ObjectRecoveryInfo &recovery_info)
+{
+  peering_state.on_peer_recover(peer, oid, recovery_info.version);
+}
+
+void PG::on_failed_recover(
+  const set<pg_shard_t>& from,
+  const hobject_t& soid,
+  const eversion_t& v)
+{
+  for (auto i : from)
+    if (i != pg_whoami)
+      peering_state.force_object_missing(i, soid, v);
+}
+
+void PG::_committed_pushed_object(epoch_t epoch,
+    eversion_t last_complete) {
+  if (!has_reset_since(epoch)) {
+    peering_state.recovery_committed_to(last_complete);
+  } else {
+    logger().debug("{} pg has changed, not touching last_complete_ondisk",
+		   __func__);
+  }
+}
+
+seastar::future<> PG::handle_pull(
+  MOSDPGPull& m)
+{
+  return backend->handle_pull(m);
+}
+
+seastar::future<> PG::handle_pull_response(
+  const MOSDPGPush& m)
+{
+  const PushOp& pop = m.pushes[0]; //TODO: only one push per message for now.
+  if (pop.version == eversion_t()) {
+    // replica doesn't have it!
+    on_failed_recover({ m.from }, pop.soid,
+	backend->get_recovering(pop.soid).pi.recovery_info.version);
+    return seastar::make_exception_future<>(
+	std::runtime_error(fmt::format("Error on pushing side {} when pulling obj {}",
+	    m.from, pop.soid)));
+  }
+  return backend->handle_pull_response(m);
+}
+
+seastar::future<> PG::handle_push(
+  const MOSDPGPush& m)
+{
+  if (is_primary())
+    return handle_pull_response(m);
+  else
+    return backend->handle_push(m);
+}
+
+seastar::future<> PG::handle_push_reply(
+  const MOSDPGPushReply& m)
+{
+  return backend->handle_push_reply(m);
+}
+
+seastar::future<> PG::handle_recovery_delete(
+  const MOSDPGRecoveryDelete& m)
+{
+  return backend->handle_recovery_delete(m);
+}
+
+seastar::future<> PG::handle_recovery_delete_reply(
+  const MOSDPGRecoveryDeleteReply& m)
+{
+  auto& p = m.objects.front();
+  hobject_t soid = p.first;
+  ObjectRecoveryInfo recovery_info;
+  recovery_info.version = p.second;
+  on_peer_recover(m.from, soid, recovery_info);
+  backend->get_recovering(soid).set_pushed(m.from);
+}
+
+size_t PG::prep_object_replica_pushes(
+  const hobject_t& soid,
+  eversion_t need,
+  std::vector<crimson::osd::blocking_future<>> *in_progress)
+{
+  in_progress->push_back(
+      backend->get_recovering(soid).make_blocking_future(
+	backend->recover_object(soid, need).handle_exception(
+	  [=, soid = std::move(soid)] (auto e) {
+	  on_failed_recover({ get_pg_whoami() }, soid, need);
+	  return seastar::make_ready_future<>();
+	})
+      )
+    );
+  return 1;
+}
 
 }

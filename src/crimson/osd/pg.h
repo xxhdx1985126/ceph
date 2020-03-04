@@ -527,6 +527,12 @@ public:
   seastar::future<> handle_rep_op(Ref<MOSDRepOp> m);
   void handle_rep_op_reply(crimson::net::Connection* conn,
 			   const MOSDRepOpReply& m);
+  seastar::future<> handle_pull(MOSDPGPull& m);
+  seastar::future<> handle_push(const MOSDPGPush& m);
+  seastar::future<> handle_push_reply(const MOSDPGPushReply& m);
+  seastar::future<> handle_recovery_delete(const MOSDPGRecoveryDelete& m);
+  seastar::future<> handle_recovery_delete_reply(
+      const MOSDPGRecoveryDeleteReply& m);
 
   void print(std::ostream& os) const;
 
@@ -548,7 +554,7 @@ private:
   seastar::future<> submit_transaction(ObjectContextRef&& obc,
 				       ceph::os::Transaction&& txn,
 				       const osd_op_params_t& oop);
-
+  seastar::future<> handle_pull_response(const MOSDPGPush& m);
 private:
   OSDMapGate osdmap_gate;
   ShardServices &shard_services;
@@ -571,6 +577,64 @@ public:
   bool has_reset_since(epoch_t epoch) const {
     return peering_state.pg_has_reset_since(epoch);
   }
+
+  const pg_missing_tracker_t& get_local_missing() const {
+    return peering_state.get_pg_log().get_missing();
+  }
+  epoch_t get_last_peering_reset() const {
+    return peering_state.get_last_peering_reset();
+  }
+  const set<pg_shard_t> &get_acting_recovery_backfill() const {
+    return peering_state.get_acting_recovery_backfill();
+  }
+  void begin_peer_recover(pg_shard_t peer, const hobject_t oid) {
+    peering_state.begin_peer_recover(peer, oid);
+  }
+  uint64_t min_peer_features() const {
+    return peering_state.get_min_peer_features();
+  }
+  const map<hobject_t, set<pg_shard_t>>&
+  get_missing_loc_shards() const {
+    return peering_state.get_missing_loc().get_missing_locs();
+  }
+  const map<pg_shard_t, pg_missing_t> &get_shard_missing() const {
+    return peering_state.get_peer_missing();
+  }
+  const pg_missing_const_i* get_shard_missing(pg_shard_t shard) const {
+    if (shard == pg_whoami)
+      return &get_local_missing();
+    else {
+      auto it = peering_state.get_peer_missing().find(shard);
+      if (it == peering_state.get_peer_missing().end())
+	return nullptr;
+      else
+	return &it->second;
+    }
+  }
+  void _committed_pushed_object(epoch_t epoch,
+				eversion_t last_complete);
+  int get_recovery_op_priority() const {
+    int64_t pri = 0;
+    get_pool().info.opts.get(pool_opts_t::RECOVERY_OP_PRIORITY, &pri);
+    return  pri > 0 ? pri : crimson::common::local_conf()->osd_recovery_op_priority;
+  }
+  void on_local_recover(
+    const hobject_t& soid,
+    const ObjectRecoveryInfo& _recovery_info,
+    bool is_delete,
+    ceph::os::Transaction& t);
+  void on_global_recover (
+    const hobject_t& soid,
+    const object_stat_sum_t& stat_diff,
+    bool is_delete);
+  void on_failed_recover(
+    const set<pg_shard_t>& from,
+    const hobject_t& soid,
+    const eversion_t& v);
+  void on_peer_recover(
+    pg_shard_t peer,
+    const hobject_t &oid,
+    const ObjectRecoveryInfo &recovery_info);
 
 private:
   class WaitForActiveBlocker : public BlockerT<WaitForActiveBlocker> {
@@ -627,9 +691,20 @@ private:
   size_t prep_object_replica_pushes(
     const hobject_t& soid,
     eversion_t need,
-    std::vector<crimson::osd::blocking_future<>> *in_progress) {
-    return 0;
+    std::vector<crimson::osd::blocking_future<>> *in_progress);
+
+  bool is_missing_object(const hobject_t& soid) const {
+    return peering_state.get_pg_log().get_missing().get_items().count(soid);
   }
+  bool is_unreadable_object(const hobject_t &oid) const {
+    return is_missing_object(oid) ||
+      !peering_state.get_missing_loc().readable_with_acting(
+	oid, get_actingset());
+  }
+  const set<pg_shard_t> &get_actingset() const {
+    return peering_state.get_actingset();
+  }
+};
 
 std::ostream& operator<<(std::ostream&, const PG& pg);
 
