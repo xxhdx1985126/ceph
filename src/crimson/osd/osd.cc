@@ -20,6 +20,11 @@
 #include "messages/MOSDMap.h"
 #include "messages/MOSDOp.h"
 #include "messages/MOSDPGLog.h"
+#include "messages/MOSDPGPull.h"
+#include "messages/MOSDPGPush.h"
+#include "messages/MOSDPGPushReply.h"
+#include "messages/MOSDPGRecoveryDelete.h"
+#include "messages/MOSDPGRecoveryDeleteReply.h"
 #include "messages/MOSDRepOpReply.h"
 #include "messages/MPGStats.h"
 
@@ -31,7 +36,6 @@
 #include "crimson/mon/MonClient.h"
 #include "crimson/net/Connection.h"
 #include "crimson/net/Messenger.h"
-#include "crimson/os/cyanstore/cyan_object.h"
 #include "crimson/os/futurized_collection.h"
 #include "crimson/os/futurized_store.h"
 #include "crimson/osd/heartbeat.h"
@@ -43,6 +47,7 @@
 #include "crimson/osd/osd_operations/compound_peering_request.h"
 #include "crimson/osd/osd_operations/peering_event.h"
 #include "crimson/osd/osd_operations/pg_advance_map.h"
+#include "crimson/osd/osd_operations/recovery_subrequest.h"
 #include "crimson/osd/osd_operations/replicated_request.h"
 
 namespace {
@@ -574,6 +579,16 @@ seastar::future<> OSD::ms_dispatch(crimson::net::Connection* conn, MessageRef m)
       conn->get_shared(),
       m);
     return seastar::now();
+  case MSG_OSD_PG_PULL:
+    [[fallthrough]];
+  case MSG_OSD_PG_PUSH:
+    [[fallthrough]];
+  case MSG_OSD_PG_PUSH_REPLY:
+    [[fallthrough]];
+  case MSG_OSD_PG_RECOVERY_DELETE:
+    [[fallthrough]];
+  case MSG_OSD_PG_RECOVERY_DELETE_REPLY:
+    return handle_recovery_subreq(conn, boost::static_pointer_cast<MOSDFastDispatchOp>(m));
   case MSG_OSD_PG_LEASE:
     [[fallthrough]];
   case MSG_OSD_PG_LEASE_ACK:
@@ -981,6 +996,16 @@ seastar::future<> OSD::handle_rep_op_reply(crimson::net::Connection* conn,
   } else {
     logger().warn("stale reply: {}", *m);
   }
+  return seastar::now();
+}
+
+seastar::future<> OSD::handle_recovery_subreq(crimson::net::Connection* conn,
+				   Ref<MOSDFastDispatchOp> m)
+{
+  shard_services.start_operation<RecoverySubRequest>(
+    *this,
+    conn->get_shared(),
+    std::move(m));
   return seastar::now();
 }
 
