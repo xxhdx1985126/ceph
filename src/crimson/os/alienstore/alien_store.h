@@ -21,6 +21,22 @@ class Transaction;
 namespace crimson::os {
 class AlienStore final : public FuturizedStore {
 public:
+  class AlienOmapIterator : public OmapIterator {
+    ObjectMap::ObjectMapIterator oiter;
+    AlienStore* astore;
+  public:
+    AlienOmapIterator(ObjectMap::ObjectMapIterator& it,
+	AlienStore* astore) : oiter(it), astore(astore) {}
+    seastar::future<int> seek_to_first() final;
+    seastar::future<int> upper_bound(const std::string& after) final;
+    seastar::future<int> lower_bound(const std::string& to) final;
+    bool valid() final;
+    seastar::future<int> next() final;
+    std::string key() final;
+    seastar::future<std::string> tail_key() final;
+    ceph::buffer::list value() final;
+    int status() final;
+  };
   mutable std::unique_ptr<crimson::thread::ThreadPool> tp;
   AlienStore(const std::string& path, const ConfigValues& values);
   ~AlienStore() final;
@@ -74,6 +90,20 @@ public:
   uuid_d get_fsid() const final;
   seastar::future<store_statfs_t> stat() const final;
   unsigned get_max_attr_name_length() const final;
+  seastar::future<struct stat> stat(
+    CollectionRef,
+    const ghobject_t&) final;
+  seastar::future<ceph::bufferlist> omap_get_header(
+    CollectionRef,
+    const ghobject_t&) final;
+  seastar::future<std::map<uint64_t, uint64_t>> fiemap(
+    CollectionRef,
+    const ghobject_t&,
+    uint64_t off,
+    uint64_t len) final;
+  seastar::future<FuturizedStore::OmapIterator> get_omap_iterator(
+    CollectionRef ch,
+    const ghobject_t& oid) final;
 
 private:
   constexpr static unsigned MAX_KEYS_PER_OMAP_GET_CALL = 32;

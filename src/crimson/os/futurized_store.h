@@ -26,6 +26,37 @@ class FuturizedCollection;
 class FuturizedStore {
 
 public:
+  class OmapIterator {
+  public:
+    virtual seastar::future<int> seek_to_first() {
+      return seastar::make_ready_future<int>(0);
+    };
+    virtual seastar::future<int> upper_bound(const std::string &after) {
+      return seastar::make_ready_future<int>(0);
+    };
+    virtual seastar::future<int> lower_bound(const std::string &to) {
+      return seastar::make_ready_future<int>(0);
+    };
+    virtual bool valid() {
+      return false;
+    };
+    virtual seastar::future<int> next() {
+      return seastar::make_ready_future<int>(0);
+    };
+    virtual std::string key() {
+      return "";
+    }
+    virtual seastar::future<std::string> tail_key() {
+      return seastar::make_ready_future<std::string>();
+    };
+    virtual ceph::buffer::list value() {
+      return ceph::buffer::list();
+    }
+    virtual int status() {
+      return 0;
+    }
+  };
+
   static std::unique_ptr<FuturizedStore> create(const std::string& type,
                                                 const std::string& data,
                                                 const ConfigValues& values);
@@ -65,9 +96,12 @@ public:
     std::string_view name) const = 0;
 
   using get_attrs_ertr = crimson::errorator<
-    crimson::ct_error::enoent>;
+        crimson::ct_error::enoent>;
   using attrs_t = std::map<std::string, ceph::bufferptr, std::less<>>;
   virtual get_attrs_ertr::future<attrs_t> get_attrs(
+    CollectionRef c,
+    const ghobject_t& oid) = 0;
+  virtual seastar::future<struct stat> stat(
     CollectionRef c,
     const ghobject_t& oid) = 0;
 
@@ -88,12 +122,24 @@ public:
     const std::optional<std::string> &start ///< [in] start, empty for begin
     ) = 0; ///< @return <done, values> values.empty() iff done
 
+  virtual seastar::future<bufferlist> omap_get_header(
+    CollectionRef c,
+    const ghobject_t& oid) = 0;
+
   virtual seastar::future<CollectionRef> create_new_collection(const coll_t& cid) = 0;
   virtual seastar::future<CollectionRef> open_collection(const coll_t& cid) = 0;
   virtual seastar::future<std::vector<coll_t>> list_collections() = 0;
 
   virtual seastar::future<> do_transaction(CollectionRef ch,
 					   ceph::os::Transaction&& txn) = 0;
+  virtual seastar::future<OmapIterator> get_omap_iterator(
+    CollectionRef ch,
+    const ghobject_t& oid) = 0;
+  virtual seastar::future<std::map<uint64_t, uint64_t>> fiemap(
+    CollectionRef ch,
+    const ghobject_t& oid,
+    uint64_t off,
+    uint64_t len) = 0;
 
   virtual seastar::future<> write_meta(const std::string& key,
 				       const std::string& value) = 0;
