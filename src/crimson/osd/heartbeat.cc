@@ -54,9 +54,9 @@ seastar::future<> Heartbeat::start(entity_addrvec_t front_addrs,
 
   using crimson::net::SocketPolicy;
   front_msgr->set_policy(entity_name_t::TYPE_OSD,
-                         SocketPolicy::lossy_client(0));
+                         SocketPolicy::lossless_peer(0));
   back_msgr->set_policy(entity_name_t::TYPE_OSD,
-                        SocketPolicy::lossy_client(0));
+                        SocketPolicy::lossless_peer(0));
   auto chained_dispatchers = seastar::make_lw_shared<ChainedDispatchers>();
   chained_dispatchers->push_back(*this);
   return seastar::when_all_succeed(start_messenger(*front_msgr,
