@@ -97,13 +97,16 @@ protected:
   };
 
   class WaitForObjectRecovery : public crimson::osd::BlockerT<WaitForObjectRecovery> {
-    seastar::shared_promise<> readable, recovered, pulled;
+    seastar::shared_promise<> readable, recovered, pulled, pull_prepared;
     std::map<pg_shard_t, seastar::shared_promise<>> pushes;
   public:
     static constexpr const char* type_name = "WaitForObjectRecovery";
 
+    bool waiting_for_pull = false;
+    bool waiting_for_push = false;
     crimson::osd::ObjectContextRef obc;
     PullInfo pi;
+    PullOp po;
     std::map<pg_shard_t, PushInfo> pushing;
 
     seastar::future<> wait_for_readable() {
@@ -161,4 +164,7 @@ protected:
   }
   void clean_up(ceph::os::Transaction& t, const std::string& why);
   virtual seastar::future<> on_stop() = 0;
+  virtual void kick_primary_recovery_ops(
+    std::vector<hobject_t>& objs
+  ) = 0;
 };

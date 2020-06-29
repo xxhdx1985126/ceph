@@ -98,6 +98,7 @@ size_t PGRecovery::start_primary_recovery_ops(
 
   map<version_t, hobject_t>::const_iterator p =
     missing.get_rmissing().lower_bound(pg->get_peering_state().get_pg_log().get_log().last_requested);
+  std::vector<hobject_t> started_objs;
   while (started < max_to_start && p != missing.get_rmissing().end()) {
     // TODO: chain futures here to enable yielding to scheduler?
     hobject_t soid;
@@ -136,6 +137,7 @@ size_t PGRecovery::start_primary_recovery_ops(
 	if (futopt) {
 	  out->push_back(std::move(*futopt));
 	  ++started;
+	  started_objs.push_back(soid);
 	} else {
 	  ++skipped;
 	}
@@ -146,6 +148,7 @@ size_t PGRecovery::start_primary_recovery_ops(
       pg->get_peering_state().set_last_requested(v);
   }
 
+  pg->get_recovery_backend()->kick_primary_recovery_ops(started_objs);
   crimson::get_logger(ceph_subsys_osd).info(
     "{} started {} skipped {}",
     __func__,

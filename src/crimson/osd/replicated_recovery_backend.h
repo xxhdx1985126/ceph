@@ -44,6 +44,7 @@ protected:
     Ref<MOSDPGRecoveryDelete> m);
   seastar::future<> handle_recovery_delete_reply(
     Ref<MOSDPGRecoveryDeleteReply> m);
+  void send_pulls(std::vector<hobject_t>& objs);
   seastar::future<> prep_push(
     const hobject_t& soid,
     eversion_t need,
@@ -108,4 +109,7 @@ protected:
   seastar::future<> on_stop() final {
     return seastar::now();
   }
+  void kick_primary_recovery_ops(
+    std::vector<hobject_t>& objs
+  ) final;
 };

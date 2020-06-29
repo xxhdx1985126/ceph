@@ -29,25 +29,13 @@ seastar::future<> ReplicatedRecoveryBackend::recover_object(
     return [this, soid, need, &recovery_waiter] {
       pg_missing_tracker_t local_missing = pg.get_local_missing();
       if (local_missing.is_missing(soid)) {
-	PullOp po;
 	auto& pi = recovery_waiter.pi;
+	auto& po = recovery_waiter.po;
 	prepare_pull(po, pi, soid, need);
-	auto msg = make_message<MOSDPGPull>();
-	msg->from = pg.get_pg_whoami();
-	msg->set_priority(pg.get_recovery_op_priority());
-	msg->pgid = pg.get_pgid();
-	msg->map_epoch = pg.get_osdmap_epoch();
-	msg->min_epoch = pg.get_last_peering_reset();
-	std::vector<PullOp> pulls;
-	pulls.push_back(po);
-	msg->set_pulls(&pulls);
-	return shard_services.send_to_osd(pi.from.osd,
-					   std::move(msg),
-					   pg.get_osdmap_epoch()).then(
-	  [&recovery_waiter] {
-	  return recovery_waiter.wait_for_pull().then([] {
-	    return seastar::make_ready_future<bool>(true);
-	  });
+	recovery_waiter.waiting_for_pull = true;
+	recovery_waiter.pull_prepared.set_value();
+	return recovery_waiter.wait_for_pull().then([] {
+	  return seastar::make_ready_future<bool>(true);
 	});
       } else {
 	return seastar::make_ready_future<bool>(false);
@@ -134,6 +122,33 @@ seastar::future<> ReplicatedRecoveryBackend::recover_object(
       }
     });
   });
+}
+
+void ReplicatedRecoveryBackend::send_pulls(std::vector<hobject_t>& objs)
+{
+  std::map<pg_shard_t, std::vector<PullOp>> to_send;
+  for (auto& soid : objs) {
+    auto& recovery_waiter = recovering[soid];
+    assert(recovery_waiter.waiting_for_pull);
+    logger().debug("{}, {}, {} to {}", __func__, pg, soid,
+		   recovery_waiter.pi.from.osd);
+    to_send[recovery_waiter.pi.from].push_back(
+	std::move(recovery_waiter.po));
+    recovery_waiter.waiting_for_pull = false;
+  }
+
+  for (auto& [pshard, pv] : to_send) {
+    auto msg = make_message<MOSDPGPull>();
+    msg->from = pg.get_pg_whoami();
+    msg->set_priority(pg.get_recovery_op_priority());
+    msg->pgid = pg.get_pgid();
+    msg->map_epoch = pg.get_osdmap_epoch();
+    msg->min_epoch = pg.get_last_peering_reset();
+    msg->set_pulls(&pv);
+    (void) shard_services.send_to_osd(pshard.osd,
+				      std::move(msg),
+				      pg.get_osdmap_epoch());
+  }
 }
 
 seastar::future<> ReplicatedRecoveryBackend::push_delete(
@@ -1088,3 +1103,7 @@ seastar::future<> ReplicatedRecoveryBackend::handle_recovery_op(Ref<MOSDFastDisp
   }
 }
 
+void ReplicatedRecoveryBackend::kick_primary_recovery_ops(std::vector<hobject_t>& objs)
+{
+  send_pulls(objs);
+}
