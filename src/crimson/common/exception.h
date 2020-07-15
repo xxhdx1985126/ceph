@@ -31,19 +31,42 @@ private:
   const bool still_primary;
 };
 
-template<typename Func, typename... Args>
-inline seastar::future<> handle_system_shutdown(Func&& func, Args&&... args)
+template<typename OpFunc, typename OnInterrupt>
+inline seastar::future<> with_interruption(bool may_loop, OpFunc&& func, OnInterrupt&& efunc)
 {
-  return seastar::futurize_invoke(std::forward<Func>(func),
-				  std::forward<Args>(args)...)
-  .handle_exception([](std::exception_ptr eptr) {
-    if (*eptr.__cxa_exception_type() ==
-	typeid(crimson::common::system_shutdown_exception)) {
-	crimson::get_logger(ceph_subsys_osd).debug(
-	    "operation skipped, system shutdown");
-	return seastar::now();
+  return [may_loop,
+	  func=std::move(func),
+	  efunc=std::move(efunc)]() mutable {
+    if (may_loop) {
+      return seastar::repeat([func=std::move(func),
+			      efunc=std::move(efunc)]() mutable {
+	return seastar::futurize_invoke(std::move(func))
+		  .handle_exception(std::move(efunc));
+      });
+    } else {
+	using trait = seastar::function_traits<OnInterrupt>;
+	using ret_type = typename trait::return_type;
+	return seastar::futurize_invoke(std::move(func))
+	  .handle_exception(std::move(efunc))
+	  .then([](ret_type&&) {
+	    return seastar::now();
+	  });
     }
-    std::rethrow_exception(eptr);
+  }().handle_exception_type([](crimson::common::system_shutdown_exception& e) {
+      crimson::get_logger(ceph_subsys_osd).debug(
+	  "operation skipped, system shutdown");
+      return seastar::now();
+  });
+}
+
+template<typename OpFunc>
+inline seastar::future<> with_interruption(OpFunc&& func)
+{
+  return seastar::futurize_invoke(std::move(func)).handle_exception_type(
+    [](crimson::common::system_shutdown_exception& e) {
+    crimson::get_logger(ceph_subsys_osd).debug(
+	"operation skipped, system shutdown");
+    return seastar::now();
   });
 }
 

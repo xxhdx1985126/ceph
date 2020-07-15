@@ -57,57 +57,59 @@ seastar::future<> ClientRequest::start()
   logger().debug("{}: start", *this);
 
   IRef opref = this;
-  return crimson::common::handle_system_shutdown(
+  return crimson::common::with_interruption(true, 
     [this, opref=std::move(opref)]() mutable {
-    return seastar::repeat([this, opref]() mutable {
-      return with_blocking_future(handle.enter(cp().await_map))
-      .then([this]() {
-	return with_blocking_future(osd.osdmap_gate.wait_for_map(m->get_min_epoch()));
-      }).then([this](epoch_t epoch) {
-	return with_blocking_future(handle.enter(cp().get_pg));
-      }).then([this] {
-	return with_blocking_future(osd.wait_for_pg(m->get_spg()));
-      }).then([this, opref](Ref<PG> pgref) {
-	PG &pg = *pgref;
-	if (__builtin_expect(m->get_map_epoch()
-			      < pg.get_info().history.same_primary_since,
-			     false)) {
-	  return osd.send_incremental_map(conn.get(), m->get_map_epoch());
-	}
+    return with_blocking_future(handle.enter(cp().await_map))
+    .then([this]() {
+      return with_blocking_future(osd.osdmap_gate.wait_for_map(m->get_min_epoch()));
+    }).then([this](epoch_t epoch) {
+      return with_blocking_future(handle.enter(cp().get_pg));
+    }).then([this] {
+      return with_blocking_future(osd.wait_for_pg(m->get_spg()));
+    }).then([this, opref](Ref<PG> pgref) {
+      PG &pg = *pgref;
+      if (__builtin_expect(m->get_map_epoch()
+			    < pg.get_info().history.same_primary_since,
+			   false)) {
+	return osd.send_incremental_map(conn.get(), m->get_map_epoch());
+      }
+      return with_blocking_future(
+	handle.enter(pp(pg).await_map)
+      ).then([this, &pg]() mutable {
 	return with_blocking_future(
-	  handle.enter(pp(pg).await_map)
-	).then([this, &pg]() mutable {
-	  return with_blocking_future(
-	    pg.osdmap_gate.wait_for_map(m->get_map_epoch()));
-	}).then([this, &pg](auto map) mutable {
-	  return with_blocking_future(
-	    handle.enter(pp(pg).wait_for_active));
-	}).then([this, &pg]() mutable {
-	  return with_blocking_future(pg.wait_for_active_blocker.wait());
-	}).then([this, pgref=std::move(pgref)]() mutable {
-	  if (m->finish_decode()) {
-	    m->clear_payload();
-	  }
-	  if (is_pg_op()) {
-	    return process_pg_op(pgref);
-	  } else {
-	    return process_op(pgref);
-	  }
-	});
-      }).then([] {
-	return seastar::stop_iteration::yes;
-      }).handle_exception_type([](crimson::common::actingset_changed& e) {
-	if (e.is_primary()) {
-	  crimson::get_logger(ceph_subsys_osd).debug(
-	      "operation restart, acting set changed");
-	  return seastar::stop_iteration::no;
+	  pg.osdmap_gate.wait_for_map(m->get_map_epoch()));
+      }).then([this, &pg](auto map) mutable {
+	return with_blocking_future(
+	  handle.enter(pp(pg).wait_for_active));
+      }).then([this, &pg]() mutable {
+	return with_blocking_future(pg.wait_for_active_blocker.wait());
+      }).then([this, pgref=std::move(pgref)]() mutable {
+	if (m->finish_decode()) {
+	  m->clear_payload();
+	}
+	if (is_pg_op()) {
+	  return process_pg_op(pgref);
 	} else {
-	  crimson::get_logger(ceph_subsys_osd).debug(
-	      "operation abort, up primary changed");
-	  return seastar::stop_iteration::yes;
+	  return process_op(pgref);
 	}
       });
+    }).then([] {
+      return seastar::stop_iteration::yes;
     });
+  }, [](std::exception_ptr&& eptr) {
+    try {
+      std::rethrow_exception(eptr);
+    } catch (crimson::common::actingset_changed& e) {
+      if (e.is_primary()) {
+	crimson::get_logger(ceph_subsys_osd).debug(
+	    "operation restart, acting set changed");
+	return seastar::stop_iteration::no;
+      } else {
+	crimson::get_logger(ceph_subsys_osd).debug(
+	    "operation abort, up primary changed");
+	return seastar::stop_iteration::yes;
+      }
+    }
   });
 }
 
