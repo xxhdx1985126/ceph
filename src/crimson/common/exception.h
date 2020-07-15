@@ -36,14 +36,10 @@ inline seastar::future<> handle_system_shutdown(Func&& func, Args&&... args)
 {
   return seastar::futurize_invoke(std::forward<Func>(func),
 				  std::forward<Args>(args)...)
-  .handle_exception([](std::exception_ptr eptr) {
-    if (*eptr.__cxa_exception_type() ==
-	typeid(crimson::common::system_shutdown_exception)) {
-	crimson::get_logger(ceph_subsys_osd).debug(
-	    "operation skipped, system shutdown");
-	return seastar::now();
-    }
-    std::rethrow_exception(eptr);
+  .handle_exception_type([](crimson::common::system_shutdown_exception& e) {
+      crimson::get_logger(ceph_subsys_osd).debug(
+	  "operation skipped, system shutdown");
+      return seastar::now();
   });
 }
 
