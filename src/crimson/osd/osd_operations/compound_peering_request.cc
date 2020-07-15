@@ -163,7 +163,7 @@ seastar::future<> CompoundPeeringRequest::start()
 
   IRef ref = this;
   logger().info("{}: about to fork future", *this);
-  return crimson::common::handle_system_shutdown(
+  return crimson::common::with_interruption(
     [this, ref, blocker=std::move(blocker), state]() mutable {
     return with_blocking_future(
       blocker->make_blocking_future(state->promise.get_future())
