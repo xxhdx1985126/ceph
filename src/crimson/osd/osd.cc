@@ -1265,21 +1265,21 @@ seastar::future<> OSD::prepare_to_stop()
 {
   if (osdmap && osdmap->is_up(whoami)) {
     state.set_prestop();
-    return monc->send_message(
+    (void) monc->send_message(
 	  make_message<MOSDMarkMeDown>(
 	    monc->get_fsid(),
 	    whoami,
 	    osdmap->get_addrs(whoami),
 	    osdmap->get_epoch(),
-	    true)).then([this] {
-      const auto timeout =
-	std::chrono::duration_cast<std::chrono::milliseconds>(
-	  std::chrono::duration<double>(
-	    local_conf().get_val<double>("osd_mon_shutdown_timeout")));
-      return seastar::with_timeout(
+	    true));
+    const auto timeout =
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+	std::chrono::duration<double>(
+	  local_conf().get_val<double>("osd_mon_shutdown_timeout")));
+    return seastar::with_timeout(
       seastar::timer<>::clock::now() + timeout,
-      stop_acked.get_future());
-    }).handle_exception_type([this](seastar::timed_out_error&) {
+      stop_acked.get_future()).handle_exception_type(
+      [this](seastar::timed_out_error&) {
       return seastar::now();
     });
   }
