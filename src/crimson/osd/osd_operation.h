@@ -16,6 +16,7 @@
 #include <seastar/core/lowres_clock.hh>
 
 #include "include/ceph_assert.h"
+#include "crimson/common/errorator.h"
 #include "crimson/osd/scheduler/scheduler.h"
 
 namespace ceph {
@@ -97,6 +98,10 @@ public:
 
 template <typename... T>
 using blocking_future = blocking_future_detail<seastar::future<T...>>;
+
+template <template <typename...> typename ErroratedFuture,
+	  typename... T>
+using blocking_errorated_future = blocking_future_detail<ErroratedFuture<T...>>;
 
 template <typename... V, typename... U>
 blocking_future_detail<seastar::future<V...>> make_ready_blocking_future(U&&... args) {
@@ -198,6 +203,21 @@ class Operation : public boost::intrusive_ref_counter<
     assert(f.blocker);
     add_blocker(f.blocker);
     return std::move(f.fut).then_wrapped([this, blocker=f.blocker](auto &&arg) {
+      clear_blocker(blocker);
+      return std::move(arg);
+    });
+  }
+
+  template <typename Errorator, typename... T>
+  typename Errorator::template future<T...>
+  with_blocking_errorated_future(blocking_future<T...>&& f) {
+    if (f.fut.available()) {
+      return std::move(f.fut);
+    }
+    assert(f.blocker);
+    add_blocker(f.blocker);
+    return typename Errorator::template future<T...>(std::move(f.fut))
+    .then_wrapped([this, blocker=f.blocker](auto&& arg) {
       clear_blocker(blocker);
       return std::move(arg);
     });

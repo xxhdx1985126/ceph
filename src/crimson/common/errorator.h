@@ -343,7 +343,7 @@ private:
   class _future {};
   template <class... ValuesT>
   class _future<::crimson::errorated_future_marker<ValuesT...>>
-    : private seastar::future<ValuesT...> {
+    : public seastar::future<ValuesT...> {
     using base_t = seastar::future<ValuesT...>;
     // we need the friendship for the sake of `get_exception() &&` when
     // `safe_then()` is going to return an errorated future as a result of

@@ -20,7 +20,8 @@ set(crimson_common_srcs
   common/formatter.cc
   common/perf_counters_collection.cc
   common/log.cc
-  common/throttle.cc)
+  common/throttle.cc
+  common/exception.cc)
 
 # the specialized version of ceph-common, where
 #  - the logging is sent to Seastar backend
