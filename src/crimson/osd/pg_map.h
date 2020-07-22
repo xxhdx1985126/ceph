@@ -9,6 +9,7 @@
 #include <seastar/core/shared_future.hh>
 
 #include "include/types.h"
+#include "crimson/common/exception.h"
 #include "crimson/common/type_helpers.h"
 #include "crimson/osd/osd_operation.h"
 #include "crimson/osd/pg.h"
@@ -46,6 +47,11 @@ public:
    * created.
    */
   std::pair<blocking_future<Ref<PG>>, bool> get_pg(spg_t pgid, bool wait=true);
+
+  std::pair<blocking_errorated_future<
+	      crimson::common::interruption_errorator,
+	      Ref<PG>>,
+	   bool> get_pg_errorated(spg_t pgid, bool wait=true);
 
   /**
    * Set creating

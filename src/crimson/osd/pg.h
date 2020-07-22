@@ -21,6 +21,7 @@
 #include "crimson/osd/object_context.h"
 #include "osd/PeeringState.h"
 
+#include "crimson/common/exception.h"
 #include "crimson/common/type_helpers.h"
 #include "crimson/os/futurized_collection.h"
 #include "crimson/osd/backfill_state.h"
@@ -524,7 +525,8 @@ public:
       });
   }
 
-  seastar::future<> handle_rep_op(Ref<MOSDRepOp> m);
+  crimson::common::interruption_errorator::future<>
+  handle_rep_op(Ref<MOSDRepOp> m);
   void handle_rep_op_reply(crimson::net::Connection* conn,
 			   const MOSDRepOpReply& m);
 
@@ -534,7 +536,7 @@ private:
   void do_peering_event(
     const boost::statechart::event_base &evt,
     PeeringCtx &rctx);
-  seastar::future<Ref<MOSDOpReply>> do_osd_ops(
+  crimson::common::interruption_errorator::future<Ref<MOSDOpReply>> do_osd_ops(
     Ref<MOSDOp> m,
     ObjectContextRef obc,
     const OpInfo &op_info);
@@ -650,6 +652,9 @@ private:
     WaitForActiveBlocker(PG *pg) : pg(pg) {}
     void on_active();
     blocking_future<> wait();
+    blocking_errorated_future<crimson::common::interruption_errorator>
+    wait_errorated();
+
     seastar::future<> stop();
   } wait_for_active_blocker;
 

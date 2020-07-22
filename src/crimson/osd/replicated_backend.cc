@@ -39,7 +39,7 @@ ReplicatedBackend::_read(const hobject_t& hoid,
   return store->read(coll, ghobject_t{hoid}, off, len, flags);
 }
 
-seastar::future<crimson::osd::acked_peers_t>
+crimson::common::interruption_errorator::future<crimson::osd::acked_peers_t>
 ReplicatedBackend::_submit_transaction(std::set<pg_shard_t>&& pg_shards,
                                        const hobject_t& hoid,
                                        ceph::os::Transaction&& txn,
@@ -61,9 +61,9 @@ ReplicatedBackend::_submit_transaction(std::set<pg_shard_t>&& pg_shards,
   bufferlist encoded_txn;
   encode(txn, encoded_txn);
 
-  return seastar::parallel_for_each(std::move(pg_shards),
+  return crimson::parallel_for_each(std::move(pg_shards),
     [=, encoded_txn=std::move(encoded_txn), txn=std::move(txn)]
-    (auto pg_shard) mutable {
+    (auto pg_shard) mutable -> crimson::common::interruption_errorator::future<> {
       if (pg_shard == whoami) {
         return shard_services.get_store().do_transaction(coll,std::move(txn));
       } else {
@@ -81,22 +81,25 @@ ReplicatedBackend::_submit_transaction(std::set<pg_shard_t>&& pg_shards,
         // TODO: set more stuff. e.g., pg_states
         return shard_services.send_to_osd(pg_shard.osd, std::move(m), map_epoch);
       }
-    }).then([this, peers=pending_txn->second.weak_from_this()] {
+    }).safe_then([this, peers=pending_txn->second.weak_from_this()]()
+      -> crimson::common::interruption_errorator::future<> {
       if (!peers) {
 	// for now, only actingset_changed can cause peers
 	// to be nullptr
 	assert(peering);
-	throw crimson::common::actingset_changed(peering->is_primary);
+	return crimson::common::eactingchg::make();
       }
       if (--peers->pending == 0) {
         peers->all_committed.set_value();
       }
       return peers->all_committed.get_future();
-    }).then([pending_txn, this] {
+    }).safe_then([pending_txn, this] {
       pending_txn->second.all_committed = {};
       auto acked_peers = std::move(pending_txn->second.acked_peers);
       pending_trans.erase(pending_txn);
-      return seastar::make_ready_future<crimson::osd::acked_peers_t>(std::move(acked_peers));
+      return crimson::common::interruption_errorator::
+	      template make_ready_future<
+		crimson::osd::acked_peers_t>(std::move(acked_peers));
     });
 }
 

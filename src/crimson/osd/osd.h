@@ -232,6 +232,9 @@ public:
     std::unique_ptr<PGCreateInfo> info);
   blocking_future<Ref<PG>> wait_for_pg(
     spg_t pgid);
+  blocking_errorated_future<crimson::common::interruption_errorator, Ref<PG>>
+  wait_for_pg_errorated(spg_t pgid);
+
 
   bool should_restart() const;
   seastar::future<> restart();

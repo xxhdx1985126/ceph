@@ -60,15 +60,34 @@ seastar::future<> RepRequest::start()
 {
   logger().debug("{} start", *this);
   IRef ref = this;
-  return with_blocking_future(handle.enter(cp().await_map))
-    .then([this]() {
-      return with_blocking_future(osd.osdmap_gate.wait_for_map(req->get_min_epoch()));
-    }).then([this](epoch_t epoch) {
-      return with_blocking_future(handle.enter(cp().get_pg));
-    }).then([this] {
-      return with_blocking_future(osd.wait_for_pg(req->get_spg()));
-    }).then([this, ref=std::move(ref)](Ref<PG> pg) {
+  return crimson::common::with_interruption<false>([this, ref=std::move(ref)]() mutable {
+    return with_blocking_errorated_future<
+	    crimson::common::interruption_errorator>(
+		handle.enter(cp().await_map)).safe_then([this]() {
+      return with_blocking_errorated_future<
+	    crimson::common::interruption_errorator>(
+		osd.osdmap_gate.wait_for_map_errorated(req->get_min_epoch()));
+    }).safe_then([this](epoch_t epoch) {
+      return with_blocking_errorated_future<
+	    crimson::common::interruption_errorator>(handle.enter(cp().get_pg));
+    }).safe_then([this] {
+      return with_blocking_errorated_future<
+	    crimson::common::interruption_errorator>(
+		osd.wait_for_pg_errorated(req->get_spg()));
+    }).safe_then([this, ref=std::move(ref)](Ref<PG> pg) {
       return pg->handle_rep_op(std::move(req));
     });
+  }, crimson::common::interruption_errorator::all_same_way(
+    [](const std::error_code& e) {
+    if (e == crimson::common::ec<crimson::common::error::actingset_change>) {
+      crimson::get_logger(ceph_subsys_osd).debug(
+	  "operation restart, acting set changed");
+      return seastar::now();
+    } else if (e == crimson::common::ec<crimson::common::error::system_shutdown>) {
+      crimson::get_logger(ceph_subsys_osd).debug(
+	"operation restart, acting set changed");
+      return seastar::now();
+    }
+  }));
 }
 }

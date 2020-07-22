@@ -4,6 +4,7 @@
 #pragma once
 
 #include "osd/osd_op_util.h"
+#include "crimson/common/exception.h"
 #include "crimson/net/Connection.h"
 #include "crimson/osd/osd_operation.h"
 #include "crimson/common/type_helpers.h"
@@ -62,7 +63,7 @@ public:
 private:
   seastar::future<> process_pg_op(
     Ref<PG> &pg);
-  seastar::future<> process_op(
+  crimson::common::interruption_errorator::future<> process_op(
     Ref<PG> &pg);
   bool is_pg_op() const;
 
