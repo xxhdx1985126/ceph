@@ -11,6 +11,7 @@
 #include <seastar/core/shared_future.hh>
 
 #include "include/types.h"
+#include "crimson/common/exception.h"
 #include "crimson/osd/osd_operation.h"
 
 namespace ceph {
@@ -60,6 +61,9 @@ public:
 
   // wait for an osdmap whose epoch is greater or equal to given epoch
   blocking_future<epoch_t> wait_for_map(epoch_t epoch);
+  blocking_errorated_future<crimson::common::interruption_errorator,
+			    epoch_t>
+  wait_for_map_errorated(epoch_t epoch);
   void got_map(epoch_t epoch);
   seastar::future<> stop();
 };

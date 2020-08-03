@@ -59,20 +59,28 @@ seastar::future<> ClientRequest::start()
   IRef opref = this;
   return crimson::common::with_interruption(
     [this, opref=std::move(opref)]() mutable {
-    return with_blocking_errorated_future<crimson::common::interruption_errorator>(handle.enter(cp().await_map))
+    return with_blocking_errorated_future<
+	    crimson::common::interruption_errorator>(
+	      handle.enter(cp().await_map))
     .safe_then([this]() {
-      return with_blocking_errorated_future<crimson::common::interruption_errorator>(
-	    osd.osdmap_gate.wait_for_map(m->get_min_epoch()));
+      return with_blocking_errorated_future<
+	      crimson::common::interruption_errorator>(
+		osd.osdmap_gate.wait_for_map_errorated(m->get_min_epoch()));
     }).safe_then([this](epoch_t epoch) {
-      return with_blocking_errorated_future<crimson::common::interruption_errorator>(handle.enter(cp().get_pg));
+      return with_blocking_errorated_future<
+	      crimson::common::interruption_errorator>(
+		handle.enter(cp().get_pg));
     }).safe_then([this] {
-      return with_blocking_errorated_future<crimson::common::interruption_errorator>(osd.wait_for_pg(m->get_spg()));
+      return with_blocking_errorated_future<
+		crimson::common::interruption_errorator>(
+		  osd.wait_for_pg(m->get_spg()));
     }).safe_then([this, opref](Ref<PG> pgref) {
       PG &pg = *pgref;
       if (__builtin_expect(m->get_map_epoch()
 			    < pg.get_info().history.same_primary_since,
 			   false)) {
-	return crimson::common::interruption_errorator::future<>(osd.send_incremental_map(conn.get(), m->get_map_epoch()));
+	return crimson::common::interruption_errorator::future<>(
+		osd.send_incremental_map(conn.get(), m->get_map_epoch()));
       }
       return crimson::common::interruption_errorator::future<>(with_blocking_future(
 	handle.enter(pp(pg).await_map)
@@ -97,7 +105,8 @@ seastar::future<> ClientRequest::start()
     }).safe_then([] {
       return true;
     });
-  }, crimson::common::interruption_errorator::all_same_way([](const std::error_code& e) {
+  }, crimson::common::interruption_errorator::all_same_way(
+    [](const std::error_code& e) {
     if (e == crimson::common::ec<crimson::common::error::actingset_change>) {
       crimson::get_logger(ceph_subsys_osd).debug(
 	  "operation restart, acting set changed");

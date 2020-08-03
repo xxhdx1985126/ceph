@@ -99,9 +99,8 @@ public:
 template <typename... T>
 using blocking_future = blocking_future_detail<seastar::future<T...>>;
 
-template <template <typename...> typename ErroratedFuture,
-	  typename... T>
-using blocking_errorated_future = blocking_future_detail<ErroratedFuture<T...>>;
+template <typename Errorator, typename... T>
+using blocking_errorated_future = blocking_future_detail<typename Errorator::template future<T...>>;
 
 template <typename... V, typename... U>
 blocking_future_detail<seastar::future<V...>> make_ready_blocking_future(U&&... args) {
@@ -110,12 +109,29 @@ blocking_future_detail<seastar::future<V...>> make_ready_blocking_future(U&&... 
     seastar::make_ready_future<V...>(std::forward<U>(args)...));
 }
 
+template <typename Errorator, typename... V, typename... U>
+blocking_future_detail<typename Errorator::template future<V...>>
+make_ready_blocking_errorated_future(U&&... args) {
+  return blocking_errorated_future<Errorator, V...>(
+    nullptr,
+    Errorator::template make_ready_future<V...>(std::forward<U>(args)...));
+}
+
 template <typename... V, typename Exception>
 blocking_future_detail<seastar::future<V...>>
 make_exception_blocking_future(Exception&& e) {
   return blocking_future<V...>(
     nullptr,
     seastar::make_exception_future<V...>(e));
+}
+
+template <typename Errorator, typename... V, typename ErrorT>
+blocking_future_detail<typename Errorator::template future<V...>>
+make_exception_blocking_errorated_future(ErrorT&& e) {
+  return blocking_errorated_future<Errorator, V...>(
+    nullptr,
+    Errorator::template make_exception_future2<V...>(
+      Errorator::template make_exception_ptr(std::move(e))));
 }
 
 /**
@@ -130,6 +146,16 @@ public:
   template <typename... T>
   blocking_future<T...> make_blocking_future(seastar::future<T...> &&f) {
     return blocking_future<T...>(this, std::move(f));
+  }
+
+  template <typename Errorator, typename... T>
+  blocking_errorated_future<Errorator, T...> make_blocking_errorated_future(seastar::future<T...> &&f) {
+    return blocking_errorated_future<Errorator, T...>(this, std::move(f));
+  }
+
+  template <typename Errorator, typename... T>
+  blocking_errorated_future<Errorator, T...> make_blocking_errorated_future(typename Errorator::template future<T...> &&f) {
+    return blocking_errorated_future<Errorator, T...>(this, std::move(f));
   }
 
   void dump(ceph::Formatter *f) const;
@@ -211,6 +237,21 @@ class Operation : public boost::intrusive_ref_counter<
   template <typename Errorator, typename... T>
   typename Errorator::template future<T...>
   with_blocking_errorated_future(blocking_future<T...>&& f) {
+    if (f.fut.available()) {
+      return std::move(f.fut);
+    }
+    assert(f.blocker);
+    add_blocker(f.blocker);
+    return typename Errorator::template future<T...>(std::move(f.fut))
+    .then_wrapped([this, blocker=f.blocker](auto&& arg) {
+      clear_blocker(blocker);
+      return std::move(arg);
+    });
+  }
+
+  template <typename Errorator, typename... T>
+  typename Errorator::template future<T...>
+  with_blocking_errorated_future(blocking_errorated_future<Errorator, T...>&& f) {
     if (f.fut.available()) {
       return std::move(f.fut);
     }
