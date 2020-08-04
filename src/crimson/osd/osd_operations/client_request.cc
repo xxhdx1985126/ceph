@@ -73,7 +73,7 @@ seastar::future<> ClientRequest::start()
     }).safe_then([this] {
       return with_blocking_errorated_future<
 		crimson::common::interruption_errorator>(
-		  osd.wait_for_pg(m->get_spg()));
+		  osd.wait_for_pg_errorated(m->get_spg()));
     }).safe_then([this, opref](Ref<PG> pgref) {
       PG &pg = *pgref;
       if (__builtin_expect(m->get_map_epoch()
@@ -82,17 +82,22 @@ seastar::future<> ClientRequest::start()
 	return crimson::common::interruption_errorator::future<>(
 		osd.send_incremental_map(conn.get(), m->get_map_epoch()));
       }
-      return crimson::common::interruption_errorator::future<>(with_blocking_future(
+      return with_blocking_errorated_future<
+	  crimson::common::interruption_errorator>(
 	handle.enter(pp(pg).await_map)
-      ).then([this, &pg]() mutable {
-	return with_blocking_future(
-	  pg.osdmap_gate.wait_for_map(m->get_map_epoch()));
-      }).then([this, &pg](auto map) mutable {
-	return with_blocking_future(
-	  handle.enter(pp(pg).wait_for_active));
-      }).then([this, &pg]() mutable {
-	return with_blocking_future(pg.wait_for_active_blocker.wait());
-      }).then([this, pgref=std::move(pgref)]() mutable {
+      ).safe_then([this, &pg]() mutable {
+	return with_blocking_errorated_future<
+	    crimson::common::interruption_errorator>(
+		pg.osdmap_gate.wait_for_map_errorated(m->get_map_epoch()));
+      }).safe_then([this, &pg](auto map) mutable {
+	return with_blocking_errorated_future<
+	    crimson::common::interruption_errorator>(
+		handle.enter(pp(pg).wait_for_active));
+      }).safe_then([this, &pg]() mutable {
+	return with_blocking_errorated_future<
+	    crimson::common::interruption_errorator>(
+		pg.wait_for_active_blocker.wait_errorated());
+      }).safe_then([this, pgref=std::move(pgref)]() mutable {
 	if (m->finish_decode()) {
 	  m->clear_payload();
 	}
@@ -101,7 +106,7 @@ seastar::future<> ClientRequest::start()
 	} else {
 	  return process_op(pgref);
 	}
-      }));
+      });
     }).safe_then([] {
       return true;
     });

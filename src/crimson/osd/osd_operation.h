@@ -257,8 +257,7 @@ class Operation : public boost::intrusive_ref_counter<
     }
     assert(f.blocker);
     add_blocker(f.blocker);
-    return typename Errorator::template future<T...>(std::move(f.fut))
-    .then_wrapped([this, blocker=f.blocker](auto&& arg) {
+    return std::move(f.fut).then_wrapped([this, blocker=f.blocker](auto&& arg) {
       clear_blocker(blocker);
       return std::move(arg);
     });

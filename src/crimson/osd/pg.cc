@@ -523,6 +523,16 @@ blocking_future<> PG::WaitForActiveBlocker::wait()
   }
 }
 
+blocking_errorated_future<crimson::common::interruption_errorator>
+PG::WaitForActiveBlocker::wait_errorated()
+{
+  if (pg->peering_state.is_active()) {
+    return make_blocking_errorated_future<crimson::common::interruption_errorator>(seastar::now());
+  } else {
+    return make_blocking_errorated_future<crimson::common::interruption_errorator>(p.get_shared_future());
+  }
+}
+
 seastar::future<> PG::WaitForActiveBlocker::stop()
 {
   p.set_exception(crimson::common::system_shutdown_exception());

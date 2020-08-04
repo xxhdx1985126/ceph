@@ -21,6 +21,7 @@
 #include "crimson/osd/object_context.h"
 #include "osd/PeeringState.h"
 
+#include "crimson/common/exception.h"
 #include "crimson/common/type_helpers.h"
 #include "crimson/os/futurized_collection.h"
 #include "crimson/osd/backfill_state.h"
@@ -647,6 +648,9 @@ private:
     WaitForActiveBlocker(PG *pg) : pg(pg) {}
     void on_active();
     blocking_future<> wait();
+    blocking_errorated_future<crimson::common::interruption_errorator>
+    wait_errorated();
+
     seastar::future<> stop();
   } wait_for_active_blocker;
 
