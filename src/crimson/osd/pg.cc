@@ -588,13 +588,13 @@ seastar::future<> PG::submit_transaction(const OpInfo& op_info,
   });
 }
 
-seastar::future<Ref<MOSDOpReply>> PG::do_osd_ops(
+crimson::common::interruption_errorator::future<Ref<MOSDOpReply>> PG::do_osd_ops(
   Ref<MOSDOp> m,
   ObjectContextRef obc,
   const OpInfo &op_info)
 {
   if (__builtin_expect(stopping, false)) {
-    throw crimson::common::system_shutdown_exception();
+    return crimson::common::esysshut::make();
   }
 
   using osd_op_errorator = OpsExecuter::osd_op_errorator;
@@ -650,7 +650,8 @@ seastar::future<Ref<MOSDOpReply>> PG::do_osd_ops(
       "do_osd_ops: {} - object {} sending reply",
       *m,
       obc->obs.oi.soid);
-    return seastar::make_ready_future<Ref<MOSDOpReply>>(std::move(reply));
+    return crimson::common::interruption_errorator::make_ready_future<
+	      Ref<MOSDOpReply>>(std::move(reply));
   }, OpsExecuter::osd_op_errorator::all_same_way([=] (const std::error_code& e) {
     assert(e.value() > 0);
     logger().debug(
@@ -663,7 +664,8 @@ seastar::future<Ref<MOSDOpReply>> PG::do_osd_ops(
       m.get(), -e.value(), get_osdmap_epoch(), 0, false);
     reply->set_enoent_reply_versions(peering_state.get_info().last_update,
 				     peering_state.get_info().last_user_version);
-    return seastar::make_ready_future<Ref<MOSDOpReply>>(std::move(reply));
+    return crimson::common::interruption_errorator::make_ready_future<
+	      Ref<MOSDOpReply>>(std::move(reply));
   })).handle_exception_type([=](const crimson::osd::error& e) {
     // we need this handler because throwing path which aren't errorated yet.
     logger().debug(
@@ -676,7 +678,8 @@ seastar::future<Ref<MOSDOpReply>> PG::do_osd_ops(
       m.get(), -e.code().value(), get_osdmap_epoch(), 0, false);
     reply->set_enoent_reply_versions(peering_state.get_info().last_update,
 				     peering_state.get_info().last_user_version);
-    return seastar::make_ready_future<Ref<MOSDOpReply>>(std::move(reply));
+    return crimson::common::interruption_errorator::make_ready_future<
+	      Ref<MOSDOpReply>>(std::move(reply));
   });
 }
 

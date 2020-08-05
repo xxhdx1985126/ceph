@@ -532,7 +532,7 @@ private:
   void do_peering_event(
     const boost::statechart::event_base &evt,
     PeeringCtx &rctx);
-  seastar::future<Ref<MOSDOpReply>> do_osd_ops(
+  crimson::common::interruption_errorator::future<Ref<MOSDOpReply>> do_osd_ops(
     Ref<MOSDOp> m,
     ObjectContextRef obc,
     const OpInfo &op_info);

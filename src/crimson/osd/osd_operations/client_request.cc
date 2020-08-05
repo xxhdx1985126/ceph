@@ -6,7 +6,6 @@
 #include "messages/MOSDOp.h"
 #include "messages/MOSDOpReply.h"
 
-#include "crimson/common/exception.h"
 #include "crimson/osd/pg.h"
 #include "crimson/osd/osd.h"
 #include "common/Formatter.h"
@@ -97,7 +96,8 @@ seastar::future<> ClientRequest::start()
 	return with_blocking_errorated_future<
 	    crimson::common::interruption_errorator>(
 		pg.wait_for_active_blocker.wait_errorated());
-      }).safe_then([this, pgref=std::move(pgref)]() mutable {
+      }).safe_then([this, pgref=std::move(pgref)]() mutable
+	-> crimson::common::interruption_errorator::future<> {
 	if (m->finish_decode()) {
 	  m->clear_payload();
 	}
@@ -115,11 +115,11 @@ seastar::future<> ClientRequest::start()
     if (e == crimson::common::ec<crimson::common::error::actingset_change>) {
       crimson::get_logger(ceph_subsys_osd).debug(
 	  "operation restart, acting set changed");
-      return seastar::make_ready_future<bool>(false);
+      return crimson::common::interruption_errorator::make_ready_future<bool>(false);
     } else if (e == crimson::common::ec<crimson::common::error::system_shutdown>) {
-       crimson::get_logger(ceph_subsys_osd).debug(
-	  "operation restart, acting set changed");
-       return seastar::make_ready_future<bool>(true);
+      crimson::get_logger(ceph_subsys_osd).debug(
+	"operation restart, acting set changed");
+      return crimson::common::interruption_errorator::make_ready_future<bool>(true);
     }
   }));
 }
@@ -133,13 +133,14 @@ seastar::future<> ClientRequest::process_pg_op(
     });
 }
 
-seastar::future<> ClientRequest::process_op(
+crimson::common::interruption_errorator::future<> ClientRequest::process_op(
   Ref<PG> &pgref)
 {
   PG& pg = *pgref;
-  return with_blocking_future(
+  return with_blocking_errorated_future<crimson::common::interruption_errorator>(
     handle.enter(pp(pg).recover_missing)
-  ).then([this, &pg, pgref] {
+  ).safe_then([this, &pg, pgref]()
+    -> crimson::common::interruption_errorator::future<> {
     eversion_t ver;
     const hobject_t& soid = m->get_hobj();
     if (pg.is_unreadable_object(soid, &ver)) {
@@ -147,20 +148,22 @@ seastar::future<> ClientRequest::process_op(
 			  soid, ver, pgref, osd.get_shard_services(), m->get_min_epoch());
       return std::move(fut);
     }
-    return seastar::now();
-  }).then([this, &pg] {
-    return with_blocking_future(handle.enter(pp(pg).get_obc));
-  }).then([this, &pg]() {
+    return crimson::common::interruption_errorator::now();
+  }).safe_then([this, &pg] {
+    return with_blocking_errorated_future<crimson::common::interruption_errorator>(
+	handle.enter(pp(pg).get_obc));
+  }).safe_then([this, &pg]() {
     op_info.set_from_op(&*m, *pg.get_osdmap());
     return pg.with_locked_obc(
       m,
       op_info,
       this,
       [this, &pg](auto obc) {
-	return with_blocking_future(handle.enter(pp(pg).process)
-	).then([this, &pg, obc]() {
+	return with_blocking_errorated_future<crimson::common::interruption_errorator>(
+	    handle.enter(pp(pg).process)
+	).safe_then([this, &pg, obc]() {
 	  return pg.do_osd_ops(m, obc, op_info);
-	}).then([this](Ref<MOSDOpReply> reply) {
+	}).safe_then([this](Ref<MOSDOpReply> reply) {
 	  return conn->send(reply);
 	});
       });
@@ -168,8 +171,8 @@ seastar::future<> ClientRequest::process_op(
     return seastar::now();
   }, PG::load_obc_ertr::all_same_way([](auto &code) {
     logger().error("ClientRequest saw error code {}", code);
-    return seastar::now();
-  }));
+    return crimson::common::interruption_errorator::now();
+  }),crimson::common::interruption_errorator::pass_further{});
 }
 
 }

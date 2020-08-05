@@ -64,8 +64,7 @@ inline seastar::future<> with_interruption(OpFunc&& func, OnInterrupt&& efunc)
 {
   if constexpr (may_loop) {
     return crimson::do_until([func=std::move(func),
-			     efunc=std::move(efunc)]
-      () mutable -> interruption_errorator::future<bool> {
+			     efunc=std::move(efunc)]() mutable {
       return interruption_errorator::futurize<
 		std::result_of_t<OpFunc()>>::apply(std::move(func), std::make_tuple())
       .handle_error(std::move(efunc));

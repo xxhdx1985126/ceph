@@ -337,6 +337,54 @@ struct errorator {
   struct ready_future_marker{};
   struct exception_future_marker{};
 
+  template <typename T, typename>
+  struct is_errorated_future {
+    using extended_type = T;
+  };
+
+  template <typename Errorator, template <typename...> typename ErroratedFuture, typename... T>
+  struct is_errorated_future<Errorator, ErroratedFuture<crimson::errorated_future_marker<T...>>>
+    : std::true_type {
+    using extended_type =
+      typename Errorator::template extend_by_errorator<
+	typename ErroratedFuture<crimson::errorated_future_marker<T...>>::errorator_type>::extended_type;
+  };
+
+  template <class ValueFuncErroratorT, class... ErrorVisitorRetsT>
+  struct make_errorator {
+    // NOP. The generic template.
+  };
+  template <class... ValueFuncAllowedErrors,
+	    class    ErrorVisitorRetsHeadT,
+	    class... ErrorVisitorRetsTailT>
+  struct make_errorator<errorator<ValueFuncAllowedErrors...>,
+			ErrorVisitorRetsHeadT,
+			ErrorVisitorRetsTailT...> {
+  private:
+    using step_errorator = errorator<ValueFuncAllowedErrors...>;
+    // add ErrorVisitorRetsHeadT only if 1) it's an error type and
+    // 2) isn't already included in the errorator's error set.
+    // It's enough to negate contains_once_v as any errorator<...>
+    // type is already guaranteed to be free of duplications.
+    using next_errorator = std::conditional_t<
+      is_error_v<ErrorVisitorRetsHeadT> &&
+	!step_errorator::template contains_once_v<ErrorVisitorRetsHeadT>,
+      typename step_errorator::template extend<ErrorVisitorRetsHeadT>,
+      typename is_errorated_future<step_errorator, ErrorVisitorRetsHeadT>::extended_type
+    >;
+
+  public:
+    using type = typename make_errorator<next_errorator,
+					 ErrorVisitorRetsTailT...>::type;
+  };
+  // finish the recursion
+  template <class... ValueFuncAllowedErrors>
+  struct make_errorator<errorator<ValueFuncAllowedErrors...>> {
+    using type = ::crimson::errorator<ValueFuncAllowedErrors...>;
+  };
+  template <class... Args>
+  using make_errorator_t = typename make_errorator<Args...>::type;
+
 private:
   // see the comment for `using future = _future` below.
   template <class>
@@ -365,40 +413,6 @@ private:
     };
     template <class T>
     using get_errorator_t = typename get_errorator<T>::type;
-
-    template <class ValueFuncErroratorT, class... ErrorVisitorRetsT>
-    struct make_errorator {
-      // NOP. The generic template.
-    };
-    template <class... ValueFuncAllowedErrors,
-              class    ErrorVisitorRetsHeadT,
-              class... ErrorVisitorRetsTailT>
-    struct make_errorator<errorator<ValueFuncAllowedErrors...>,
-                          ErrorVisitorRetsHeadT,
-                          ErrorVisitorRetsTailT...> {
-    private:
-      using step_errorator = errorator<ValueFuncAllowedErrors...>;
-      // add ErrorVisitorRetsHeadT only if 1) it's an error type and
-      // 2) isn't already included in the errorator's error set.
-      // It's enough to negate contains_once_v as any errorator<...>
-      // type is already guaranteed to be free of duplications.
-      using next_errorator = std::conditional_t<
-        is_error_v<ErrorVisitorRetsHeadT> &&
-          !step_errorator::template contains_once_v<ErrorVisitorRetsHeadT>,
-        typename step_errorator::template extend<ErrorVisitorRetsHeadT>,
-        step_errorator>;
-
-    public:
-      using type = typename make_errorator<next_errorator,
-                                           ErrorVisitorRetsTailT...>::type;
-    };
-    // finish the recursion
-    template <class... ValueFuncAllowedErrors>
-    struct make_errorator<errorator<ValueFuncAllowedErrors...>> {
-      using type = ::crimson::errorator<ValueFuncAllowedErrors...>;
-    };
-    template <class... Args>
-    using make_errorator_t = typename make_errorator<Args...>::type;
 
     using base_t::base_t;
 
@@ -764,6 +778,14 @@ public:
   template <class... NewAllowedErrorsT>
   using extend = errorator<AllowedErrors..., NewAllowedErrorsT...>;
 
+  template <typename>
+  struct extend_by_errorator {};
+  template <template <typename...> typename NewErrorator,
+	    typename... NewAllowedErrorsT>
+  struct extend_by_errorator<NewErrorator<NewAllowedErrorsT...>> {
+    using extended_type = make_errorator_t<NewErrorator<AllowedErrors...>, NewAllowedErrorsT...>;
+  };
+
   // get a new errorator by summing and deduplicating error set of
   // the errorator `unify<>` is applied on with another errorator
   // provided as template parameter.
@@ -868,6 +890,16 @@ private:
       }
     }
 
+    template <class Func, class... Args>
+    static type invoke(Func&& func, Args&&... args) {
+      try {
+        return ::seastar::futurize_invoke(std::forward<Func>(func),
+					  std::forward<Args>(args)...);
+      } catch (...) {
+        return make_exception_future(std::current_exception());
+      }
+    }
+
     template <typename Arg>
     static type make_exception_future(Arg&& arg) {
       return ::crimson::errorator<AllowedErrors...>::make_exception_future2<ValuesT...>(std::forward<Arg>(arg));
@@ -903,6 +935,15 @@ public:
   // get a new errorator by extending current one with new error
   template <class... NewAllowedErrors>
   using extend = errorator<NewAllowedErrors...>;
+
+  template <typename>
+  struct extend_by_errorator {};
+
+  template <template <typename...> typename NewErrorator,
+	    typename... NewAllowedErrors>
+  struct extend_by_errorator<NewErrorator<NewAllowedErrors...>> {
+    using extended_type = errorator<NewAllowedErrors...>;
+  };
 
   // errorator with empty error set never contains any error
   template <class T>
