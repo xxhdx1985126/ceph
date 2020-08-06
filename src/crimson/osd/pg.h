@@ -522,7 +522,8 @@ public:
       });
   }
 
-  seastar::future<> handle_rep_op(Ref<MOSDRepOp> m);
+  crimson::common::interruption_errorator::future<>
+  handle_rep_op(Ref<MOSDRepOp> m);
   void handle_rep_op_reply(crimson::net::Connection* conn,
 			   const MOSDRepOpReply& m);
 

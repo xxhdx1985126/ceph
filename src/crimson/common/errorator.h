@@ -7,10 +7,98 @@
 #include <system_error>
 
 #include <seastar/core/future-util.hh>
+#include <seastar/core/task.hh>
 
 #include "include/ceph_assert.h"
 
 namespace crimson {
+
+template <typename T>
+class parallel_for_each_state {};
+
+template <class... ValuesT>
+struct errorated_future_marker{};
+
+template <template <typename...> typename ErroratedFuture>
+class parallel_for_each_state<
+  ErroratedFuture<
+    crimson::errorated_future_marker<>>> final
+  : private seastar::continuation_base<> {
+  using future_t = ErroratedFuture<crimson::errorated_future_marker<>>;
+
+  std::vector<future_t> _incomplete;
+  seastar::promise<> _result;
+  std::exception_ptr _ex;
+private:
+  void wait_for_one() noexcept {
+    while (!_incomplete.empty() && _incomplete.back().available()) {
+      if (_incomplete.back().failed()) {
+	_ex = _incomplete.back().get_exception();
+      }
+      _incomplete.pop_back();
+    }
+    if (!_incomplete.empty()) {
+      _incomplete.back().set_callback(static_cast<continuation_base<>*>(this));
+      _incomplete.pop_back();
+      return;
+    }
+    if (__builtin_expect(bool(_ex), false)) {
+      _result.set_exception(std::move(_ex));
+    } else {
+      _result.set_value();
+    }
+    delete this;
+  }
+  virtual void run_and_dispose() noexcept override {
+    if (_state.failed()) {
+      _ex = std::move(_state).get_exception();
+    }
+    _state = {};
+    wait_for_one();
+  }
+public:
+  parallel_for_each_state(size_t n) {
+    _incomplete.reserve(n);
+  }
+  void add_future(future_t&& f) {
+    _incomplete.push_back(std::move(f));
+  }
+  future_t get_future() {
+    auto ret = _result.get_future();
+    wait_for_one();
+    return ret;
+  }
+};
+
+template <typename Iterator, typename Func>
+inline auto parallel_for_each(Iterator begin, Iterator end, Func&& func) {
+  using futurator =
+    ::seastar::futurize<std::result_of_t<Func(decltype(*begin))>>;
+
+  parallel_for_each_state<typename futurator::type>* s = nullptr;
+
+  while (begin != end) {
+    auto f = futurator::invoke(std::forward<Func>(func), *begin++);
+    if (!f.available() || f.failed()) {
+      if (!s) {
+	auto n = std::distance(begin, end) + 1;
+	s = new parallel_for_each_state<typename futurator::type>(n);
+      }
+      s->add_future(std::move(f));
+    }
+  }
+  if (s) {
+    return s->get_future();
+  }
+  return futurator::type::errorator_type::template make_ready_future<>();
+}
+
+template <typename Container, typename AsyncAction>
+inline auto parallel_for_each(Container&& c, AsyncAction&& action) {
+  return ::crimson::parallel_for_each(std::begin(std::forward<Container>(c)),
+				      std::end(std::forward<Container>(c)),
+				      std::move(action));
+}
 
 template<typename Iterator, typename AsyncAction>
 inline auto do_for_each(Iterator begin, Iterator end, AsyncAction action) {
@@ -307,9 +395,6 @@ static constexpr auto composer(FuncHead&& head, FuncTail&&... tail) {
     }
   };
 }
-
-template <class... ValuesT>
-struct errorated_future_marker{};
 
 template <class... AllowedErrors>
 struct errorator {
@@ -688,6 +773,9 @@ private:
 
     template <class...>
     friend class ::seastar::future;
+
+    template <typename T>
+    friend class parallel_for_each_state;
 
     // let seastar::do_with_impl to up-cast us to seastar::future.
     template<typename T, typename F>

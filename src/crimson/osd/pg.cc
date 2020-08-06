@@ -899,7 +899,8 @@ PG::get_locked_obc(
     });
 }
 
-seastar::future<> PG::handle_rep_op(Ref<MOSDRepOp> req)
+crimson::common::interruption_errorator::future<>
+PG::handle_rep_op(Ref<MOSDRepOp> req)
 {
   if (__builtin_expect(stopping, false)) {
     return seastar::make_exception_future<>(
@@ -914,8 +915,9 @@ seastar::future<> PG::handle_rep_op(Ref<MOSDRepOp> req)
   decode(log_entries, p);
   peering_state.append_log(std::move(log_entries), req->pg_trim_to,
       req->version, req->min_last_complete_ondisk, txn, !txn.empty(), false);
-  return shard_services.get_store().do_transaction(coll_ref, std::move(txn))
-    .then([req, lcod=peering_state.get_info().last_complete, this] {
+  return crimson::common::interruption_errorator::future<>(
+      shard_services.get_store().do_transaction(coll_ref, std::move(txn)))
+    .safe_then([req, lcod=peering_state.get_info().last_complete, this] {
       peering_state.update_last_complete_ondisk(lcod);
       const auto map_epoch = get_osdmap_epoch();
       auto reply = make_message<MOSDRepOpReply>(

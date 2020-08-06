@@ -68,17 +68,11 @@ inline seastar::future<> with_interruption(OpFunc&& func, OnInterrupt&& efunc)
       return interruption_errorator::futurize<
 		std::result_of_t<OpFunc()>>::apply(std::move(func), std::make_tuple())
       .handle_error(std::move(efunc));
-
     })._then([] { return seastar::now(); });
   } else {
-    using trait = seastar::function_traits<OnInterrupt>;
-    using ret_type = typename trait::return_type;
     return interruption_errorator::futurize<
 	      std::result_of_t<OpFunc()>>::apply(std::move(func), std::make_tuple())
-    .handle_error(std::move(efunc))
-    ._then([](ret_type&&) {
-	return interruption_errorator::now();
-    });
+    .handle_error(std::move(efunc));
   }
 }
 
