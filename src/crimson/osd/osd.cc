@@ -105,6 +105,9 @@ OSD::OSD(int id, uint32_t nonce,
                     __func__, cpp_strerror(r));
     }
   }
+  crimson::interrupt_cond_builder<
+    crimson::osd::IOInterruptConditionBuilder>::int_cond_builder =
+      std::make_unique<crimson::osd::IOInterruptConditionBuilder>(*this);
 }
 
 OSD::~OSD() = default;

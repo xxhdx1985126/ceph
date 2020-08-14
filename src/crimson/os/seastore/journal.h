@@ -75,6 +75,7 @@ struct record_header_t {
 class JournalSegmentProvider {
 public:
   using get_segment_ertr = crimson::errorator<
+    crimson::osd::IOInterruptConditionBuilder,
     crimson::ct_error::input_output_error>;
   using get_segment_ret = get_segment_ertr::future<segment_id_t>;
   virtual get_segment_ret get_segment() = 0;
@@ -111,6 +112,7 @@ public:
    * Journal.
    */
   using init_ertr = crimson::errorator<
+    crimson::osd::IOInterruptConditionBuilder,
     crimson::ct_error::input_output_error
     >;
   init_ertr::future<> open_for_write();
@@ -121,6 +123,7 @@ public:
    * TODO: should probably flush and disallow further writes
    */
   using close_ertr = crimson::errorator<
+    crimson::osd::IOInterruptConditionBuilder,
     crimson::ct_error::input_output_error>;
   close_ertr::future<> close() { return close_ertr::now(); }
 
@@ -130,6 +133,7 @@ public:
    * @param write record and returns offset of first block
    */
   using submit_record_ertr = crimson::errorator<
+    crimson::osd::IOInterruptConditionBuilder,
     crimson::ct_error::erange,
     crimson::ct_error::input_output_error
     >;
@@ -184,6 +188,7 @@ private:
 
   /// prepare segment for writes, writes out segment header
   using initialize_segment_ertr = crimson::errorator<
+    crimson::osd::IOInterruptConditionBuilder,
     crimson::ct_error::input_output_error>;
   initialize_segment_ertr::future<> initialize_segment(
     Segment &segment);
@@ -212,6 +217,7 @@ private:
 
   /// do record write
   using write_record_ertr = crimson::errorator<
+    crimson::osd::IOInterruptConditionBuilder,
     crimson::ct_error::input_output_error>;
   write_record_ertr::future<> write_record(
     record_size_t rsize,
@@ -219,6 +225,7 @@ private:
 
   /// close current segment and initialize next one
   using roll_journal_segment_ertr = crimson::errorator<
+    crimson::osd::IOInterruptConditionBuilder,
     crimson::ct_error::input_output_error>;
   roll_journal_segment_ertr::future<> roll_journal_segment();
 
@@ -230,6 +237,7 @@ private:
 
   /// return ordered vector of segments to replay
   using find_replay_segments_ertr = crimson::errorator<
+    crimson::osd::IOInterruptConditionBuilder,
     crimson::ct_error::input_output_error
     >;
   using find_replay_segments_fut =

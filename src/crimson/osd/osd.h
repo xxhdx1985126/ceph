@@ -134,6 +134,10 @@ public:
   seastar::future<> start();
   seastar::future<> stop();
 
+  OSDState& get_state() {
+    return state;
+  }
+
   void dump_status(Formatter*) const;
 
   void print(std::ostream&) const;

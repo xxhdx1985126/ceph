@@ -25,6 +25,7 @@
 #include "crimson/common/type_helpers.h"
 #include "crimson/os/futurized_collection.h"
 #include "crimson/osd/backfill_state.h"
+#include "crimson/osd/io_interrupt_condition_builder.h"
 #include "crimson/osd/osd_operations/client_request.h"
 #include "crimson/osd/osd_operations/peering_event.h"
 #include "crimson/osd/osd_operations/replicated_request.h"
@@ -488,6 +489,7 @@ public:
     const hobject_t &oid);
 
   using load_obc_ertr = crimson::errorator<
+    crimson::osd::IOInterruptConditionBuilder,
     crimson::ct_error::object_corrupted>;
   load_obc_ertr::future<
     std::pair<crimson::osd::ObjectContextRef, bool>>

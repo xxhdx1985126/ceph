@@ -13,6 +13,7 @@
 #include "crimson/os/seastore/seastore_types.h"
 #include "include/buffer_fwd.h"
 #include "crimson/osd/exceptions.h"
+#include "crimson/osd/io_interrupt_condition_builder.h"
 
 namespace crimson::os::seastore {
 
@@ -43,6 +44,7 @@ public:
    * outstanding writes to this segment are complete.
    */
   using close_ertr = crimson::errorator<
+    crimson::osd::IOInterruptConditionBuilder,
     crimson::ct_error::input_output_error,
     crimson::ct_error::invarg,
     crimson::ct_error::enoent>;
@@ -57,6 +59,7 @@ public:
    * @param bl     buffer to write, will be padded if not aligned
   */
   using write_ertr = crimson::errorator<
+    crimson::osd::IOInterruptConditionBuilder,
     crimson::ct_error::input_output_error, // media error or corruption
     crimson::ct_error::invarg,             // if offset is < write pointer or misaligned
     crimson::ct_error::ebadf,              // segment closed
@@ -74,24 +77,28 @@ constexpr size_t PADDR_SIZE = sizeof(paddr_t);
 class SegmentManager {
 public:
   using init_ertr = crimson::errorator<
+    crimson::osd::IOInterruptConditionBuilder,
     crimson::ct_error::enospc,
     crimson::ct_error::invarg,
     crimson::ct_error::erange>;
   virtual init_ertr::future<> init() = 0;
 
   using open_ertr = crimson::errorator<
+    crimson::osd::IOInterruptConditionBuilder,
     crimson::ct_error::input_output_error,
     crimson::ct_error::invarg,
     crimson::ct_error::enoent>;
   virtual open_ertr::future<SegmentRef> open(segment_id_t id) = 0;
 
   using release_ertr = crimson::errorator<
+    crimson::osd::IOInterruptConditionBuilder,
     crimson::ct_error::input_output_error,
     crimson::ct_error::invarg,
     crimson::ct_error::enoent>;
   virtual release_ertr::future<> release(segment_id_t id) = 0;
 
   using read_ertr = crimson::errorator<
+    crimson::osd::IOInterruptConditionBuilder,
     crimson::ct_error::input_output_error,
     crimson::ct_error::invarg,
     crimson::ct_error::enoent,
