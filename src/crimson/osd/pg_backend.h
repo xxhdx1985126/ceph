@@ -19,6 +19,7 @@
 #include "messages/MOSDOpReply.h"
 #include "os/Transaction.h"
 #include "osd/osd_types.h"
+#include "crimson/osd/io_interrupt_condition_builder.h"
 #include "crimson/osd/object_context.h"
 #include "crimson/osd/osd_operation.h"
 #include "crimson/osd/osd_operations/osdop_params.h"
@@ -43,6 +44,7 @@ protected:
 
 public:
   using load_metadata_ertr = crimson::errorator<
+    crimson::osd::IOInterruptConditionBuilder,
     crimson::ct_error::object_corrupted>;
   PGBackend(shard_id_t shard, CollectionRef coll, crimson::os::FuturizedStore* store);
   virtual ~PGBackend() = default;
@@ -73,13 +75,17 @@ public:
   cmp_ext_errorator::future<> cmp_ext(
     const ObjectState& os,
     OSDOp& osd_op);
-  using stat_errorator = crimson::errorator<crimson::ct_error::enoent>;
+
+  using stat_errorator = crimson::errorator<
+    crimson::osd::IOInterruptConditionBuilder,
+    crimson::ct_error::enoent>;
   stat_errorator::future<> stat(
     const ObjectState& os,
     OSDOp& osd_op);
 
   // TODO: switch the entire write family to errorator.
   using write_ertr = crimson::errorator<
+    crimson::osd::IOInterruptConditionBuilder,
     crimson::ct_error::file_too_large>;
   seastar::future<> create(
     ObjectState& os,
@@ -208,6 +214,9 @@ protected:
   crimson::os::FuturizedStore* store;
   bool stopping = false;
   std::optional<peering_info_t> peering;
+  using interruption_errorator =
+    crimson::common::interruption_errorator<
+      crimson::osd::IOInterruptConditionBuilder>;
 public:
   struct loaded_object_md_t {
     ObjectState os;
@@ -225,7 +234,7 @@ private:
     uint32_t flags) = 0;
 
   bool maybe_create_new_object(ObjectState& os, ceph::os::Transaction& txn);
-  virtual crimson::common::interruption_errorator::future<crimson::osd::acked_peers_t>
+  virtual interruption_errorator::future<crimson::osd::acked_peers_t>
   _submit_transaction(std::set<pg_shard_t>&& pg_shards,
 		      const hobject_t& hoid,
 		      ceph::os::Transaction&& txn,

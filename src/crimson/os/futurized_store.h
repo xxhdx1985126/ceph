@@ -12,6 +12,7 @@
 #include <seastar/core/future.hh>
 
 #include "crimson/osd/exceptions.h"
+#include "crimson/osd/io_interrupt_condition_builder.h"
 #include "include/buffer_fwd.h"
 #include "include/uuid.h"
 #include "osd/osd_types.h"
@@ -84,7 +85,8 @@ public:
   virtual seastar::future<store_statfs_t> stat() const = 0;
 
   using CollectionRef = boost::intrusive_ptr<FuturizedCollection>;
-  using read_errorator = crimson::errorator<crimson::ct_error::enoent,
+  using read_errorator = crimson::errorator<crimson::osd::IOInterruptConditionBuilder,
+					    crimson::ct_error::enoent,
                                             crimson::ct_error::input_output_error>;
   virtual read_errorator::future<ceph::bufferlist> read(
     CollectionRef c,
@@ -99,6 +101,7 @@ public:
     uint32_t op_flags = 0) = 0;
 
   using get_attr_errorator = crimson::errorator<
+    crimson::osd::IOInterruptConditionBuilder,
     crimson::ct_error::enoent,
     crimson::ct_error::enodata>;
   virtual get_attr_errorator::future<ceph::bufferptr> get_attr(
@@ -107,6 +110,7 @@ public:
     std::string_view name) const = 0;
 
   using get_attrs_ertr = crimson::errorator<
+    crimson::osd::IOInterruptConditionBuilder,
     crimson::ct_error::enoent>;
   using attrs_t = std::map<std::string, ceph::bufferptr, std::less<>>;
   virtual get_attrs_ertr::future<attrs_t> get_attrs(

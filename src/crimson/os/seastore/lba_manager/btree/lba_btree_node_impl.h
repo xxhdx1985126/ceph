@@ -248,6 +248,7 @@ struct LBAInternalNode
   }
 
   using split_ertr = crimson::errorator<
+    crimson::osd::IOInterruptConditionBuilder,
     crimson::ct_error::input_output_error
     >;
   using split_ret = split_ertr::future<LBANodeRef>;
@@ -258,6 +259,7 @@ struct LBAInternalNode
     LBANodeRef entry);
 
   using merge_ertr = crimson::errorator<
+    crimson::osd::IOInterruptConditionBuilder,
     crimson::ct_error::input_output_error
     >;
   using merge_ret = merge_ertr::future<LBANodeRef>;

@@ -22,7 +22,7 @@ ECBackend::_read(const hobject_t& hoid,
   return seastar::make_ready_future<bufferlist>();
 }
 
-crimson::common::interruption_errorator::future<crimson::osd::acked_peers_t>
+PGBackend::interruption_errorator::future<crimson::osd::acked_peers_t>
 ECBackend::_submit_transaction(std::set<pg_shard_t>&& pg_shards,
                                const hobject_t& hoid,
                                ceph::os::Transaction&& txn,

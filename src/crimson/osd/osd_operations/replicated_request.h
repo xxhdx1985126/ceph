@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "crimson/common/exception.h"
 #include "crimson/net/Connection.h"
 #include "crimson/osd/osd_operation.h"
 #include "crimson/common/type_helpers.h"
@@ -17,6 +18,7 @@ namespace crimson::osd {
 
 class OSD;
 class PG;
+class IOInterruptConditionBuilder;
 
 class RepRequest final : public OperationT<RepRequest> {
 public:
@@ -46,6 +48,9 @@ public:
   seastar::future<> start();
 
 private:
+  using interruption_errorator =
+    crimson::common::interruption_errorator<
+      IOInterruptConditionBuilder>;
   ConnectionPipeline &cp();
   PGPipeline &pp(PG &pg);
 

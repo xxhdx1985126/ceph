@@ -119,6 +119,7 @@ private:
    * Insert a lba mapping into the tree
    */
   using insert_mapping_ertr = crimson::errorator<
+    crimson::osd::IOInterruptConditionBuilder,
     crimson::ct_error::input_output_error>;
   using insert_mapping_ret = insert_mapping_ertr::future<LBAPinRef>;
   insert_mapping_ret insert_mapping(

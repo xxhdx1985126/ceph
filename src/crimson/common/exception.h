@@ -57,20 +57,23 @@ private:
   const bool still_primary;
 };
 
-using interruption_errorator = crimson::errorator<esysshut, eactingchg>;
+template <typename INT_COND_BUILDER>
+using interruption_errorator = crimson::errorator<INT_COND_BUILDER,
+						  esysshut,
+						  eactingchg>;
 
-template<bool may_loop = true, typename OpFunc, typename OnInterrupt>
+template<typename INT_COND_BUILDER, bool may_loop = true, typename OpFunc, typename OnInterrupt>
 inline seastar::future<> with_interruption(OpFunc&& func, OnInterrupt&& efunc)
 {
   if constexpr (may_loop) {
     return crimson::do_until([func=std::move(func),
 			     efunc=std::move(efunc)]() mutable {
-      return interruption_errorator::futurize<
+      return interruption_errorator<INT_COND_BUILDER>::template futurize<
 		std::result_of_t<OpFunc()>>::apply(std::move(func), std::make_tuple())
       .handle_error(std::move(efunc));
     })._then([] { return seastar::now(); });
   } else {
-    return interruption_errorator::futurize<
+    return interruption_errorator<INT_COND_BUILDER>::template futurize<
 	      std::result_of_t<OpFunc()>>::apply(std::move(func), std::make_tuple())
     .handle_error(std::move(efunc));
   }

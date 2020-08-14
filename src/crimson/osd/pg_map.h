@@ -19,6 +19,8 @@ namespace crimson::osd {
 class PG;
 
 class PGMap {
+  using interruption_errorator =
+    crimson::common::interruption_errorator<IOInterruptConditionBuilder>;
   struct PGCreationState : BlockerT<PGCreationState> {
     static constexpr const char * type_name = "PGCreation";
 
@@ -49,7 +51,7 @@ public:
   std::pair<blocking_future<Ref<PG>>, bool> get_pg(spg_t pgid, bool wait=true);
 
   std::pair<blocking_errorated_future<
-	      crimson::common::interruption_errorator,
+	      interruption_errorator,
 	      Ref<PG>>,
 	   bool> get_pg_errorated(spg_t pgid, bool wait=true);
 

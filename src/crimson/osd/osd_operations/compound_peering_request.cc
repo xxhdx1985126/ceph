@@ -12,6 +12,7 @@
 
 #include "crimson/common/exception.h"
 #include "crimson/osd/pg.h"
+#include "crimson/osd/io_interrupt_condition_builder.h"
 #include "crimson/osd/osd.h"
 #include "crimson/osd/osd_operations/compound_peering_request.h"
 

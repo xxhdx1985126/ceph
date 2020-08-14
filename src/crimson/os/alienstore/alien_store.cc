@@ -25,6 +25,7 @@
 #include "os/Transaction.h"
 
 #include "crimson/common/log.h"
+#include "crimson/osd/io_interrupt_condition_builder.h"
 #include "crimson/os/futurized_store.h"
 
 namespace {

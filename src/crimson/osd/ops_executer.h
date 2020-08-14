@@ -39,6 +39,7 @@ namespace crimson::osd {
 // PgOpsExecuter -- a class for executing ops targeting a certain object.
 class OpsExecuter {
   using call_errorator = crimson::errorator<
+    crimson::osd::IOInterruptConditionBuilder,
     crimson::stateful_ec,
     crimson::ct_error::enoent,
     crimson::ct_error::invarg,
@@ -50,6 +51,7 @@ class OpsExecuter {
   using write_ertr = PGBackend::write_ertr;
   using get_attr_errorator = PGBackend::get_attr_errorator;
   using watch_errorator = crimson::errorator<
+    crimson::osd::IOInterruptConditionBuilder,
     crimson::ct_error::enoent,
     crimson::ct_error::invarg,
     crimson::ct_error::not_connected,

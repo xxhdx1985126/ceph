@@ -127,6 +127,7 @@ private:
 
 
   using write_ertr = crimson::errorator<
+    crimson::osd::IOInterruptConditionBuilder,
     crimson::ct_error::input_output_error>;
   write_ertr::future<> _do_transaction_step(
     TransactionRef &trans,

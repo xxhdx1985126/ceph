@@ -6,6 +6,7 @@
 #include "osd/osd_op_util.h"
 #include "crimson/common/exception.h"
 #include "crimson/net/Connection.h"
+#include "crimson/osd/io_interrupt_condition_builder.h"
 #include "crimson/osd/osd_operation.h"
 #include "crimson/common/type_helpers.h"
 #include "messages/MOSDOp.h"
@@ -61,9 +62,12 @@ public:
   seastar::future<> start();
 
 private:
+  using interruption_errorator =
+    crimson::common::interruption_errorator<
+      IOInterruptConditionBuilder>;
   seastar::future<> process_pg_op(
     Ref<PG> &pg);
-  crimson::common::interruption_errorator::future<> process_op(
+  interruption_errorator::future<> process_op(
     Ref<PG> &pg);
   bool is_pg_op() const;
 

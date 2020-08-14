@@ -14,6 +14,7 @@
 #include "include/buffer.h"
 #include "crimson/common/errorator.h"
 #include "crimson/os/seastore/seastore_types.h"
+#include "crimson/osd/io_interrupt_condition_builder.h"
 
 namespace crimson::os::seastore {
 
@@ -160,6 +161,7 @@ public:
    * to load in lba_manager blocks)
    */
   using complete_load_ertr = crimson::errorator<
+    crimson::osd::IOInterruptConditionBuilder,
     crimson::ct_error::input_output_error>;
   virtual complete_load_ertr::future<> complete_load() {
     return complete_load_ertr::now();

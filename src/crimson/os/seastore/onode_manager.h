@@ -23,6 +23,7 @@ namespace crimson::os::seastore {
 class OnodeManager {
 public:
   using open_ertr = crimson::errorator<
+    crimson::osd::IOInterruptConditionBuilder,
     crimson::ct_error::input_output_error>;
   virtual open_ertr::future<OnodeRef> get_or_create_onode(
     Transaction &trans,
@@ -36,6 +37,7 @@ public:
   }
 
   using write_ertr= crimson::errorator<
+    crimson::osd::IOInterruptConditionBuilder,
     crimson::ct_error::input_output_error>;
   virtual write_ertr::future<> write_dirty(
     Transaction &trans,

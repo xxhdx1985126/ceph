@@ -25,6 +25,7 @@
 #include "crimson/common/type_helpers.h"
 #include "crimson/os/futurized_collection.h"
 #include "crimson/osd/backfill_state.h"
+#include "crimson/osd/io_interrupt_condition_builder.h"
 #include "crimson/osd/osd_operations/client_request.h"
 #include "crimson/osd/osd_operations/peering_event.h"
 #include "crimson/osd/osd_operations/replicated_request.h"
@@ -55,6 +56,7 @@ namespace crimson::os {
 
 namespace crimson::osd {
 class ClientRequest;
+class IOInterruptConditionBuilder;
 
 class PG : public boost::intrusive_ref_counter<
   PG,
@@ -65,6 +67,9 @@ class PG : public boost::intrusive_ref_counter<
 {
   using ec_profile_t = std::map<std::string,std::string>;
   using cached_map_t = boost::local_shared_ptr<const OSDMap>;
+
+  using interruption_errorator =
+    crimson::common::interruption_errorator<IOInterruptConditionBuilder>;
 
   ClientRequest::PGPipeline client_request_pg_pipeline;
   PeeringEvent::PGPipeline peering_request_pg_pipeline;
@@ -491,6 +496,7 @@ public:
     const hobject_t &oid);
 
   using load_obc_ertr = crimson::errorator<
+    crimson::osd::IOInterruptConditionBuilder,
     crimson::ct_error::object_corrupted>;
   load_obc_ertr::future<
     std::pair<crimson::osd::ObjectContextRef, bool>>
@@ -506,6 +512,9 @@ public:
     const hobject_t &oid,
     RWState::State type);
 public:
+  bool is_stopping() {
+    return stopping;
+  }
   template <typename F>
   auto with_locked_obc(
     Ref<MOSDOp> &m,
@@ -525,7 +534,7 @@ public:
       });
   }
 
-  crimson::common::interruption_errorator::future<>
+  interruption_errorator::future<>
   handle_rep_op(Ref<MOSDRepOp> m);
   void handle_rep_op_reply(crimson::net::Connection* conn,
 			   const MOSDRepOpReply& m);
@@ -536,7 +545,7 @@ private:
   void do_peering_event(
     const boost::statechart::event_base &evt,
     PeeringCtx &rctx);
-  crimson::common::interruption_errorator::future<Ref<MOSDOpReply>> do_osd_ops(
+  interruption_errorator::future<Ref<MOSDOpReply>> do_osd_ops(
     Ref<MOSDOp> m,
     ObjectContextRef obc,
     const OpInfo &op_info);
@@ -652,7 +661,7 @@ private:
     WaitForActiveBlocker(PG *pg) : pg(pg) {}
     void on_active();
     blocking_future<> wait();
-    blocking_errorated_future<crimson::common::interruption_errorator>
+    blocking_errorated_future<interruption_errorator>
     wait_errorated();
 
     seastar::future<> stop();

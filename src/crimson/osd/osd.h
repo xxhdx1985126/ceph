@@ -134,6 +134,10 @@ public:
   seastar::future<> start();
   seastar::future<> stop();
 
+  OSDState& get_state() {
+    return state;
+  }
+
   void dump_status(Formatter*) const;
 
   void print(std::ostream&) const;
@@ -225,6 +229,9 @@ private:
     stop_acked.set_value();
   }
   seastar::future<> prepare_to_stop();
+  using interruption_errorator =
+    crimson::common::interruption_errorator<
+      IOInterruptConditionBuilder>;
 public:
   blocking_future<Ref<PG>> get_or_create_pg(
     spg_t pgid,
@@ -232,7 +239,7 @@ public:
     std::unique_ptr<PGCreateInfo> info);
   blocking_future<Ref<PG>> wait_for_pg(
     spg_t pgid);
-  blocking_errorated_future<crimson::common::interruption_errorator, Ref<PG>>
+  blocking_errorated_future<interruption_errorator, Ref<PG>>
   wait_for_pg_errorated(spg_t pgid);
 
 

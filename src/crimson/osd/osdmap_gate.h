@@ -21,6 +21,7 @@ namespace ceph {
 namespace crimson::osd {
 
 class ShardServices;
+class IOInterruptConditionBuilder;
 
 class OSDMapGate {
   struct OSDMapBlocker : public Blocker {
@@ -61,7 +62,11 @@ public:
 
   // wait for an osdmap whose epoch is greater or equal to given epoch
   blocking_future<epoch_t> wait_for_map(epoch_t epoch);
-  blocking_errorated_future<crimson::common::interruption_errorator,
+  using interruption_errorator =
+    crimson::common::interruption_errorator<
+      IOInterruptConditionBuilder
+    >;
+  blocking_errorated_future<interruption_errorator,
 			    epoch_t>
   wait_for_map_errorated(epoch_t epoch);
   void got_map(epoch_t epoch);
