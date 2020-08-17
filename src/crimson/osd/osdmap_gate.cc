@@ -46,18 +46,18 @@ blocking_future<epoch_t> OSDMapGate::wait_for_map(epoch_t epoch)
   }
 }
 
-blocking_errorated_future<crimson::common::interruption_errorator,
+blocking_errorated_future<OSDMapGate::interruption_errorator,
 			  epoch_t>
 OSDMapGate::wait_for_map_errorated(epoch_t epoch)
 {
   if (__builtin_expect(stopping, false)) {
     return make_exception_blocking_errorated_future<
-	    crimson::common::interruption_errorator, epoch_t>(
+	    OSDMapGate::interruption_errorator, epoch_t>(
 		crimson::common::esysshut::make());
   }
   if (current >= epoch) {
     return make_ready_blocking_errorated_future<
-	    crimson::common::interruption_errorator, epoch_t>(current);
+	    OSDMapGate::interruption_errorator, epoch_t>(current);
   } else {
     logger().info("evt epoch is {}, i have {}, will wait", epoch, current);
     auto &blocker = waiting_peering.emplace(
@@ -65,14 +65,14 @@ OSDMapGate::wait_for_map_errorated(epoch_t epoch)
     auto fut = blocker.promise.get_shared_future();
     if (shard_services) {
       return blocker.make_blocking_errorated_future<
-	      crimson::common::interruption_errorator>(
+	      OSDMapGate::interruption_errorator>(
 	(*shard_services).get().osdmap_subscribe(current, true).then(
 	  [fut=std::move(fut)]() mutable {
 	    return std::move(fut);
 	  }));
     } else {
       return blocker.make_blocking_errorated_future<
-	      crimson::common::interruption_errorator>(std::move(fut));
+	      OSDMapGate::interruption_errorator>(std::move(fut));
     }
   }
 }

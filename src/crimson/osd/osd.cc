@@ -1289,7 +1289,7 @@ blocking_future<Ref<PG>> OSD::wait_for_pg(
   return pg_map.get_pg(pgid).first;
 }
 
-blocking_errorated_future<crimson::common::interruption_errorator, Ref<PG>>
+blocking_errorated_future<OSD::interruption_errorator, Ref<PG>>
 OSD::wait_for_pg_errorated(spg_t pgid)
 {
   return pg_map.get_pg_errorated(pgid).first;

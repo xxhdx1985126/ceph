@@ -3,7 +3,9 @@
 
 #pragma once
 
+#include "crimson/common/exception.h"
 #include "crimson/net/Connection.h"
+#include "crimson/osd/io_interrupt_condition_builder.h"
 #include "crimson/osd/osd_operation.h"
 #include "crimson/common/type_helpers.h"
 
@@ -46,6 +48,9 @@ public:
   seastar::future<> start();
 
 private:
+  using interruption_errorator =
+    crimson::common::interruption_errorator<
+      IOInterruptConditionBuilder>;
   ConnectionPipeline &cp();
   PGPipeline &pp(PG &pg);
 

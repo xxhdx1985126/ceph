@@ -38,22 +38,22 @@ std::pair<blocking_future<Ref<PG>>, bool> PGMap::get_pg(spg_t pgid, bool wait)
 }
 
 std::pair<blocking_errorated_future<
-	    crimson::common::interruption_errorator,
+	    PGMap::interruption_errorator,
 	    Ref<PG>>,
 	 bool>
 PGMap::get_pg_errorated(spg_t pgid, bool wait)
 {
   if (auto pg = pgs.find(pgid); pg != pgs.end()) {
     return make_pair(make_ready_blocking_errorated_future<
-	crimson::common::interruption_errorator, Ref<PG>>(pg->second), true);
+	PGMap::interruption_errorator, Ref<PG>>(pg->second), true);
   } else if (!wait) {
     return make_pair(make_ready_blocking_errorated_future<
-	crimson::common::interruption_errorator, Ref<PG>>(nullptr), true);
+	PGMap::interruption_errorator, Ref<PG>>(nullptr), true);
   } else {
     auto &state = pgs_creating.emplace(pgid, pgid).first->second;
     return make_pair(
       state.make_blocking_errorated_future<
-	crimson::common::interruption_errorator>(state.promise.get_shared_future()),
+	PGMap::interruption_errorator>(state.promise.get_shared_future()),
       state.creating);
   }
 }

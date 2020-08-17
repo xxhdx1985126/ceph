@@ -28,6 +28,7 @@ add_executable(crimson-osd
   osdmap_gate.cc
   pg_map.cc
   objclass.cc
+  io_interrupt_condition_builder.cc
   ${PROJECT_SOURCE_DIR}/src/objclass/class_api.cc
   ${PROJECT_SOURCE_DIR}/src/osd/ClassHandler.cc
   ${PROJECT_SOURCE_DIR}/src/osd/osd_op_util.cc

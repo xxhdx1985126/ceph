@@ -11,17 +11,18 @@ class OSD;
 
 class IOInterruptConditionBuilder {
 public:
-  IOInterruptConditionBuilder(OSD& osd);
+  IOInterruptConditionBuilder(OSD& osd)
+    : osd(osd) {}
 
   template <typename Errorator>
   class interrupt_condition {
   public:
-    interrupt_condition(epoch_t e, OSD& osd);
+    interrupt_condition(epoch_t e, OSD* osd);
 
     typename Errorator::template future<> operator()();
   private:
-    OSD& osd;
     epoch_t e;
+    OSD* osd;
   };
 
   template <typename Errorator>

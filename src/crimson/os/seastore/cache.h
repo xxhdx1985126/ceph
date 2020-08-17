@@ -92,6 +92,7 @@ public:
 
   /// Declare paddr retired in t, noop if not cached
   using retire_extent_ertr = crimson::errorator<
+    crimson::osd::IOInterruptConditionBuilder,
     crimson::ct_error::input_output_error>;
   using retire_extent_ret = retire_extent_ertr::future<>;
   retire_extent_ret retire_extent_if_cached(

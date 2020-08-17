@@ -523,13 +523,13 @@ blocking_future<> PG::WaitForActiveBlocker::wait()
   }
 }
 
-blocking_errorated_future<crimson::common::interruption_errorator>
+blocking_errorated_future<PG::interruption_errorator>
 PG::WaitForActiveBlocker::wait_errorated()
 {
   if (pg->peering_state.is_active()) {
-    return make_blocking_errorated_future<crimson::common::interruption_errorator>(seastar::now());
+    return make_blocking_errorated_future<PG::interruption_errorator>(seastar::now());
   } else {
-    return make_blocking_errorated_future<crimson::common::interruption_errorator>(p.get_shared_future());
+    return make_blocking_errorated_future<PG::interruption_errorator>(p.get_shared_future());
   }
 }
 
@@ -588,7 +588,7 @@ seastar::future<> PG::submit_transaction(const OpInfo& op_info,
   });
 }
 
-crimson::common::interruption_errorator::future<Ref<MOSDOpReply>> PG::do_osd_ops(
+PG::interruption_errorator::future<Ref<MOSDOpReply>> PG::do_osd_ops(
   Ref<MOSDOp> m,
   ObjectContextRef obc,
   const OpInfo &op_info)
@@ -650,7 +650,7 @@ crimson::common::interruption_errorator::future<Ref<MOSDOpReply>> PG::do_osd_ops
       "do_osd_ops: {} - object {} sending reply",
       *m,
       obc->obs.oi.soid);
-    return crimson::common::interruption_errorator::make_ready_future<
+    return PG::interruption_errorator::make_ready_future<
 	      Ref<MOSDOpReply>>(std::move(reply));
   }, OpsExecuter::osd_op_errorator::all_same_way([=] (const std::error_code& e) {
     assert(e.value() > 0);
@@ -664,7 +664,7 @@ crimson::common::interruption_errorator::future<Ref<MOSDOpReply>> PG::do_osd_ops
       m.get(), -e.value(), get_osdmap_epoch(), 0, false);
     reply->set_enoent_reply_versions(peering_state.get_info().last_update,
 				     peering_state.get_info().last_user_version);
-    return crimson::common::interruption_errorator::make_ready_future<
+    return PG::interruption_errorator::make_ready_future<
 	      Ref<MOSDOpReply>>(std::move(reply));
   })).handle_exception_type([=](const crimson::osd::error& e) {
     // we need this handler because throwing path which aren't errorated yet.
@@ -678,7 +678,7 @@ crimson::common::interruption_errorator::future<Ref<MOSDOpReply>> PG::do_osd_ops
       m.get(), -e.code().value(), get_osdmap_epoch(), 0, false);
     reply->set_enoent_reply_versions(peering_state.get_info().last_update,
 				     peering_state.get_info().last_user_version);
-    return crimson::common::interruption_errorator::make_ready_future<
+    return PG::interruption_errorator::make_ready_future<
 	      Ref<MOSDOpReply>>(std::move(reply));
   });
 }
@@ -899,7 +899,7 @@ PG::get_locked_obc(
     });
 }
 
-crimson::common::interruption_errorator::future<>
+PG::interruption_errorator::future<>
 PG::handle_rep_op(Ref<MOSDRepOp> req)
 {
   if (__builtin_expect(stopping, false)) {
@@ -915,7 +915,7 @@ PG::handle_rep_op(Ref<MOSDRepOp> req)
   decode(log_entries, p);
   peering_state.append_log(std::move(log_entries), req->pg_trim_to,
       req->version, req->min_last_complete_ondisk, txn, !txn.empty(), false);
-  return crimson::common::interruption_errorator::future<>(
+  return PG::interruption_errorator::future<>(
       shard_services.get_store().do_transaction(coll_ref, std::move(txn)))
     .safe_then([req, lcod=peering_state.get_info().last_complete, this] {
       peering_state.update_last_complete_ondisk(lcod);

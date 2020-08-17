@@ -26,7 +26,7 @@ private:
                                                     uint64_t off,
                                                     uint64_t len,
                                                     uint32_t flags) override;
-  crimson::common::interruption_errorator::future<crimson::osd::acked_peers_t>
+  PGBackend::interruption_errorator::future<crimson::osd::acked_peers_t>
   _submit_transaction(std::set<pg_shard_t>&& pg_shards,
 		      const hobject_t& hoid,
 		      ceph::os::Transaction&& txn,

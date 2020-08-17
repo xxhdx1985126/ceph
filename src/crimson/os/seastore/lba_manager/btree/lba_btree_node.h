@@ -65,6 +65,7 @@ struct LBANode : CachedExtent {
    * for laddr
    */
   using lookup_ertr = crimson::errorator<
+    crimson::osd::IOInterruptConditionBuilder,
     crimson::ct_error::input_output_error>;
   using lookup_ret = lookup_ertr::future<LBANodeRef>;
   virtual lookup_ret lookup(
@@ -91,6 +92,7 @@ struct LBANode : CachedExtent {
    * Precondition: !at_max_capacity()
    */
   using insert_ertr = crimson::errorator<
+    crimson::osd::IOInterruptConditionBuilder,
     crimson::ct_error::input_output_error
     >;
   using insert_ret = insert_ertr::future<LBAPinRef>;
@@ -107,6 +109,7 @@ struct LBANode : CachedExtent {
    * @return addr of hole, L_ADDR_NULL if unfound
    */
   using find_hole_ertr = crimson::errorator<
+    crimson::osd::IOInterruptConditionBuilder,
     crimson::ct_error::input_output_error>;
   using find_hole_ret = find_hole_ertr::future<laddr_t>;
   virtual find_hole_ret find_hole(
@@ -125,6 +128,7 @@ struct LBANode : CachedExtent {
    * Precondition: !at_min_capacity()
    */
   using mutate_mapping_ertr = crimson::errorator<
+    crimson::osd::IOInterruptConditionBuilder,
     crimson::ct_error::enoent,            ///< mapping does not exist
     crimson::ct_error::input_output_error
     >;

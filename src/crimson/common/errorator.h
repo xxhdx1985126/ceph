@@ -401,6 +401,9 @@ struct interrupt_cond_builder {
   static std::unique_ptr<INT_COND_BUILDER> int_cond_builder;
 };
 
+template <typename INT_COND_BUILDER>
+std::unique_ptr<INT_COND_BUILDER> interrupt_cond_builder<INT_COND_BUILDER>::int_cond_builder = std::unique_ptr<INT_COND_BUILDER>();
+
 template <class INT_COND_BUILDER, class... AllowedErrors>
 struct errorator {
   template <class T>
@@ -414,8 +417,8 @@ struct errorator {
     static constexpr bool value =
       (0 + ... + std::is_same_v<ErrorT, AllowedErrors>) == 1;
   };
-  template <class... Errors>
-  struct contains_once<errorator<Errors...>> {
+  template <class ICOND_BUILDER, class... Errors>
+  struct contains_once<errorator<ICOND_BUILDER, Errors...>> {
     static constexpr bool value = (... && contains_once<Errors>::value);
   };
   template <class T>
@@ -469,9 +472,9 @@ struct errorator {
 					 ErrorVisitorRetsTailT...>::type;
   };
   // finish the recursion
-  template <class... ValueFuncAllowedErrors>
-  struct make_errorator<errorator<ValueFuncAllowedErrors...>> {
-    using type = ::crimson::errorator<ValueFuncAllowedErrors...>;
+  template <class ValueFunc_INT_COND_BUILDER, class... ValueFuncAllowedErrors>
+  struct make_errorator<errorator<ValueFunc_INT_COND_BUILDER, ValueFuncAllowedErrors...>> {
+    using type = ::crimson::errorator<ValueFunc_INT_COND_BUILDER, ValueFuncAllowedErrors...>;
   };
   template <class... Args>
   using make_errorator_t = typename make_errorator<Args...>::type;
@@ -530,6 +533,13 @@ private:
     using base_t::failed;
 
     [[gnu::always_inline]]
+    _future(seastar::future_for_get_promise_marker m)
+      : base_t(m),
+	interrupt_cond(interrupt_cond_builder<
+	  INT_COND_BUILDER>::int_cond_builder->template get_condition<errorator_type>()) {
+    }
+
+    [[gnu::always_inline]]
     _future(base_t&& base)
       : base_t(std::move(base)),
 	interrupt_cond(interrupt_cond_builder<
@@ -572,7 +582,7 @@ private:
           ::crimson::errorated_future_marker<ValuesT...>>::errorator_type;
       static_assert(dest_errorator_t::template contains_once_v<errorator_type>,
                     "conversion is possible to more-or-eq errorated future!");
-      return static_cast<base_t&&>(*this);
+      return std::move(*this);
     }
 
     // initialize future as failed without throwing. `make_exception_future()`
@@ -614,6 +624,8 @@ private:
       static_assert(errorator_type::contains_once_v<DecayedT>,
                     "ErrorT is not enlisted in errorator");
     }
+
+    _future& operator=(_future&&) = default;
 
     template <class ValueFuncT, class ErrorVisitorT>
     auto safe_then(ValueFuncT&& valfunc, ErrorVisitorT&& errfunc) {
@@ -907,9 +919,11 @@ public:
   struct unify {
     // 1st: generic NOP template
   };
-  template <class    OtherAllowedErrorsHead,
+  template <class NEW_INT_COND_BUILDER,
+	    class    OtherAllowedErrorsHead,
             class... OtherAllowedErrorsTail>
-  struct unify<errorator<OtherAllowedErrorsHead,
+  struct unify<errorator<NEW_INT_COND_BUILDER,
+			 OtherAllowedErrorsHead,
                          OtherAllowedErrorsTail...>> {
   private:
     // 2nd: specialization for errorators with non-empty error set.
@@ -919,18 +933,18 @@ public:
     // of the other one only if it isn't already present in the set.
     using step_errorator = std::conditional_t<
       contains_once_v<OtherAllowedErrorsHead> == false,
-      errorator<AllowedErrors..., OtherAllowedErrorsHead>,
-      errorator<AllowedErrors...>>;
-    using rest_errorator = errorator<OtherAllowedErrorsTail...>;
+      errorator<NEW_INT_COND_BUILDER, AllowedErrors..., OtherAllowedErrorsHead>,
+      errorator<NEW_INT_COND_BUILDER, AllowedErrors...>>;
+    using rest_errorator = errorator<NEW_INT_COND_BUILDER, OtherAllowedErrorsTail...>;
 
   public:
     using type = typename step_errorator::template unify<rest_errorator>::type;
   };
-  template <class... EmptyPack>
-  struct unify<errorator<EmptyPack...>> {
+  template <class NEW_INT_COND_BUILDER, class... EmptyPack>
+  struct unify<errorator<NEW_INT_COND_BUILDER, EmptyPack...>> {
     // 3rd: recursion finisher
     static_assert(sizeof...(EmptyPack) == 0);
-    using type = errorator<AllowedErrors...>;
+    using type = errorator<NEW_INT_COND_BUILDER, AllowedErrors...>;
   };
 
   template <typename... T, typename... A>
@@ -1037,10 +1051,10 @@ private:
   template <class, class...>
   friend class errorator;
 }; // class errorator, generic template
-/*
+
 // no errors? errorator<>::future is plain seastar::future then!
-template <>
-class errorator<> {
+template <typename INT_COND_BUILDER>
+class errorator<INT_COND_BUILDER> {
 public:
   template <class... ValuesT>
   using future = ::seastar::future<ValuesT...>;
@@ -1050,22 +1064,22 @@ public:
 
   // get a new errorator by extending current one with new error
   template <class... NewAllowedErrors>
-  using extend = errorator<NewAllowedErrors...>;
+  using extend = errorator<INT_COND_BUILDER, NewAllowedErrors...>;
 
   template <typename>
   struct extend_by_errorator {};
 
   template <template <typename...> typename NewErrorator,
+	    typename NEW_INT_COND_BUILDER,
 	    typename... NewAllowedErrors>
-  struct extend_by_errorator<NewErrorator<NewAllowedErrors...>> {
-    using extended_type = errorator<NewAllowedErrors...>;
+  struct extend_by_errorator<NewErrorator<NEW_INT_COND_BUILDER, NewAllowedErrors...>> {
+    using extended_type = errorator<NEW_INT_COND_BUILDER, NewAllowedErrors...>;
   };
 
   // errorator with empty error set never contains any error
   template <class T>
   static constexpr bool contains_once_v = false;
 }; // class errorator, <> specialization
-*/
 
 template <class    ErroratorOne,
           class    ErroratorTwo,
