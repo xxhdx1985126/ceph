@@ -13,7 +13,6 @@
 #include "include/types.h"
 #include "crimson/common/exception.h"
 #include "crimson/osd/osd_operation.h"
-#include "crimson/osd/io_interrupt_condition_builder.h"
 
 namespace ceph {
   class Formatter;
@@ -22,6 +21,7 @@ namespace ceph {
 namespace crimson::osd {
 
 class ShardServices;
+class IOInterruptConditionBuilder;
 
 class OSDMapGate {
   struct OSDMapBlocker : public Blocker {

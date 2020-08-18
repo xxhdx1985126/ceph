@@ -56,6 +56,7 @@ namespace crimson::os {
 
 namespace crimson::osd {
 class ClientRequest;
+class IOInterruptConditionBuilder;
 
 class PG : public boost::intrusive_ref_counter<
   PG,

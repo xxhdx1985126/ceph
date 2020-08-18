@@ -2,6 +2,7 @@
 // vim: ts=8 sw=2 smarttab
 
 #include "crimson/common/exception.h"
+#include "crimson/osd/io_interrupt_condition_builder.h"
 #include "crimson/osd/osdmap_gate.h"
 #include "crimson/osd/shard_services.h"
 #include "common/Formatter.h"

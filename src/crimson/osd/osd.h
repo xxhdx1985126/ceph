@@ -20,7 +20,6 @@
 #include "crimson/common/shared_lru.h"
 #include "crimson/mgr/client.h"
 #include "crimson/net/Dispatcher.h"
-#include "crimson/osd/io_interrupt_condition_builder.h"
 #include "crimson/osd/osdmap_service.h"
 #include "crimson/osd/state.h"
 #include "crimson/osd/shard_services.h"

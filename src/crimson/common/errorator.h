@@ -396,14 +396,6 @@ static constexpr auto composer(FuncHead&& head, FuncTail&&... tail) {
   };
 }
 
-template <typename INT_COND_BUILDER>
-struct interrupt_cond_builder {
-  static std::unique_ptr<INT_COND_BUILDER> int_cond_builder;
-};
-
-template <typename INT_COND_BUILDER>
-std::unique_ptr<INT_COND_BUILDER> interrupt_cond_builder<INT_COND_BUILDER>::int_cond_builder = std::unique_ptr<INT_COND_BUILDER>();
-
 template <class INT_COND_BUILDER, class... AllowedErrors>
 struct errorator {
   template <class T>
@@ -535,15 +527,13 @@ private:
     [[gnu::always_inline]]
     _future(seastar::future_for_get_promise_marker m)
       : base_t(m),
-	interrupt_cond(interrupt_cond_builder<
-	  INT_COND_BUILDER>::int_cond_builder->template get_condition<errorator_type>()) {
+	interrupt_cond(INT_COND_BUILDER::template interrupt_condition<errorator_type>::get_condition()) {
     }
 
     [[gnu::always_inline]]
     _future(base_t&& base)
       : base_t(std::move(base)),
-	interrupt_cond(interrupt_cond_builder<
-	  INT_COND_BUILDER>::int_cond_builder->template get_condition<errorator_type>()) {
+	interrupt_cond(INT_COND_BUILDER::template interrupt_condition<errorator_type>::get_condition()) {
     }
 
     [[gnu::always_inline]]
@@ -556,20 +546,17 @@ private:
     [[gnu::always_inline]]
     _future(ready_future_marker, A&&... a)
       : base_t(::seastar::make_ready_future<ValuesT...>(std::forward<A>(a)...)),
-	interrupt_cond(interrupt_cond_builder<
-	  INT_COND_BUILDER>::int_cond_builder->template get_condition<errorator_type>()) {
+	interrupt_cond(INT_COND_BUILDER::template interrupt_condition<errorator_type>::get_condition()) {
     }
     [[gnu::always_inline]]
     _future(exception_future_marker, ::seastar::future_state_base&& state) noexcept
       : base_t(::seastar::futurize<base_t>::make_exception_future(std::move(state))),
-	interrupt_cond(interrupt_cond_builder<
-	  INT_COND_BUILDER>::int_cond_builder->template get_condition<errorator_type>()) {
+	interrupt_cond(INT_COND_BUILDER::template interrupt_condition<errorator_type>::get_condition()) {
     }
     [[gnu::always_inline]]
     _future(exception_future_marker, std::exception_ptr&& ep) noexcept
       : base_t(::seastar::futurize<base_t>::make_exception_future(std::move(ep))),
-	interrupt_cond(interrupt_cond_builder<
-	  INT_COND_BUILDER>::int_cond_builder->template get_condition<errorator_type>()) {
+	interrupt_cond(INT_COND_BUILDER::template interrupt_condition<errorator_type>::get_condition()) {
     }
 
     template <template <class...> class ErroratedFuture,
@@ -619,8 +606,7 @@ private:
       : base_t(
           seastar::make_exception_future<ValuesT...>(
             errorator_type::make_exception_ptr(e))),
-	interrupt_cond(interrupt_cond_builder<
-	  INT_COND_BUILDER>::int_cond_builder->template get_condition<errorator_type>()) {
+	interrupt_cond(INT_COND_BUILDER::template interrupt_condition<errorator_type>::get_condition()) {
       static_assert(errorator_type::contains_once_v<DecayedT>,
                     "ErrorT is not enlisted in errorator");
     }

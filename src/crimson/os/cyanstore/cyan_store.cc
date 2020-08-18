@@ -12,6 +12,7 @@
 
 #include "crimson/common/buffer_io.h"
 #include "crimson/common/config_proxy.h"
+#include "crimson/osd/io_interrupt_condition_builder.h"
 #include "cyan_collection.h"
 #include "cyan_object.h"
 
