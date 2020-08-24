@@ -6,6 +6,7 @@
 #include "osd/osd_op_util.h"
 #include "crimson/common/exception.h"
 #include "crimson/net/Connection.h"
+#include "crimson/osd/io_interrupt_condition_builder.h"
 #include "crimson/osd/osd_operation.h"
 #include "crimson/common/type_helpers.h"
 #include "messages/MOSDOp.h"
@@ -13,7 +14,6 @@
 namespace crimson::osd {
 class PG;
 class OSD;
-class IOInterruptConditionBuilder;
 
 class ClientRequest final : public OperationT<ClientRequest> {
   OSD &osd;

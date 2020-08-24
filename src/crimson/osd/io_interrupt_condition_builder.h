@@ -8,45 +8,47 @@
 
 namespace crimson::osd {
 
-class OSD;
+class PG;
 
 class IOInterruptConditionBuilder {
 public:
-  static void set_osd(OSD* osd) {
-    IOInterruptConditionBuilder::osd = osd;
-  }
+  IOInterruptConditionBuilder(PG* pg)
+    : pg(pg) {}
 
-  static epoch_t get_osdmap_epoch();
+  epoch_t get_osdmap_epoch();
 
-  static bool is_osd_prestop();
-  static bool is_osd_stopping();
+  bool is_stopping();
 
   template <typename Errorator>
   class interrupt_condition {
   public:
-    interrupt_condition()
-      : e(IOInterruptConditionBuilder::get_osdmap_epoch()) {}
+    interrupt_condition(IOInterruptConditionBuilder* builder)
+      : e(builder->get_osdmap_epoch()), builder(builder) {}
 
     typename Errorator::template future<> operator()() {
-      if (e != IOInterruptConditionBuilder::get_osdmap_epoch()) {
+      if (e != builder->get_osdmap_epoch()) {
 	return crimson::common::eactingchg::make();
       }
-      if (IOInterruptConditionBuilder::is_osd_prestop()
-	  || IOInterruptConditionBuilder::is_osd_stopping()) {
+      if (builder->is_stopping()) {
 	return crimson::common::esysshut::make();
       }
       return typename Errorator::template future<>();
     }
-    
-    static interrupt_condition<Errorator> get_condition() {
-      return interrupt_condition<Errorator>();
-    }
   private:
     epoch_t e;
+    IOInterruptConditionBuilder* builder;
   };
 
+  template <typename Errorator>
+  using interrupt_condition_ref = std::unique_ptr<interrupt_condition<Errorator>>;
+
+  template <typename Errorator>
+  interrupt_condition_ref<Errorator> get_condition() {
+    return std::make_unique<interrupt_condition<Errorator>>(this);
+  }
+
 private:
-  static OSD* osd;
+  PG* pg;
 };
 
 } // namespace crimson::osd

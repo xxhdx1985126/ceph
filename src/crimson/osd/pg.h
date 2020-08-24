@@ -509,6 +509,9 @@ public:
     const hobject_t &oid,
     RWState::State type);
 public:
+  bool is_stopping() {
+    return stopping;
+  }
   template <typename F>
   auto with_locked_obc(
     Ref<MOSDOp> &m,

@@ -12,16 +12,13 @@
 #include <seastar/core/future.hh>
 
 #include "crimson/osd/exceptions.h"
+#include "crimson/osd/io_interrupt_condition_builder.h"
 #include "include/buffer_fwd.h"
 #include "include/uuid.h"
 #include "osd/osd_types.h"
 
 namespace ceph::os {
 class Transaction;
-}
-
-namespace crimson::osd {
-class IOInterruptConditionBuilder;
 }
 
 namespace crimson::os {

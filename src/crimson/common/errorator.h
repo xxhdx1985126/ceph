@@ -471,6 +471,7 @@ struct errorator {
   template <class... Args>
   using make_errorator_t = typename make_errorator<Args...>::type;
 
+  static thread_local seastar::lw_shared_ptr<INT_COND_BUILDER> ic_builder;
 private:
   // see the comment for `using future = _future` below.
   template <class>
@@ -514,8 +515,10 @@ private:
       return std::move(maybe_handle_error).get_result();
     }
 
-    typename INT_COND_BUILDER::template interrupt_condition<
-      ::crimson::errorator<INT_COND_BUILDER, AllowedErrors...>> interrupt_cond;
+    using interrupt_cond_t =
+      typename INT_COND_BUILDER::template interrupt_condition<
+	::crimson::errorator<INT_COND_BUILDER, AllowedErrors...>>;
+    std::unique_ptr<interrupt_cond_t> interrupt_cond;
 
   public:
     using errorator_type = ::crimson::errorator<INT_COND_BUILDER, AllowedErrors...>;
@@ -526,14 +529,16 @@ private:
 
     [[gnu::always_inline]]
     _future(seastar::future_for_get_promise_marker m)
-      : base_t(m),
-	interrupt_cond(INT_COND_BUILDER::template interrupt_condition<errorator_type>::get_condition()) {
+      : base_t(m) {
+      if (ic_builder)
+	interrupt_cond = std::move(ic_builder->template get_condition<errorator_type>());
     }
 
     [[gnu::always_inline]]
     _future(base_t&& base)
-      : base_t(std::move(base)),
-	interrupt_cond(INT_COND_BUILDER::template interrupt_condition<errorator_type>::get_condition()) {
+      : base_t(std::move(base)) {
+      if (ic_builder)
+	interrupt_cond = std::move(ic_builder->template get_condition<errorator_type>());
     }
 
     [[gnu::always_inline]]
@@ -545,18 +550,21 @@ private:
     template <class... A>
     [[gnu::always_inline]]
     _future(ready_future_marker, A&&... a)
-      : base_t(::seastar::make_ready_future<ValuesT...>(std::forward<A>(a)...)),
-	interrupt_cond(INT_COND_BUILDER::template interrupt_condition<errorator_type>::get_condition()) {
+      : base_t(::seastar::make_ready_future<ValuesT...>(std::forward<A>(a)...)) {
+      if (ic_builder)
+	interrupt_cond = std::move(ic_builder->template get_condition<errorator_type>());
     }
     [[gnu::always_inline]]
     _future(exception_future_marker, ::seastar::future_state_base&& state) noexcept
-      : base_t(::seastar::futurize<base_t>::make_exception_future(std::move(state))),
-	interrupt_cond(INT_COND_BUILDER::template interrupt_condition<errorator_type>::get_condition()) {
+      : base_t(::seastar::futurize<base_t>::make_exception_future(std::move(state))) {
+      if (ic_builder)
+	interrupt_cond = std::move(ic_builder->template get_condition<errorator_type>());
     }
     [[gnu::always_inline]]
     _future(exception_future_marker, std::exception_ptr&& ep) noexcept
-      : base_t(::seastar::futurize<base_t>::make_exception_future(std::move(ep))),
-	interrupt_cond(INT_COND_BUILDER::template interrupt_condition<errorator_type>::get_condition()) {
+      : base_t(::seastar::futurize<base_t>::make_exception_future(std::move(ep))) {
+      if (ic_builder)
+	interrupt_cond = std::move(ic_builder->template get_condition<errorator_type>());
     }
 
     template <template <class...> class ErroratedFuture,
@@ -569,7 +577,7 @@ private:
           ::crimson::errorated_future_marker<ValuesT...>>::errorator_type;
       static_assert(dest_errorator_t::template contains_once_v<errorator_type>,
                     "conversion is possible to more-or-eq errorated future!");
-      return std::move(*this);
+      return static_cast<base_t&&>(*this);
     }
 
     // initialize future as failed without throwing. `make_exception_future()`
@@ -605,10 +613,11 @@ private:
     _future(ErrorT&& e)
       : base_t(
           seastar::make_exception_future<ValuesT...>(
-            errorator_type::make_exception_ptr(e))),
-	interrupt_cond(INT_COND_BUILDER::template interrupt_condition<errorator_type>::get_condition()) {
+            errorator_type::make_exception_ptr(e))) {
       static_assert(errorator_type::contains_once_v<DecayedT>,
                     "ErrorT is not enlisted in errorator");
+      if (ic_builder)
+	interrupt_cond = std::move(ic_builder->template get_condition<errorator_type>());
     }
 
     _future& operator=(_future&&) = default;
@@ -650,11 +659,18 @@ private:
       // extra copying, switch to the second approach has been made.
       return this->then_wrapped(
         [ valfunc = std::forward<ValueFuncT>(valfunc),
-          errfunc = std::forward<ErrorVisitorT>(errfunc)
+          errfunc = std::forward<ErrorVisitorT>(errfunc),
+	  ic_builder = errorator_type::ic_builder
         ] (auto&& future) mutable noexcept {
+	  if (ic_builder) {
+	    errorator_type::ic_builder = ic_builder;
+	  }
           if (__builtin_expect(future.failed(), false)) {
-            return _safe_then_handle_errors<futurator_t>(
+            auto fut =  _safe_then_handle_errors<futurator_t>(
               std::move(future), std::forward<ErrorVisitorT>(errfunc));
+	    if (errorator_type::ic_builder)
+	      errorator_type::ic_builder.release();
+	    return fut;
           } else {
             // NOTE: using `seastar::future::get()` here is a bit bloaty
             // as the method rechecks availability of future's value and,
@@ -684,8 +700,11 @@ private:
             // solution here would be mark the `::get_available_state()`
             // as `protected` and use dedicated `get_value()` exactly as
             // `::then()` already does.
-            return futurator_t::apply(std::forward<ValueFuncT>(valfunc),
-                                      std::move(future).get());
+            auto fut = futurator_t::apply(std::forward<ValueFuncT>(valfunc),
+					  std::move(future).get());
+	    if (errorator_type::ic_builder)
+	      errorator_type::ic_builder.release();
+	    return fut;
           }
         });
     }
@@ -880,6 +899,19 @@ public:
     }
   };
 
+  template <typename... Args>
+  [[gnu::always_inline]]
+  static void enable_interruption(Args&&... args) {
+    ic_builder = seastar::make_lw_shared<
+      INT_COND_BUILDER>(std::forward<Args>(args)...);
+  }
+
+  [[gnu::always_inline]]
+  static void disable_interruption() {
+    if (ic_builder)
+      ic_builder.release();
+  }
+
   template <class ErrorFunc>
   static decltype(auto) all_same_way(ErrorFunc&& error_func) {
     return all_same_way_t<ErrorFunc>{std::forward<ErrorFunc>(error_func)};
@@ -1037,6 +1069,10 @@ private:
   template <class, class...>
   friend class errorator;
 }; // class errorator, generic template
+
+template <typename INT_COND_BUILDER, typename... AllowedErrors>
+thread_local seastar::lw_shared_ptr<INT_COND_BUILDER>
+errorator<INT_COND_BUILDER, AllowedErrors...>::ic_builder;
 
 // no errors? errorator<>::future is plain seastar::future then!
 template <typename INT_COND_BUILDER>

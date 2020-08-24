@@ -77,6 +77,7 @@ seastar::future<> ClientRequest::start()
 	return interruption_errorator::future<>(
 		osd.send_incremental_map(conn.get(), m->get_map_epoch()));
       }
+      interruption_errorator::enable_interruption(&pg);
       return with_blocking_errorated_future<interruption_errorator>(
 	handle.enter(pp(pg).await_map)
       ).safe_then([this, &pg]() mutable {

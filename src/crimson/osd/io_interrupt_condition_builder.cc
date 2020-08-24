@@ -6,18 +6,12 @@
 
 namespace crimson::osd {
 
-OSD* IOInterruptConditionBuilder::osd = nullptr;
-
 epoch_t IOInterruptConditionBuilder::get_osdmap_epoch() {
-  return IOInterruptConditionBuilder::osd->get_map()->get_epoch();
+  return pg->get_osdmap_epoch();
 }
 
-bool IOInterruptConditionBuilder::is_osd_prestop() {
-  return IOInterruptConditionBuilder::osd->get_state().is_prestop();
-}
-
-bool IOInterruptConditionBuilder::is_osd_stopping() {
-  return IOInterruptConditionBuilder::osd->get_state().is_stopping();
+bool IOInterruptConditionBuilder::is_stopping() {
+  return pg->is_stopping();
 }
 
 } // namespace crimson::osd
