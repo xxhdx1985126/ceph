@@ -160,9 +160,9 @@ public:
    * necessary. (for instance, the lba implementation will use this
    * to load in lba_manager blocks)
    */
-  using complete_load_ertr = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::ct_error::input_output_error>;
+  using complete_load_ertr =
+    crimson::common::non_interruptible_errorator::extend<
+	crimson::ct_error::input_output_error>;
   virtual complete_load_ertr::future<> complete_load() {
     return complete_load_ertr::now();
   }

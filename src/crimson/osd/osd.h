@@ -231,7 +231,7 @@ private:
   seastar::future<> prepare_to_stop();
   using interruption_errorator =
     crimson::common::interruption_errorator<
-      IOInterruptConditionBuilder>;
+      IOInterruptCondition>;
 public:
   blocking_future<Ref<PG>> get_or_create_pg(
     spg_t pgid,

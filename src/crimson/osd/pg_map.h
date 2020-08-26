@@ -20,7 +20,7 @@ class PG;
 
 class PGMap {
   using interruption_errorator =
-    crimson::common::interruption_errorator<IOInterruptConditionBuilder>;
+    crimson::common::interruption_errorator<IOInterruptCondition>;
   struct PGCreationState : BlockerT<PGCreationState> {
     static constexpr const char * type_name = "PGCreation";
 

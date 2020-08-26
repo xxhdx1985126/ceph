@@ -91,9 +91,9 @@ public:
   }
 
   /// Declare paddr retired in t, noop if not cached
-  using retire_extent_ertr = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::ct_error::input_output_error>;
+  using retire_extent_ertr =
+    crimson::common::non_interruptible_errorator::extend<
+	crimson::ct_error::input_output_error>;
   using retire_extent_ret = retire_extent_ertr::future<>;
   retire_extent_ret retire_extent_if_cached(
     Transaction &t, paddr_t addr);
@@ -103,9 +103,9 @@ public:
    *
    * returns ref to current root or t.root if modified in t
    */
-  using get_root_ertr = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::ct_error::input_output_error>;
+  using get_root_ertr =
+    crimson::common::non_interruptible_errorator::extend<
+	crimson::ct_error::input_output_error>;
   using get_root_ret = get_root_ertr::future<RootBlockRef>;
   get_root_ret get_root(Transaction &t);
 
@@ -116,9 +116,9 @@ public:
    * - extent_set if already in cache
    * - disk
    */
-  using get_extent_ertr = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::ct_error::input_output_error>;
+  using get_extent_ertr =
+    crimson::common::non_interruptible_errorator::extend<
+	crimson::ct_error::input_output_error>;
   template <typename T>
   get_extent_ertr::future<TCachedExtentRef<T>> get_extent(
     paddr_t offset,       ///< [in] starting addr
@@ -282,9 +282,9 @@ public:
    * Alloc initial root node and add to t.  The intention is for other
    * components to use t to adjust the resulting root ref prior to commit.
    */
-  using mkfs_ertr = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::ct_error::input_output_error>;
+  using mkfs_ertr =
+    crimson::common::non_interruptible_errorator::extend<
+	crimson::ct_error::input_output_error>;
   mkfs_ertr::future<> mkfs(Transaction &t);
 
   /**
@@ -292,9 +292,9 @@ public:
    *
    * TODO: should flush dirty blocks
    */
-  using close_ertr = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::ct_error::input_output_error>;
+  using close_ertr =
+    crimson::common::non_interruptible_errorator::extend<
+	crimson::ct_error::input_output_error>;
   close_ertr::future<> close();
 
   /**
@@ -304,9 +304,9 @@ public:
    * read relevant block from disk or cache (using correct type), and call
    * CachedExtent::apply_delta marking the extent dirty.
    */
-  using replay_delta_ertr = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::ct_error::input_output_error>;
+  using replay_delta_ertr =
+    crimson::common::non_interruptible_errorator::extend<
+	crimson::ct_error::input_output_error>;
   using replay_delta_ret = replay_delta_ertr::future<>;
   replay_delta_ret replay_delta(paddr_t record_base, const delta_info_t &delta);
 
@@ -317,9 +317,9 @@ public:
    * after replay to allow lba_manager (or w/e) to read in any ancestor
    * blocks.
    */
-  using init_cached_extents_ertr = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::ct_error::input_output_error>;
+  using init_cached_extents_ertr =
+    crimson::common::non_interruptible_errorator::extend<
+	crimson::ct_error::input_output_error>;
   using init_cached_extents_ret = replay_delta_ertr::future<>;
   template <typename F>
   init_cached_extents_ret init_cached_extents(

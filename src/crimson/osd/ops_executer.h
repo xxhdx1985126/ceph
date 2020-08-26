@@ -38,24 +38,26 @@ namespace crimson::osd {
 
 // PgOpsExecuter -- a class for executing ops targeting a certain object.
 class OpsExecuter {
-  using call_errorator = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::stateful_ec,
-    crimson::ct_error::enoent,
-    crimson::ct_error::invarg,
-    crimson::ct_error::permission_denied,
-    crimson::ct_error::operation_not_supported,
-    crimson::ct_error::input_output_error,
-    crimson::ct_error::value_too_large>;
+  using call_errorator =
+    crimson::common::interruption_errorator<
+      crimson::osd::IOInterruptCondition>::extend<
+	crimson::stateful_ec,
+	crimson::ct_error::enoent,
+	crimson::ct_error::invarg,
+	crimson::ct_error::permission_denied,
+	crimson::ct_error::operation_not_supported,
+	crimson::ct_error::input_output_error,
+	crimson::ct_error::value_too_large>;
   using read_errorator = PGBackend::read_errorator;
   using write_ertr = PGBackend::write_ertr;
   using get_attr_errorator = PGBackend::get_attr_errorator;
-  using watch_errorator = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::ct_error::enoent,
-    crimson::ct_error::invarg,
-    crimson::ct_error::not_connected,
-    crimson::ct_error::timed_out>;
+  using watch_errorator =
+    crimson::common::interruption_errorator<
+      crimson::osd::IOInterruptCondition>::extend<
+	crimson::ct_error::enoent,
+	crimson::ct_error::invarg,
+	crimson::ct_error::not_connected,
+	crimson::ct_error::timed_out>;
 
 public:
   // because OpsExecuter is pretty heavy-weight object we want to ensure

@@ -144,7 +144,7 @@ seastar::future<BackfillInterval> RecoveryBackend::scan_for_backfill(
       return backend->list_objects(start, max).then(
         [this, &start, &version_map] (auto&& ret) {
           auto& [objects, next] = ret;
-          return seastar::do_for_each(
+	  return ::crimson::do_for_each(
             objects,
             [this, &version_map] (const hobject_t& object) {
               crimson::osd::ObjectContextRef obc;
@@ -161,7 +161,7 @@ seastar::future<BackfillInterval> RecoveryBackend::scan_for_backfill(
                   // between the collection_list_partial and here.  This can happen
                   // for the first item in the range, which is usually last_backfill.
                 }
-                return seastar::now();
+                return PGBackend::load_metadata_ertr::now();
               } else {
                 return backend->load_metadata(object).safe_then(
                   [&version_map, object] (auto md) {
@@ -170,10 +170,10 @@ seastar::future<BackfillInterval> RecoveryBackend::scan_for_backfill(
                                      object, md->os.oi.version);
                       version_map[object] = md->os.oi.version;
                     }
-                    return seastar::now();
+                    return PGBackend::load_metadata_ertr::now();
                   }, PGBackend::load_metadata_ertr::assert_all{});
               }
-          }).then(
+          })._then(
             [&version_map, &start, next=std::move(next), this] {
               BackfillInterval bi;
               bi.begin = start;

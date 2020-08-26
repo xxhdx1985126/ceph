@@ -28,9 +28,9 @@ namespace crimson::os::seastore {
  */
 class LBAManager {
 public:
-  using mkfs_ertr = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::ct_error::input_output_error>;
+  using mkfs_ertr =
+    crimson::common::non_interruptible_errorator::extend<
+	crimson::ct_error::input_output_error>;
   using mkfs_ret = mkfs_ertr::future<>;
   virtual mkfs_ret mkfs(
     Transaction &t
@@ -41,9 +41,9 @@ public:
    *
    * Future will not resolve until all pins have resolved (set_paddr called)
    */
-  using get_mapping_ertr = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-  crimson::ct_error::input_output_error>;
+  using get_mapping_ertr =
+    crimson::common::non_interruptible_errorator::extend<
+	crimson::ct_error::input_output_error>;
   using get_mapping_ret = get_mapping_ertr::future<lba_pin_list_t>;
   virtual get_mapping_ret get_mapping(
     Transaction &t,
@@ -54,9 +54,9 @@ public:
    *
    * Future will not result until all pins have resolved (set_paddr called)
    */
-  using get_mappings_ertr = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::ct_error::input_output_error>;
+  using get_mappings_ertr =
+    crimson::common::non_interruptible_errorator::extend<
+	crimson::ct_error::input_output_error>;
   using get_mappings_ret = get_mapping_ertr::future<lba_pin_list_t>;
   virtual get_mappings_ret get_mappings(
     Transaction &t,
@@ -69,9 +69,9 @@ public:
    * This mapping will block from transaction submission until set_paddr
    * is called on the LBAPin.
    */
-  using alloc_extent_ertr = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::ct_error::input_output_error>;
+  using alloc_extent_ertr =
+    crimson::common::non_interruptible_errorator::extend<
+	crimson::ct_error::input_output_error>;
   using alloc_extent_ret = alloc_extent_ertr::future<LBAPinRef>;
   virtual alloc_extent_ret alloc_extent(
     Transaction &t,
@@ -84,10 +84,10 @@ public:
    *
    * off~len must be unreferenced
    */
-  using set_extent_ertr = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::ct_error::input_output_error,
-    crimson::ct_error::invarg>;
+  using set_extent_ertr =
+    crimson::common::non_interruptible_errorator::extend<
+	crimson::ct_error::input_output_error,
+	crimson::ct_error::invarg>;
   using set_extent_ret = set_extent_ertr::future<LBAPinRef>;
   virtual set_extent_ret set_extent(
     Transaction &t,
@@ -98,10 +98,10 @@ public:
     unsigned refcount = 0;
     paddr_t addr;
   };
-  using ref_ertr = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::ct_error::enoent,
-    crimson::ct_error::input_output_error>;
+  using ref_ertr =
+    crimson::common::non_interruptible_errorator::extend<
+	crimson::ct_error::enoent,
+	crimson::ct_error::input_output_error>;
   using ref_ret = ref_ertr::future<ref_update_result_t>;
 
   /**
@@ -122,9 +122,9 @@ public:
     Transaction &t,
     laddr_t addr) = 0;
 
-  using complete_transaction_ertr = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::ct_error::input_output_error>;
+  using complete_transaction_ertr =
+    crimson::common::non_interruptible_errorator::extend<
+	crimson::ct_error::input_output_error>;
   using complete_transaction_ret = complete_transaction_ertr::future<>;
   virtual complete_transaction_ret complete_transaction(
     Transaction &t) = 0;
@@ -135,9 +135,9 @@ public:
    * LogicalCachedExtent's and may also read in any dependent
    * structures, etc.
    */
-  using init_cached_extent_ertr = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::ct_error::input_output_error>;
+  using init_cached_extent_ertr =
+    crimson::common::non_interruptible_errorator::extend<
+	crimson::ct_error::input_output_error>;
   using init_cached_extent_ret = init_cached_extent_ertr::future<>;
   virtual init_cached_extent_ret init_cached_extent(
     Transaction &t,

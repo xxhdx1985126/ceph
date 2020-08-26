@@ -74,9 +74,9 @@ struct record_header_t {
  */
 class JournalSegmentProvider {
 public:
-  using get_segment_ertr = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::ct_error::input_output_error>;
+  using get_segment_ertr =
+    crimson::common::non_interruptible_errorator::extend<
+	crimson::ct_error::input_output_error>;
   using get_segment_ret = get_segment_ertr::future<segment_id_t>;
   virtual get_segment_ret get_segment() = 0;
 
@@ -111,10 +111,10 @@ public:
    * to submit_record.  Should be called after replay if not a new
    * Journal.
    */
-  using init_ertr = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::ct_error::input_output_error
-    >;
+  using init_ertr =
+    crimson::common::non_interruptible_errorator::extend<
+	crimson::ct_error::input_output_error
+      >;
   init_ertr::future<> open_for_write();
 
   /**
@@ -122,9 +122,9 @@ public:
    *
    * TODO: should probably flush and disallow further writes
    */
-  using close_ertr = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::ct_error::input_output_error>;
+  using close_ertr =
+    crimson::common::non_interruptible_errorator::extend<
+	crimson::ct_error::input_output_error>;
   close_ertr::future<> close() { return close_ertr::now(); }
 
   /**
@@ -132,11 +132,11 @@ public:
    *
    * @param write record and returns offset of first block
    */
-  using submit_record_ertr = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::ct_error::erange,
-    crimson::ct_error::input_output_error
-    >;
+  using submit_record_ertr =
+    crimson::common::non_interruptible_errorator::extend<
+	crimson::ct_error::erange,
+	crimson::ct_error::input_output_error
+      >;
   using submit_record_ret = submit_record_ertr::future<paddr_t>;
   submit_record_ret submit_record(record_t &&record) {
     auto rsize = get_encoded_record_length(record);
@@ -187,9 +187,9 @@ private:
   journal_seq_t current_journal_seq = 0;
 
   /// prepare segment for writes, writes out segment header
-  using initialize_segment_ertr = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::ct_error::input_output_error>;
+  using initialize_segment_ertr =
+    crimson::common::non_interruptible_errorator::extend<
+	crimson::ct_error::input_output_error>;
   initialize_segment_ertr::future<> initialize_segment(
     Segment &segment);
 
@@ -216,17 +216,17 @@ private:
     record_t &&record);
 
   /// do record write
-  using write_record_ertr = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::ct_error::input_output_error>;
+  using write_record_ertr =
+    crimson::common::non_interruptible_errorator::extend<
+	crimson::ct_error::input_output_error>;
   write_record_ertr::future<> write_record(
     record_size_t rsize,
     record_t &&record);
 
   /// close current segment and initialize next one
-  using roll_journal_segment_ertr = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::ct_error::input_output_error>;
+  using roll_journal_segment_ertr =
+    crimson::common::non_interruptible_errorator::extend<
+	crimson::ct_error::input_output_error>;
   roll_journal_segment_ertr::future<> roll_journal_segment();
 
   /// returns true iff current segment has insufficient space
@@ -236,10 +236,10 @@ private:
   paddr_t next_record_addr() const;
 
   /// return ordered vector of segments to replay
-  using find_replay_segments_ertr = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::ct_error::input_output_error
-    >;
+  using find_replay_segments_ertr =
+    crimson::common::non_interruptible_errorator::extend<
+	crimson::ct_error::input_output_error
+      >;
   using find_replay_segments_fut =
     find_replay_segments_ertr::future<std::vector<paddr_t>>;
   find_replay_segments_fut find_replay_segments();

@@ -85,9 +85,10 @@ public:
   virtual seastar::future<store_statfs_t> stat() const = 0;
 
   using CollectionRef = boost::intrusive_ptr<FuturizedCollection>;
-  using read_errorator = crimson::errorator<crimson::osd::IOInterruptConditionBuilder,
-					    crimson::ct_error::enoent,
-                                            crimson::ct_error::input_output_error>;
+  using read_errorator =
+    crimson::common::non_interruptible_errorator::extend<
+	crimson::ct_error::enoent,
+	crimson::ct_error::input_output_error>;
   virtual read_errorator::future<ceph::bufferlist> read(
     CollectionRef c,
     const ghobject_t& oid,
@@ -100,18 +101,18 @@ public:
     interval_set<uint64_t>& m,
     uint32_t op_flags = 0) = 0;
 
-  using get_attr_errorator = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::ct_error::enoent,
-    crimson::ct_error::enodata>;
+  using get_attr_errorator =
+    crimson::common::non_interruptible_errorator::extend<
+	crimson::ct_error::enoent,
+	crimson::ct_error::enodata>;
   virtual get_attr_errorator::future<ceph::bufferptr> get_attr(
     CollectionRef c,
     const ghobject_t& oid,
     std::string_view name) const = 0;
 
-  using get_attrs_ertr = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::ct_error::enoent>;
+  using get_attrs_ertr =
+    crimson::common::non_interruptible_errorator::extend<
+	crimson::ct_error::enoent>;
   using attrs_t = std::map<std::string, ceph::bufferptr, std::less<>>;
   virtual get_attrs_ertr::future<attrs_t> get_attrs(
     CollectionRef c,
@@ -145,8 +146,8 @@ public:
   virtual seastar::future<CollectionRef> open_collection(const coll_t& cid) = 0;
   virtual seastar::future<std::vector<coll_t>> list_collections() = 0;
 
-  virtual seastar::future<> do_transaction(CollectionRef ch,
-					   ceph::os::Transaction&& txn) = 0;
+  virtual seastar::future<>
+	  do_transaction(CollectionRef ch, ceph::os::Transaction&& txn) = 0;
   virtual seastar::future<OmapIteratorRef> get_omap_iterator(
     CollectionRef ch,
     const ghobject_t& oid) = 0;

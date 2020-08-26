@@ -60,16 +60,16 @@ seastar::future<> RepRequest::start()
 {
   logger().debug("{} start", *this);
   IRef ref = this;
-  return crimson::common::with_interruption<IOInterruptConditionBuilder, false>([this, ref=std::move(ref)]() mutable {
+  return crimson::common::with_interruption<IOInterruptCondition, false>([this, ref=std::move(ref)]() mutable {
     return with_blocking_errorated_future<interruption_errorator>(
 		handle.enter(cp().await_map)).safe_then([this]() {
-      return with_blocking_errorated_future<interruption_errorator>(
+      return with_blocking_errorated_future(
 		osd.osdmap_gate.wait_for_map_errorated(req->get_min_epoch()));
     }).safe_then([this](epoch_t epoch) {
       return with_blocking_errorated_future<interruption_errorator>(
 		handle.enter(cp().get_pg));
     }).safe_then([this] {
-      return with_blocking_errorated_future<interruption_errorator>(
+      return with_blocking_errorated_future(
 		osd.wait_for_pg_errorated(req->get_spg()));
     }).safe_then([this, ref=std::move(ref)](Ref<PG> pg) {
       return pg->handle_rep_op(std::move(req));

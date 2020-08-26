@@ -356,8 +356,8 @@ auto AlienStore::omap_get_values(CollectionRef ch,
   });
 }
 
-seastar::future<> AlienStore::do_transaction(CollectionRef ch,
-                                             ceph::os::Transaction&& txn)
+seastar::future<>
+AlienStore::do_transaction(CollectionRef ch, ceph::os::Transaction&& txn)
 {
   logger().debug("{}", __func__);
   auto id = seastar::this_shard_id();

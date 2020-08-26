@@ -310,8 +310,8 @@ CyanStore::omap_get_header(
   return seastar::make_ready_future<ceph::bufferlist>(o->omap_header);
 }
 
-seastar::future<> CyanStore::do_transaction(CollectionRef ch,
-                                            ceph::os::Transaction&& t)
+seastar::future<>
+CyanStore::do_transaction(CollectionRef ch, ceph::os::Transaction&& t)
 {
   using ceph::os::Transaction;
   int r = 0;

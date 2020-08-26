@@ -56,23 +56,23 @@ public:
   }
 
   /// Writes initial metadata to disk
-  using mkfs_ertr = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::ct_error::input_output_error
+  using mkfs_ertr =
+    crimson::common::non_interruptible_errorator::extend<
+	crimson::ct_error::input_output_error
     >;
   mkfs_ertr::future<> mkfs();
 
   /// Reads initial metadata from disk
-  using mount_ertr = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::ct_error::input_output_error
+  using mount_ertr =
+    crimson::common::non_interruptible_errorator::extend<
+	crimson::ct_error::input_output_error
     >;
   mount_ertr::future<> mount();
 
   /// Closes transaction_manager
-  using close_ertr = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::ct_error::input_output_error
+  using close_ertr =
+    crimson::common::non_interruptible_errorator::extend<
+	crimson::ct_error::input_output_error
     >;
   close_ertr::future<> close();
 
@@ -204,10 +204,10 @@ public:
    *
    * Atomically submits transaction to persistence
    */
-  using submit_transaction_ertr = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::ct_error::eagain, // Caller should retry transaction from beginning
-    crimson::ct_error::input_output_error // Media error
+  using submit_transaction_ertr =
+    crimson::common::non_interruptible_errorator::extend<
+	crimson::ct_error::eagain, // Caller should retry transaction from beginning
+	crimson::ct_error::input_output_error // Media error
     >;
   submit_transaction_ertr::future<> submit_transaction(TransactionRef);
 

@@ -18,7 +18,7 @@ namespace crimson::osd {
 
 class OSD;
 class PG;
-class IOInterruptConditionBuilder;
+class IOInterruptCondition;
 
 class RepRequest final : public OperationT<RepRequest> {
 public:
@@ -50,7 +50,7 @@ public:
 private:
   using interruption_errorator =
     crimson::common::interruption_errorator<
-      IOInterruptConditionBuilder>;
+      IOInterruptCondition>;
   ConnectionPipeline &cp();
   PGPipeline &pp(PG &pg);
 

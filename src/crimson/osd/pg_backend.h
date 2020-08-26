@@ -43,9 +43,10 @@ protected:
   using ll_read_errorator = crimson::os::FuturizedStore::read_errorator;
 
 public:
-  using load_metadata_ertr = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::ct_error::object_corrupted>;
+  using load_metadata_ertr =
+    crimson::common::interruption_errorator<
+      crimson::osd::IOInterruptCondition>::extend<
+	crimson::ct_error::object_corrupted>;
   PGBackend(shard_id_t shard, CollectionRef coll, crimson::os::FuturizedStore* store);
   virtual ~PGBackend() = default;
   static std::unique_ptr<PGBackend> create(pg_t pgid,
@@ -76,17 +77,19 @@ public:
     const ObjectState& os,
     OSDOp& osd_op);
 
-  using stat_errorator = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::ct_error::enoent>;
+  using stat_errorator =
+    crimson::common::interruption_errorator<
+      crimson::osd::IOInterruptCondition>::extend<
+	crimson::ct_error::enoent>;
   stat_errorator::future<> stat(
     const ObjectState& os,
     OSDOp& osd_op);
 
   // TODO: switch the entire write family to errorator.
-  using write_ertr = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::ct_error::file_too_large>;
+  using write_ertr =
+    crimson::common::interruption_errorator<
+      crimson::osd::IOInterruptCondition>::extend<
+	crimson::ct_error::file_too_large>;
   seastar::future<> create(
     ObjectState& os,
     const OSDOp& osd_op,
@@ -216,7 +219,7 @@ protected:
   std::optional<peering_info_t> peering;
   using interruption_errorator =
     crimson::common::interruption_errorator<
-      crimson::osd::IOInterruptConditionBuilder>;
+      crimson::osd::IOInterruptCondition>;
 public:
   struct loaded_object_md_t {
     ObjectState os;

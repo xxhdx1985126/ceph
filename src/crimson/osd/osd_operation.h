@@ -86,6 +86,9 @@ class blocking_future_detail {
   template <typename U>
   friend class blocking_future_detail;
 
+  template <typename Errorator, typename... T>
+  friend class blocking_errorated_future;
+
 public:
   template <typename F>
   auto then(F &&f) && {
@@ -100,7 +103,15 @@ template <typename... T>
 using blocking_future = blocking_future_detail<seastar::future<T...>>;
 
 template <typename Errorator, typename... T>
-using blocking_errorated_future = blocking_future_detail<typename Errorator::template future<T...>>;
+struct blocking_errorated_future :
+  public blocking_future_detail<typename Errorator::template future<T...>> {
+  blocking_errorated_future(
+      Blocker* b,
+      typename Errorator::template future<T...>&& f)
+    : blocking_future_detail<
+      typename Errorator::template future<T...>>(b, std::move(f))
+  {}
+};
 
 template <typename... V, typename... U>
 blocking_future_detail<seastar::future<V...>> make_ready_blocking_future(U&&... args) {
@@ -110,7 +121,7 @@ blocking_future_detail<seastar::future<V...>> make_ready_blocking_future(U&&... 
 }
 
 template <typename Errorator, typename... V, typename... U>
-blocking_future_detail<typename Errorator::template future<V...>>
+blocking_errorated_future<Errorator, V...>
 make_ready_blocking_errorated_future(U&&... args) {
   return blocking_errorated_future<Errorator, V...>(
     nullptr,
@@ -126,12 +137,11 @@ make_exception_blocking_future(Exception&& e) {
 }
 
 template <typename Errorator, typename... V, typename ErrorT>
-blocking_future_detail<typename Errorator::template future<V...>>
+blocking_errorated_future<Errorator, V...>
 make_exception_blocking_errorated_future(ErrorT&& e) {
   return blocking_errorated_future<Errorator, V...>(
     nullptr,
-    Errorator::template make_exception_future2<V...>(
-      Errorator::template make_exception_ptr(std::move(e))));
+    typename Errorator::future<V...>(std::move(e)));
 }
 
 /**
@@ -257,7 +267,8 @@ class Operation : public boost::intrusive_ref_counter<
     }
     assert(f.blocker);
     add_blocker(f.blocker);
-    return std::move(f.fut).then_wrapped([this, blocker=f.blocker](auto&& arg) {
+    return std::move(f.fut).then_wrapped([this, blocker=f.blocker](auto&& arg)
+      -> typename Errorator::template future<T...> {
       clear_blocker(blocker);
       return std::move(arg);
     });

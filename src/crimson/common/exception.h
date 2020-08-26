@@ -13,6 +13,8 @@
 
 namespace crimson::common {
 
+class EmptyInterruptCondition;
+
 // crimson common
 enum class error {
   success = 0,
@@ -36,6 +38,7 @@ using crimson_error_code =
 
 using esysshut = crimson_error_code<error::system_shutdown>;
 using eactingchg = crimson_error_code<error::actingset_change>;
+using esuccess = crimson_error_code<error::success>;
 
 class system_shutdown_exception final : public std::exception {
 public:
@@ -59,8 +62,13 @@ private:
 
 template <typename INT_COND_BUILDER>
 using interruption_errorator = crimson::errorator<INT_COND_BUILDER,
-						  esysshut,
-						  eactingchg>;
+						  crimson::interrupt_error_carrier<
+						    esuccess,
+						    esysshut,
+						    eactingchg>>;
+using non_interruptible_errorator = crimson::errorator<
+	crimson::common::EmptyInterruptCondition,
+	crimson::interrupt_error_carrier<>>;
 
 template<typename INT_COND_BUILDER, bool may_loop = true, typename OpFunc, typename OnInterrupt>
 inline seastar::future<> with_interruption(OpFunc&& func, OnInterrupt&& efunc)
@@ -70,8 +78,9 @@ inline seastar::future<> with_interruption(OpFunc&& func, OnInterrupt&& efunc)
 			     efunc=std::move(efunc)]() mutable {
       return interruption_errorator<INT_COND_BUILDER>::template futurize<
 		std::result_of_t<OpFunc()>>::apply(std::move(func), std::make_tuple())
-      .handle_error(std::move(efunc));
-    })._then([] { return seastar::now(); });
+      .handle_error<false>(std::move(efunc));
+    }).safe_then([] { return seastar::now(); },
+		 interruption_errorator<INT_COND_BUILDER>::assert_all());
   } else {
     return interruption_errorator<INT_COND_BUILDER>::template futurize<
 	      std::result_of_t<OpFunc()>>::apply(std::move(func), std::make_tuple())

@@ -64,7 +64,7 @@ public:
 private:
   using interruption_errorator =
     crimson::common::interruption_errorator<
-      IOInterruptConditionBuilder>;
+      IOInterruptCondition>;
   seastar::future<> process_pg_op(
     Ref<PG> &pg);
   interruption_errorator::future<> process_op(

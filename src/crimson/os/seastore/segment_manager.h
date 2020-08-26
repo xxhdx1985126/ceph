@@ -43,11 +43,11 @@ public:
    * Closes segment for writes.  Won't complete until
    * outstanding writes to this segment are complete.
    */
-  using close_ertr = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::ct_error::input_output_error,
-    crimson::ct_error::invarg,
-    crimson::ct_error::enoent>;
+  using close_ertr =
+    crimson::common::non_interruptible_errorator::extend<
+	crimson::ct_error::input_output_error,
+	crimson::ct_error::invarg,
+	crimson::ct_error::enoent>;
   virtual close_ertr::future<> close() = 0;
 
 
@@ -58,12 +58,12 @@ public:
    *               write pointer
    * @param bl     buffer to write, will be padded if not aligned
   */
-  using write_ertr = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::ct_error::input_output_error, // media error or corruption
-    crimson::ct_error::invarg,             // if offset is < write pointer or misaligned
-    crimson::ct_error::ebadf,              // segment closed
-    crimson::ct_error::enospc              // write exceeds segment size
+  using write_ertr =
+    crimson::common::non_interruptible_errorator::extend<
+	crimson::ct_error::input_output_error, // media error or corruption
+	crimson::ct_error::invarg,             // if offset is < write pointer or misaligned
+	crimson::ct_error::ebadf,              // segment closed
+	crimson::ct_error::enospc              // write exceeds segment size
     >;
   virtual write_ertr::future<> write(
     segment_off_t offset, ceph::bufferlist bl) = 0;
@@ -76,33 +76,33 @@ constexpr size_t PADDR_SIZE = sizeof(paddr_t);
 
 class SegmentManager {
 public:
-  using init_ertr = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::ct_error::enospc,
-    crimson::ct_error::invarg,
-    crimson::ct_error::erange>;
+  using init_ertr =
+    crimson::common::non_interruptible_errorator::extend<
+	crimson::ct_error::enospc,
+	crimson::ct_error::invarg,
+	crimson::ct_error::erange>;
   virtual init_ertr::future<> init() = 0;
 
-  using open_ertr = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::ct_error::input_output_error,
-    crimson::ct_error::invarg,
-    crimson::ct_error::enoent>;
+  using open_ertr =
+    crimson::common::non_interruptible_errorator::extend<
+	crimson::ct_error::input_output_error,
+	crimson::ct_error::invarg,
+	crimson::ct_error::enoent>;
   virtual open_ertr::future<SegmentRef> open(segment_id_t id) = 0;
 
-  using release_ertr = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::ct_error::input_output_error,
-    crimson::ct_error::invarg,
-    crimson::ct_error::enoent>;
+  using release_ertr =
+    crimson::common::non_interruptible_errorator::extend<
+	crimson::ct_error::input_output_error,
+	crimson::ct_error::invarg,
+	crimson::ct_error::enoent>;
   virtual release_ertr::future<> release(segment_id_t id) = 0;
 
-  using read_ertr = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::ct_error::input_output_error,
-    crimson::ct_error::invarg,
-    crimson::ct_error::enoent,
-    crimson::ct_error::erange>;
+  using read_ertr =
+    crimson::common::non_interruptible_errorator::extend<
+	crimson::ct_error::input_output_error,
+	crimson::ct_error::invarg,
+	crimson::ct_error::enoent,
+	crimson::ct_error::erange>;
   virtual read_ertr::future<> read(
     paddr_t addr,
     size_t len,

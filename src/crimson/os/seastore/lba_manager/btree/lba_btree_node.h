@@ -64,9 +64,9 @@ struct LBANode : CachedExtent {
    * Returns the node at the specified depth responsible
    * for laddr
    */
-  using lookup_ertr = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::ct_error::input_output_error>;
+  using lookup_ertr =
+    crimson::common::non_interruptible_errorator::extend<
+	crimson::ct_error::input_output_error>;
   using lookup_ret = lookup_ertr::future<LBANodeRef>;
   virtual lookup_ret lookup(
     op_context_t c,
@@ -91,9 +91,9 @@ struct LBANode : CachedExtent {
    *
    * Precondition: !at_max_capacity()
    */
-  using insert_ertr = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::ct_error::input_output_error
+  using insert_ertr =
+    crimson::common::non_interruptible_errorator::extend<
+	crimson::ct_error::input_output_error
     >;
   using insert_ret = insert_ertr::future<LBAPinRef>;
   virtual insert_ret insert(
@@ -108,9 +108,9 @@ struct LBANode : CachedExtent {
    *
    * @return addr of hole, L_ADDR_NULL if unfound
    */
-  using find_hole_ertr = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::ct_error::input_output_error>;
+  using find_hole_ertr =
+    crimson::common::non_interruptible_errorator::extend<
+	crimson::ct_error::input_output_error>;
   using find_hole_ret = find_hole_ertr::future<laddr_t>;
   virtual find_hole_ret find_hole(
     op_context_t c,
@@ -127,10 +127,10 @@ struct LBANode : CachedExtent {
    *
    * Precondition: !at_min_capacity()
    */
-  using mutate_mapping_ertr = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::ct_error::enoent,            ///< mapping does not exist
-    crimson::ct_error::input_output_error
+  using mutate_mapping_ertr =
+    crimson::common::non_interruptible_errorator::extend<
+	crimson::ct_error::enoent,            ///< mapping does not exist
+	crimson::ct_error::input_output_error
     >;
   using mutate_mapping_ret = mutate_mapping_ertr::future<
     lba_map_val_t>;

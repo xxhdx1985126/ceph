@@ -10,45 +10,28 @@ namespace crimson::osd {
 
 class PG;
 
-class IOInterruptConditionBuilder {
+class IOInterruptCondition {
 public:
-  IOInterruptConditionBuilder(PG* pg)
-    : pg(pg) {}
+  IOInterruptCondition(PG* pg);
 
-  epoch_t get_osdmap_epoch();
+  epoch_t get_current_osdmap_epoch();
 
   bool is_stopping();
 
-  template <typename Errorator>
-  class interrupt_condition {
-  public:
-    interrupt_condition(IOInterruptConditionBuilder* builder)
-      : e(builder->get_osdmap_epoch()), builder(builder) {}
-
-    typename Errorator::template future<> operator()() {
-      if (e != builder->get_osdmap_epoch()) {
-	return crimson::common::eactingchg::make();
-      }
-      if (builder->is_stopping()) {
-	return crimson::common::esysshut::make();
-      }
-      return typename Errorator::template future<>();
+  template <typename future_t>
+  std::pair<bool, future_t> may_interrupt() {
+    if (e != get_current_osdmap_epoch()) {
+      return std::make_pair<bool, future_t>(true, crimson::common::eactingchg::make());
     }
-  private:
-    epoch_t e;
-    IOInterruptConditionBuilder* builder;
-  };
-
-  template <typename Errorator>
-  using interrupt_condition_ref = std::unique_ptr<interrupt_condition<Errorator>>;
-
-  template <typename Errorator>
-  interrupt_condition_ref<Errorator> get_condition() {
-    return std::make_unique<interrupt_condition<Errorator>>(this);
+    if (is_stopping()) {
+      return std::make_pair<bool, future_t>(true, crimson::common::esysshut::make());
+    }
+    return std::make_pair<bool, future_t>(false, crimson::common::esuccess::make());
   }
 
 private:
   PG* pg;
+  epoch_t e;
 };
 
 } // namespace crimson::osd

@@ -56,18 +56,18 @@ seastar::future<> ClientRequest::start()
   logger().debug("{}: start", *this);
 
   IRef opref = this;
-  return crimson::common::with_interruption<IOInterruptConditionBuilder>(
+  return crimson::common::with_interruption<IOInterruptCondition>(
     [this, opref=std::move(opref)]() mutable {
     return with_blocking_errorated_future<interruption_errorator>(
 	      handle.enter(cp().await_map))
     .safe_then([this]() {
-      return with_blocking_errorated_future<interruption_errorator>(
+      return with_blocking_errorated_future(
 		osd.osdmap_gate.wait_for_map_errorated(m->get_min_epoch()));
     }).safe_then([this](epoch_t epoch) {
       return with_blocking_errorated_future<interruption_errorator>(
 		handle.enter(cp().get_pg));
     }).safe_then([this] {
-      return with_blocking_errorated_future<interruption_errorator>(
+      return with_blocking_errorated_future(
 		  osd.wait_for_pg_errorated(m->get_spg()));
     }).safe_then([this, opref](Ref<PG> pgref) {
       PG &pg = *pgref;
@@ -81,13 +81,13 @@ seastar::future<> ClientRequest::start()
       return with_blocking_errorated_future<interruption_errorator>(
 	handle.enter(pp(pg).await_map)
       ).safe_then([this, &pg]() mutable {
-	return with_blocking_errorated_future<interruption_errorator>(
+	return with_blocking_errorated_future(
 		pg.osdmap_gate.wait_for_map_errorated(m->get_map_epoch()));
       }).safe_then([this, &pg](auto map) mutable {
 	return with_blocking_errorated_future<interruption_errorator>(
 		handle.enter(pp(pg).wait_for_active));
       }).safe_then([this, &pg]() mutable {
-	return with_blocking_errorated_future<interruption_errorator>(
+	return with_blocking_errorated_future(
 		pg.wait_for_active_blocker.wait_errorated());
       }).safe_then([this, pgref=std::move(pgref)]() mutable
 	-> interruption_errorator::future<> {
@@ -113,6 +113,8 @@ seastar::future<> ClientRequest::start()
       crimson::get_logger(ceph_subsys_osd).debug(
 	"operation restart, acting set changed");
       return interruption_errorator::make_ready_future<bool>(true);
+    } else if (e == crimson::common::ec<crimson::common::error::success>) {
+      return interruption_errorator::make_ready_future<bool>(false);
     }
   }));
 }

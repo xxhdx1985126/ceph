@@ -56,7 +56,7 @@ namespace crimson::os {
 
 namespace crimson::osd {
 class ClientRequest;
-class IOInterruptConditionBuilder;
+class IOInterruptCondition;
 
 class PG : public boost::intrusive_ref_counter<
   PG,
@@ -69,7 +69,7 @@ class PG : public boost::intrusive_ref_counter<
   using cached_map_t = boost::local_shared_ptr<const OSDMap>;
 
   using interruption_errorator =
-    crimson::common::interruption_errorator<IOInterruptConditionBuilder>;
+    crimson::common::interruption_errorator<IOInterruptCondition>;
 
   ClientRequest::PGPipeline client_request_pg_pipeline;
   PeeringEvent::PGPipeline peering_request_pg_pipeline;
@@ -495,9 +495,10 @@ public:
     const SnapSet &snapset,
     const hobject_t &oid);
 
-  using load_obc_ertr = crimson::errorator<
-    crimson::osd::IOInterruptConditionBuilder,
-    crimson::ct_error::object_corrupted>;
+  using load_obc_ertr =
+    crimson::common::interruption_errorator<
+      crimson::osd::IOInterruptCondition>::extend<
+	crimson::ct_error::object_corrupted>;
   load_obc_ertr::future<
     std::pair<crimson::osd::ObjectContextRef, bool>>
   get_or_load_clone_obc(
