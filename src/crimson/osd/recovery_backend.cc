@@ -173,7 +173,7 @@ seastar::future<BackfillInterval> RecoveryBackend::scan_for_backfill(
                     return PGBackend::load_metadata_ertr::now();
                   }, PGBackend::load_metadata_ertr::assert_all{});
               }
-          })._then(
+          }).safe_then(
             [&version_map, &start, next=std::move(next), this] {
               BackfillInterval bi;
               bi.begin = start;
@@ -183,7 +183,7 @@ seastar::future<BackfillInterval> RecoveryBackend::scan_for_backfill(
               logger().debug("{} BackfillInterval filled, leaving",
                              "scan_for_backfill");
               return seastar::make_ready_future<BackfillInterval>(std::move(bi));
-            });
+            }, PGBackend::load_metadata_ertr::assert_all{});
         });
     });
 }

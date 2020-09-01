@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "crimson/common/exception.h"
 #include "crimson/osd/recovery_backend.h"
 
 #include "messages/MOSDPGPull.h"
@@ -22,7 +23,8 @@ public:
   seastar::future<> handle_recovery_op(
     Ref<MOSDFastDispatchOp> m) final;
 
-  seastar::future<> recover_object(
+  RecoveryBackend::recovery_errorator::future<>
+  recover_object(
     const hobject_t& soid,
     eversion_t need) final;
   seastar::future<> recover_delete(
@@ -32,19 +34,24 @@ public:
     const hobject_t& soid,
     eversion_t need) final;
 protected:
+  using push_errorator =
+    crimson::os::FuturizedStore::get_attrs_ertr::extend_by_errorator<
+      crimson::common::interruption_errorator<
+	crimson::osd::IOInterruptCondition>>::extended_type;
   seastar::future<> handle_pull(
     Ref<MOSDPGPull> m);
-  seastar::future<> handle_pull_response(
+  RecoveryBackend::interruption_errorator::future<>
+  handle_pull_response(
     Ref<MOSDPGPush> m);
   seastar::future<> handle_push(
     Ref<MOSDPGPush> m);
-  seastar::future<> handle_push_reply(
+  push_errorator::future<> handle_push_reply(
     Ref<MOSDPGPushReply> m);
   seastar::future<> handle_recovery_delete(
     Ref<MOSDPGRecoveryDelete> m);
   seastar::future<> handle_recovery_delete_reply(
     Ref<MOSDPGRecoveryDeleteReply> m);
-  seastar::future<> prep_push(
+  push_errorator::future<> prep_push(
     const hobject_t& soid,
     eversion_t need,
     std::map<pg_shard_t, PushOp>* pops,
@@ -56,12 +63,13 @@ protected:
     eversion_t need);
   std::list<std::map<pg_shard_t, pg_missing_t>::const_iterator> get_shards_to_push(
     const hobject_t& soid);
-  seastar::future<ObjectRecoveryProgress> build_push_op(
+  push_errorator::future<ObjectRecoveryProgress> build_push_op(
     const ObjectRecoveryInfo& recovery_info,
     const ObjectRecoveryProgress& progress,
     object_stat_sum_t* stat,
     PushOp* pop);
-  seastar::future<bool> _handle_pull_response(
+  RecoveryBackend::interruption_errorator::future<bool>
+  _handle_pull_response(
     pg_shard_t from,
     PushOp& pop,
     PullOp* response,
@@ -92,7 +100,8 @@ protected:
     const PushOp &pop,
     PushReplyOp *response,
     ceph::os::Transaction *t);
-  seastar::future<bool> _handle_push_reply(
+  ReplicatedRecoveryBackend::push_errorator::future<bool>
+  _handle_push_reply(
     pg_shard_t peer,
     const PushReplyOp &op,
     PushOp *reply);

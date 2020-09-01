@@ -112,8 +112,10 @@ public:
     const OSDOp& osd_op,
     ceph::os::Transaction& trans,
     osd_op_params_t& osd_op_params);
-  using append_errorator = crimson::errorator<
-    crimson::ct_error::invarg>;
+  using append_errorator =
+    crimson::common::interruption_errorator<
+      crimson::osd::IOInterruptCondition>::extend<
+	crimson::ct_error::invarg>;
   append_errorator::future<> append(
     ObjectState& os,
     OSDOp& osd_op,
@@ -154,7 +156,10 @@ public:
   get_attr_errorator::future<> get_xattrs(
     const ObjectState& os,
     OSDOp& osd_op) const;
-  using rm_xattr_ertr = crimson::errorator<crimson::ct_error::enoent>;
+  using rm_xattr_ertr =
+    crimson::common::interruption_errorator<
+      crimson::osd::IOInterruptCondition>::extend<
+	crimson::ct_error::enoent>;
   rm_xattr_ertr::future<> rm_xattr(
     ObjectState& os,
     OSDOp& osd_op,
@@ -197,7 +202,10 @@ public:
     ObjectState& os,
     OSDOp& osd_op,
     ceph::os::Transaction& trans);
-  using omap_clear_ertr = crimson::errorator<crimson::ct_error::enoent>;
+  using omap_clear_ertr =
+    crimson::common::interruption_errorator<
+      crimson::osd::IOInterruptCondition>::extend<
+	crimson::ct_error::enoent>;
   omap_clear_ertr::future<> omap_clear(
     ObjectState& os,
     OSDOp& osd_op,

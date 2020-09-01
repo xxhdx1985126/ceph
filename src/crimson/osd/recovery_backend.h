@@ -5,6 +5,7 @@
 
 #include <seastar/core/future.hh>
 
+#include "crimson/common/exception.h"
 #include "crimson/common/type_helpers.h"
 #include "crimson/os/futurized_store.h"
 #include "crimson/os/futurized_collection.h"
@@ -38,6 +39,15 @@ class RecoveryBackend {
   seastar::future<> handle_scan(
     MOSDPGScan& m);
 protected:
+  using interruption_errorator =
+    crimson::common::interruption_errorator<
+      crimson::osd::IOInterruptCondition>;
+  using recovery_errorator = interruption_errorator::extend<
+    crimson::ct_error::enoent,
+    crimson::ct_error::enodata,
+    crimson::ct_error::invarg,
+    crimson::ct_error::input_output_error,
+    crimson::ct_error::object_corrupted>;
   class WaitForObjectRecovery;
 public:
   RecoveryBackend(crimson::osd::PG& pg,
@@ -66,7 +76,7 @@ public:
   virtual seastar::future<> handle_recovery_op(
     Ref<MOSDFastDispatchOp> m);
 
-  virtual seastar::future<> recover_object(
+  virtual recovery_errorator::future<> recover_object(
     const hobject_t& soid,
     eversion_t need) = 0;
   virtual seastar::future<> recover_delete(

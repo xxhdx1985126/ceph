@@ -403,6 +403,11 @@ struct errorator {};
 template <typename...>
 struct interrupt_error_carrier {};
 
+class EmptyInterruptCondition {};
+
+template <typename INT_COND_BUILDER>
+thread_local seastar::lw_shared_ptr<INT_COND_BUILDER> interrupt_cond;
+
 template <class INT_COND_BUILDER, class... IntErrors, class... AllowedErrors>
 struct errorator<INT_COND_BUILDER,
 		 interrupt_error_carrier<IntErrors...>,
@@ -510,7 +515,6 @@ struct errorator<INT_COND_BUILDER,
   template <class... Args>
   using make_errorator_t = typename make_errorator<Args...>::type;
 
-  static thread_local seastar::lw_shared_ptr<INT_COND_BUILDER> interrupt_cond;
 private:
   // see the comment for `using future = _future` below.
   template <class>
@@ -690,23 +694,29 @@ private:
       return this->then_wrapped(
         [ valfunc = std::forward<ValueFuncT>(valfunc),
           errfunc = std::forward<ErrorVisitorT>(errfunc),
-	  interrupt_cond = errorator_type::interrupt_cond
+	  interrupt_cond_cap = interrupt_cond<INT_COND_BUILDER>
         ] (auto&& future) mutable noexcept {
 
-	  if (interrupt_cond) {
-	    auto [interrupt, fut] = interrupt_cond->template may_interrupt<
-	      typename futurator_t::type>();
-	    if (interrupt) {
-	      return std::move(fut);
+	  if constexpr (!std::is_same_v<INT_COND_BUILDER,
+			  ::crimson::EmptyInterruptCondition>) {
+	    if (interrupt_cond_cap) {
+	      auto [interrupt, fut] = interrupt_cond_cap->template may_interrupt<
+		typename futurator_t::type>();
+	      if (interrupt) {
+		return std::move(*fut);
+	      }
+	      interrupt_cond<INT_COND_BUILDER> = interrupt_cond_cap;
 	    }
-	    errorator_type::interrupt_cond = interrupt_cond;
 	  }
 
           if (__builtin_expect(future.failed(), false)) {
             auto fut =  _safe_then_handle_errors<true, futurator_t>(
               std::move(future), std::forward<ErrorVisitorT>(errfunc));
-	    if (errorator_type::interrupt_cond)
-	      errorator_type::interrupt_cond.release();
+	    if constexpr (!std::is_same_v<INT_COND_BUILDER,
+			    ::crimson::EmptyInterruptCondition>) {
+	      if (interrupt_cond<INT_COND_BUILDER>)
+		interrupt_cond<INT_COND_BUILDER>.release();
+	    }
 	    return fut;
           } else {
             // NOTE: using `seastar::future::get()` here is a bit bloaty
@@ -739,8 +749,11 @@ private:
             // `::then()` already does.
             auto fut = futurator_t::apply(std::forward<ValueFuncT>(valfunc),
 					  std::move(future).get());
-	    if (errorator_type::interrupt_cond)
-	      errorator_type::interrupt_cond.release();
+	    if constexpr (!std::is_same_v<INT_COND_BUILDER,
+			    ::crimson::EmptyInterruptCondition>) {
+	      if (interrupt_cond<INT_COND_BUILDER>)
+		interrupt_cond<INT_COND_BUILDER>.release();
+	    }
 	    return fut;
           }
         });
@@ -868,7 +881,10 @@ private:
   class Enabler {};
 
   template <typename T>
-  using EnableIf = typename std::enable_if<contains_once_v<std::decay_t<T>>, Enabler>::type;
+  using EnableIf =
+    typename std::enable_if<contains_once_v<std::decay_t<T>>
+			      || interror_contains_once_v<std::decay_t<T>>,
+			    Enabler>::type;
 
   template <typename ErrorFunc>
   struct all_same_way_t {
@@ -941,14 +957,14 @@ public:
   template <typename... Args>
   [[gnu::always_inline]]
   static void enable_interruption(Args&&... args) {
-    interrupt_cond = seastar::make_lw_shared<
+    interrupt_cond<INT_COND_BUILDER> = seastar::make_lw_shared<
       INT_COND_BUILDER>(std::forward<Args>(args)...);
   }
 
   [[gnu::always_inline]]
   static void disable_interruption() {
-    if (interrupt_cond)
-      interrupt_cond.release();
+    if (interrupt_cond<INT_COND_BUILDER>)
+      interrupt_cond<INT_COND_BUILDER>.release();
   }
 
   template <class ErrorFunc>
@@ -960,8 +976,8 @@ public:
   template <class... NewAllowedErrorsT>
   using extend = errorator<INT_COND_BUILDER,
 			   interrupt_error_carrier<IntErrors...>,
-			  AllowedErrors...,
-			  NewAllowedErrorsT...>;
+			   AllowedErrors...,
+			   NewAllowedErrorsT...>;
 
   template <typename>
   struct extend_by_errorator {};
@@ -1052,7 +1068,6 @@ public:
     return make_ready_future<>();
   }
 
-private:
   template <class T, class = std::void_t<T>>
   class futurize {
     using vanilla_futurize = seastar::futurize<T>;
@@ -1118,6 +1133,7 @@ private:
 	  ValuesT...>(std::forward<Arg>(arg));
     }
   };
+private:
 
   template <class ErrorT>
   static std::exception_ptr make_exception_ptr(ErrorT&& e) {
@@ -1135,18 +1151,9 @@ private:
   friend class errorator;
 }; // class errorator, generic template
 
-template <typename INT_COND_BUILDER,
-	  class... IntErrors,
-	  typename... AllowedErrors>
-thread_local seastar::lw_shared_ptr<INT_COND_BUILDER>
-errorator<
-  INT_COND_BUILDER,
-  interrupt_error_carrier<IntErrors...>,
-  AllowedErrors...>::interrupt_cond;
-
 // no errors? errorator<>::future is plain seastar::future then!
-template <typename INT_COND_BUILDER>
-class errorator<INT_COND_BUILDER> {
+template <typename INT_COND_BUILDER, typename Success>
+class errorator<INT_COND_BUILDER, interrupt_error_carrier<Success>> {
 public:
   template <class... ValuesT>
   using future = ::seastar::future<ValuesT...>;
@@ -1156,7 +1163,9 @@ public:
 
   // get a new errorator by extending current one with new error
   template <class... NewAllowedErrors>
-  using extend = errorator<INT_COND_BUILDER, NewAllowedErrors...>;
+  using extend = errorator<INT_COND_BUILDER,
+			   interrupt_error_carrier<Success>,
+			   NewAllowedErrors...>;
 
   template <typename>
   struct extend_by_errorator {};

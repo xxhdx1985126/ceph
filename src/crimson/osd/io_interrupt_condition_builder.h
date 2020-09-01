@@ -19,14 +19,14 @@ public:
   bool is_stopping();
 
   template <typename future_t>
-  std::pair<bool, future_t> may_interrupt() {
+  std::pair<bool, std::optional<future_t>> may_interrupt() {
     if (e != get_current_osdmap_epoch()) {
-      return std::make_pair<bool, future_t>(true, crimson::common::eactingchg::make());
+      return std::make_pair<bool, std::optional<future_t>>(true, crimson::common::eactingchg::make());
     }
     if (is_stopping()) {
-      return std::make_pair<bool, future_t>(true, crimson::common::esysshut::make());
+      return std::make_pair<bool, std::optional<future_t>>(true, crimson::common::esysshut::make());
     }
-    return std::make_pair<bool, future_t>(false, crimson::common::esuccess::make());
+    return std::make_pair<bool, std::optional<future_t>>(false, {});
   }
 
 private:

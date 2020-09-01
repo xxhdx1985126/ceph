@@ -268,7 +268,7 @@ seastar::future<> SeaStore::do_transaction(
 	      f.flush(str);
 	      logger().error("{}", str.str());
 	      abort();
-	    })).safe_then([&t]() {
+	    })).then([&t]() {
 	      for (auto i : {
 		  t.get_on_applied(),
 		    t.get_on_commit(),
@@ -277,7 +277,7 @@ seastar::future<> SeaStore::do_transaction(
 		  i->complete(0);
 		}
 	      }
-	    }, write_ertr::assert_all{});
+	    });
     });
 }
 
