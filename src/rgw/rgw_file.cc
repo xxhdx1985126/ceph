@@ -761,6 +761,7 @@ namespace rgw {
         rgw_fh->set_acls(*(req.get_attr(RGW_ATTR_ACL))); 
 
 	get<0>(mkr) = rgw_fh;
+	rgw_fh->file_ondisk_version = 0; // inital version
 	rgw_fh->mtx.unlock();
       } else
 	rc = -EIO;
@@ -1452,7 +1453,16 @@ namespace rgw {
     using ceph::encode;
     fh_key fhk(this->fh.fh_hk);
     encode(fhk, ux_key1);
+    bool need_ondisk_version =
+      (fh.fh_type == RGW_FS_TYPE_FILE);
+    if (need_ondisk_version &&
+	file_ondisk_version < 0) {
+      file_ondisk_version = 0;
+    }
     encode(*this, ux_attrs1);
+    if (need_ondisk_version) {
+      file_ondisk_version++;
+    }
   } /* RGWFileHandle::encode_attrs */
 
   DecodeAttrsResult RGWFileHandle::decode_attrs(const ceph::buffer::list* ux_key1,
