@@ -32,7 +32,8 @@ private:
 		      ceph::os::Transaction&& txn,
 		      osd_op_params_t&& req,
 		      epoch_t min_epoch, epoch_t max_epoch,
-		      std::vector<pg_log_entry_t>&& log_entries) final;
+		      std::vector<pg_log_entry_t>&& log_entries,
+		      osdop_on_submit_func_t&& callback) final;
   CollectionRef coll;
   crimson::os::FuturizedStore* store;
   seastar::future<> request_committed(const osd_reqid_t& reqid,

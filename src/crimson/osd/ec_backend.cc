@@ -28,7 +28,8 @@ ECBackend::_submit_transaction(std::set<pg_shard_t>&& pg_shards,
                                ceph::os::Transaction&& txn,
                                osd_op_params_t&& osd_op_p,
                                epoch_t min_epoch, epoch_t max_epoch,
-			       std::vector<pg_log_entry_t>&& log_entries)
+			       std::vector<pg_log_entry_t>&& log_entries,
+			       osdop_on_submit_func_t&& callback)
 {
   // todo
   return seastar::make_ready_future<crimson::osd::acked_peers_t>();

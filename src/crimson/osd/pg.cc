@@ -569,7 +569,8 @@ seastar::future<> PG::WaitForActiveBlocker::stop()
 seastar::future<> PG::submit_transaction(const OpInfo& op_info,
 					 ObjectContextRef&& obc,
 					 ceph::os::Transaction&& txn,
-					 osd_op_params_t&& osd_op_p)
+					 osd_op_params_t&& osd_op_p,
+                                         osdop_on_submit_func_t&& callback)
 {
   if (__builtin_expect(stopping, false)) {
     return seastar::make_exception_future<>(
@@ -608,7 +609,8 @@ seastar::future<> PG::submit_transaction(const OpInfo& op_info,
 				std::move(osd_op_p),
 				peering_state.get_last_peering_reset(),
 				map_epoch,
-				std::move(log_entries)).then(
+				std::move(log_entries),
+                                std::move(callback)).then(
     [this, last_complete=peering_state.get_info().last_complete,
       at_version=osd_op_p.at_version](auto acked) {
     for (const auto& peer : acked) {
@@ -702,7 +704,8 @@ PG::do_osd_ops_ertr::future<Ref<MOSDOpReply>>
 PG::do_osd_ops(
   Ref<MOSDOp> m,
   ObjectContextRef obc,
-  const OpInfo &op_info)
+  const OpInfo &op_info,
+  PG::osdop_on_submit_func_t&& cb)
 {
   if (__builtin_expect(stopping, false)) {
     throw crimson::common::system_shutdown_exception();
@@ -714,23 +717,23 @@ PG::do_osd_ops(
   auto ox = std::make_unique<OpsExecuter>(
     obc, op_info, get_pool().info, get_backend(), *m);
   return crimson::do_for_each(
-    m->ops, [obc, m, ox = ox.get()](OSDOp& osd_op) {
+    m->ops, [obc, m, ox = ox.get()](OSDOp& osd_op) mutable {
     logger().debug(
       "do_osd_ops: {} - object {} - handling op {}",
       *m,
       obc->obs.oi.soid,
       ceph_osd_op_name(osd_op.op.op));
     return ox->execute_op(osd_op);
-  }).safe_then([this, obc, m, ox = ox.get(), &op_info] {
+  }).safe_then([this, obc, m, ox = ox.get(), &op_info,
+                cb=std::move(cb)]() mutable {
     logger().debug(
       "do_osd_ops: {} - object {} all operations successful",
       *m,
       obc->obs.oi.soid);
     return std::move(*ox).flush_changes(
-      [this, m, &op_info] (auto&& txn,
-			   auto&& obc,
-			   auto&& osd_op_p,
-                           bool user_modify) -> osd_op_errorator::future<> {
+      [this, m, &op_info, cb=std::move(cb)]
+      (auto&& txn, auto&& obc, auto&& osd_op_p, bool user_modify) mutable
+      -> osd_op_errorator::future<> {
 	logger().debug(
 	  "do_osd_ops: {} - object {} submitting txn",
 	  *m,
@@ -740,7 +743,8 @@ PG::do_osd_ops(
           op_info,
           std::move(obc),
           std::move(txn),
-          std::move(osd_op_p));
+          std::move(osd_op_p),
+          std::move(cb));
       });
   }).safe_then([this, m, obc, rvec = op_info.allows_returnvec()] {
     // TODO: should stop at the first op which returns a negative retval,

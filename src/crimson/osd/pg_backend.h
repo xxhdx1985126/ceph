@@ -41,6 +41,7 @@ protected:
   // low-level read errorator
   using ll_read_errorator = crimson::os::FuturizedStore::read_errorator;
 
+  using osdop_on_submit_func_t = std::function<void (void)>;
 public:
   using load_metadata_ertr = crimson::errorator<
     crimson::ct_error::object_corrupted>;
@@ -127,7 +128,8 @@ public:
     osd_op_params_t&& osd_op_p,
     epoch_t min_epoch,
     epoch_t map_epoch,
-    std::vector<pg_log_entry_t>&& log_entries);
+    std::vector<pg_log_entry_t>&& log_entries,
+    osdop_on_submit_func_t&& callback);
   seastar::future<std::tuple<std::vector<hobject_t>, hobject_t>> list_objects(
     const hobject_t& start,
     uint64_t limit) const;
@@ -228,13 +230,15 @@ private:
     uint32_t flags) = 0;
 
   bool maybe_create_new_object(ObjectState& os, ceph::os::Transaction& txn);
+
   virtual seastar::future<crimson::osd::acked_peers_t>
   _submit_transaction(std::set<pg_shard_t>&& pg_shards,
 		      const hobject_t& hoid,
 		      ceph::os::Transaction&& txn,
 		      osd_op_params_t&& osd_op_p,
 		      epoch_t min_epoch, epoch_t max_epoch,
-		      std::vector<pg_log_entry_t>&& log_entries) = 0;
+		      std::vector<pg_log_entry_t>&& log_entries,
+		      osdop_on_submit_func_t&& callback) = 0;
   friend class ReplicatedRecoveryBackend;
   friend class ::crimson::osd::PG;
 };
