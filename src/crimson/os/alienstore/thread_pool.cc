@@ -22,6 +22,7 @@ ThreadPool::ThreadPool(size_t n_threads,
       if (cpu_id >= 0) {
         pin(cpu_id);
       }
+      (void) pthread_setname_np(pthread_self(), "alien-store-tp");
       loop(queue_max_wait);
     });
   }

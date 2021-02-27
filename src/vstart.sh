@@ -677,6 +677,9 @@ EOF
             BLUESTORE_OPTS+="
         bdev ioring = true"
         fi
+        BLUESTORE_OPTS+="
+        bluestore prefer deferred size hdd = 0
+        bluestore throttle bytes = 1073741824"
     fi
     wconf <<EOF
 [client]
