@@ -67,10 +67,9 @@ ReplicatedBackend::_submit_transaction(std::set<pg_shard_t>&& pg_shards,
     callback=std::move(callback)]
     (auto pg_shard) mutable {
       if (pg_shard == whoami) {
-        return shard_services.get_store().do_transaction(coll,std::move(txn))
-	.then([callback=std::move(callback)] {
-	  callback();
-	});
+        return shard_services.get_store().do_transaction(coll,
+							 std::move(txn),
+							 std::move(callback));
       } else {
         auto m = make_message<MOSDRepOp>(req_id, whoami,
                                          spg_t{pgid, pg_shard.shard}, hoid,

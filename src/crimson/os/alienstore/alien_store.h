@@ -87,7 +87,8 @@ public:
   seastar::future<std::vector<coll_t>> list_collections() final;
 
   seastar::future<> do_transaction(CollectionRef c,
-                                   ceph::os::Transaction&& txn) final;
+                                   ceph::os::Transaction&& txn,
+				   on_submit_func_t&& on_submit) final;
 
   seastar::future<> write_meta(const std::string& key,
                   const std::string& value) final;
@@ -120,5 +121,6 @@ private:
   std::unique_ptr<CephContext> cct;
   seastar::gate transaction_gate;
   std::unordered_map<coll_t, CollectionRef> coll_map;
+  uint64_t concurrent_ops = 0;
 };
 }

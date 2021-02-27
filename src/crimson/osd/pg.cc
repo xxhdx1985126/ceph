@@ -127,7 +127,8 @@ PG::~PG() {}
 bool PG::try_flush_or_schedule_async() {
   (void)shard_services.get_store().do_transaction(
     coll_ref,
-    ObjectStore::Transaction()).then(
+    ObjectStore::Transaction(),
+    [] { return seastar::now(); }).then(
       [this, epoch=get_osdmap_epoch()]() {
 	return shard_services.start_operation<LocalPeeringEvent>(
 	  this,
@@ -1025,7 +1026,7 @@ seastar::future<> PG::handle_rep_op(Ref<MOSDRepOp> req)
   decode(log_entries, p);
   peering_state.append_log(std::move(log_entries), req->pg_trim_to,
       req->version, req->min_last_complete_ondisk, txn, !txn.empty(), false);
-  return shard_services.get_store().do_transaction(coll_ref, std::move(txn))
+  return shard_services.get_store().do_transaction(coll_ref, std::move(txn), [] { return seastar::now(); })
     .then([req, lcod=peering_state.get_info().last_complete, this] {
       peering_state.update_last_complete_ondisk(lcod);
       const auto map_epoch = get_osdmap_epoch();

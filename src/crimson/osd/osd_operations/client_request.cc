@@ -217,7 +217,7 @@ ClientRequest::do_process(Ref<PG>& pg, crimson::osd::ObjectContextRef obc)
   return pg->do_osd_ops(
     m, obc, op_info,
     [this, pg] {
-      handle.enter(pp(*pg).wait_repop);
+      return with_blocking_future(handle.enter(pp(*pg).wait_repop));
     }).safe_then([this](Ref<MOSDOpReply> reply) {
     return conn->send(std::move(reply));
   }, crimson::ct_error::eagain::handle([this, pg]() mutable {

@@ -166,7 +166,8 @@ seastar::future<> OSD::mkfs(uuid_d osd_uuid, uuid_d cluster_fsid)
     ceph::os::Transaction t;
     meta_coll->create(t);
     meta_coll->store_superblock(t, superblock);
-    return store->do_transaction(meta_coll->collection(), std::move(t));
+    return store->do_transaction(meta_coll->collection(), std::move(t),
+				 [] { return seastar::now(); });
   }).then([cluster_fsid, this] {
     return when_all_succeed(
       store->write_meta("ceph_fsid", cluster_fsid.to_string()),
@@ -1010,7 +1011,8 @@ seastar::future<> OSD::handle_osd_map(crimson::net::ConnectionRef conn,
         superblock.clean_thru = last;
       }
       meta_coll->store_superblock(t, superblock);
-      return store->do_transaction(meta_coll->collection(), std::move(t));
+      return store->do_transaction(meta_coll->collection(), std::move(t),
+				   [] { return seastar::now(); });
     });
   }).then([=] {
     // TODO: write to superblock and commit the transaction

@@ -535,7 +535,7 @@ private:
   using do_osd_ops_ertr = crimson::errorator<
    crimson::ct_error::eagain>;
   using osdop_on_submit_func_t =
-    std::function<void (void)>;
+    std::function<seastar::future<> (void)>;
   do_osd_ops_ertr::future<Ref<MOSDOpReply>> do_osd_ops(
     Ref<MOSDOp> m,
     ObjectContextRef obc,

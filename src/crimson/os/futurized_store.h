@@ -132,8 +132,11 @@ public:
   virtual seastar::future<CollectionRef> open_collection(const coll_t& cid) = 0;
   virtual seastar::future<std::vector<coll_t>> list_collections() = 0;
 
+  using on_submit_func_t = std::function<seastar::future<> (void)>;
+
   virtual seastar::future<> do_transaction(CollectionRef ch,
-					   ceph::os::Transaction&& txn) = 0;
+					   ceph::os::Transaction&& txn,
+					   on_submit_func_t&& on_submit) = 0;
   virtual seastar::future<OmapIteratorRef> get_omap_iterator(
     CollectionRef ch,
     const ghobject_t& oid) = 0;

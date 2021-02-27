@@ -108,7 +108,8 @@ seastar::future<> ShardServices::dispatch_context_transaction(
   crimson::os::CollectionRef col, PeeringCtx &ctx) {
   auto ret = store.do_transaction(
     col,
-    std::move(ctx.transaction));
+    std::move(ctx.transaction),
+    [] { return seastar::now(); });
   ctx.reset_transaction();
   return ret;
 }

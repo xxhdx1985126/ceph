@@ -225,7 +225,8 @@ seastar::future<std::map<uint64_t, uint64_t>> fiemap(
 
 seastar::future<> SeaStore::do_transaction(
   CollectionRef _ch,
-  ceph::os::Transaction&& _t)
+  ceph::os::Transaction&& _t,
+  FuturizedStore::on_submit_func_t&& on_submit)
 {
   return seastar::do_with(
     _t.begin(),
@@ -287,7 +288,7 @@ seastar::future<> SeaStore::do_transaction(
 		}
 	      }
 	    });
-    });
+    }).then([on_submit=std::move(on_submit)] { return on_submit(); });
 }
 
 SeaStore::write_ertr::future<> SeaStore::_do_transaction_step(

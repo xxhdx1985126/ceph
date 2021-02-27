@@ -41,7 +41,7 @@ protected:
   // low-level read errorator
   using ll_read_errorator = crimson::os::FuturizedStore::read_errorator;
 
-  using osdop_on_submit_func_t = std::function<void (void)>;
+  using osdop_on_submit_func_t = std::function<seastar::future<> (void)>;
 public:
   using load_metadata_ertr = crimson::errorator<
     crimson::ct_error::object_corrupted>;
