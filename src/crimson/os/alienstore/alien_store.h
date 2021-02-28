@@ -121,6 +121,6 @@ private:
   std::unique_ptr<CephContext> cct;
   seastar::gate transaction_gate;
   std::unordered_map<coll_t, CollectionRef> coll_map;
-  uint64_t concurrent_ops = 0;
+  //uint64_t concurrent_ops = 0;
 };
 }

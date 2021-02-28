@@ -367,14 +367,14 @@ seastar::future<> AlienStore::do_transaction(CollectionRef ch,
 	[this, ch, id, &txn, &done, on_submit=std::move(on_submit)]() mutable {
 	AlienCollection* alien_coll = static_cast<AlienCollection*>(ch.get());
 	return alien_coll->with_lock([this, ch, id, &txn, &done] {
-	  logger().info("do_transaction: concurrent_ops: {}", ++concurrent_ops);
+	  //logger().info("do_transaction: concurrent_ops: {}", ++concurrent_ops);
 	  Context *crimson_wrapper =
 	    ceph::os::Transaction::collect_all_contexts(txn);
 	  return tp->submit([this, ch, id, crimson_wrapper, &txn, &done] {
 	    txn.register_on_commit(new OnCommit(id, done, crimson_wrapper, txn));
 	    auto c = static_cast<AlienCollection*>(ch.get());
 	    return store->queue_transaction(c->collection, std::move(txn));
-	  }).finally([this] { --concurrent_ops; });
+	  }); //.finally([this] { --concurrent_ops; });
 	}).then([this, &done, on_submit=std::move(on_submit)] (int r) {
 	  assert(r == 0);
 	  return on_submit().then([&done] {

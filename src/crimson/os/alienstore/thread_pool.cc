@@ -55,9 +55,12 @@ void ThreadPool::loop(std::chrono::milliseconds queue_max_wait)
                     [this, &work_item] {
         return pending.pop(work_item) || is_stopping();
       });
+
     }
     if (work_item) {
+      ::crimson::get_logger(ceph_subsys_filestore).info("threadpool submit, concurrent_ops: {}", ++concurrent_ops);
       work_item->process();
+      --concurrent_ops;
     } else if (is_stopping()) {
       break;
     }

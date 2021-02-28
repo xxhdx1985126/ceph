@@ -14,6 +14,8 @@
 #include <seastar/core/semaphore.hh>
 #include <seastar/core/sharded.hh>
 
+#include "crimson/common/log.h"
+
 namespace crimson::os {
 
 struct WorkItem {
@@ -92,6 +94,7 @@ class ThreadPool {
   }
   ThreadPool(const ThreadPool&) = delete;
   ThreadPool& operator=(const ThreadPool&) = delete;
+  std::atomic_long concurrent_ops = 0;
 public:
   /**
    * @param queue_sz the depth of pending queue. before a task is scheduled,
@@ -119,8 +122,10 @@ public:
             auto task = new Task{std::move(packaged)};
             auto fut = task->get_future();
             pending.push(task);
+//	    ::crimson::get_logger(ceph_subsys_filestore).info("threadpool submit, concurrent_ops: {}", ++concurrent_ops);
             cond.notify_one();
             return fut.finally([task, this] {
+	      //--concurrent_ops;
               local_free_slots().signal();
               delete task;
             });
