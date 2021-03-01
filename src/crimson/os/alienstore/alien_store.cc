@@ -15,6 +15,7 @@
 #include <seastar/core/reactor.hh>
 
 #include "common/ceph_context.h"
+#include "common/PluginRegistry.h"
 #include "global/global_context.h"
 #include "include/Context.h"
 #include "os/bluestore/BlueStore.h"
@@ -63,6 +64,7 @@ AlienStore::AlienStore(const std::string& path, const ConfigValues& values)
   g_ceph_context = cct.get();
   cct->_conf.set_config_values(values);
   store = std::make_unique<BlueStore>(cct.get(), path);
+  logger().debug("init, bluestore cct->_plugin_registry: {}", (void*) store->cct->get_plugin_registry());
 
   long cpu_id = 0;
   if (long nr_cpus = sysconf(_SC_NPROCESSORS_ONLN); nr_cpus != -1) {
@@ -83,6 +85,7 @@ seastar::future<> AlienStore::start()
 
 seastar::future<> AlienStore::stop()
 {
+  logger().debug("{}", __func__);
   return tp->submit(::rand() % threadpool_size, [this] {
     for (auto [cid, ch]: coll_map)
       static_cast<AlienCollection*>(ch.get())->collection.reset();
@@ -123,9 +126,11 @@ seastar::future<> AlienStore::mkfs(uuid_d osd_fsid)
   logger().debug("{}", __func__);
   store->set_fsid(osd_fsid);
   return tp->submit(::rand() % threadpool_size, [this] {
+    logger().debug("mkfs, bluestore cct->_plugin_registry: {}", (void*)store->cct->get_plugin_registry());
     return store->mkfs();
   }).then([] (int r) {
     assert(r == 0);
+    logger().debug("mkfs done.");
     return seastar::now();
   });
 }

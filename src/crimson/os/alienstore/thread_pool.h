@@ -78,12 +78,12 @@ struct SubmitQueue {
 class ThreadPool {
   size_t n_threads;
   std::atomic<bool> stopping = false;
-  std::mutex mutex;
-  std::condition_variable cond;
+  std::vector<std::mutex> mutexes;
+  std::vector<std::condition_variable> conds;
   std::vector<std::thread> threads;
   seastar::sharded<SubmitQueue> submit_queue;
   const size_t queue_size;
-  std::vector<boost::lockfree::queue<WorkItem*>> pending;
+  std::vector<std::deque<WorkItem*>> pendings;
 
   void loop(std::chrono::milliseconds queue_max_wait, size_t shard);
   bool is_stopping() const {
@@ -95,6 +95,7 @@ class ThreadPool {
   }
   ThreadPool(const ThreadPool&) = delete;
   ThreadPool& operator=(const ThreadPool&) = delete;
+  long cpu_id;
   //std::atomic_long concurrent_ops = 0;
 public:
   /**
@@ -122,9 +123,9 @@ public:
           .then([packaged=std::move(packaged), shard, this] {
             auto task = new Task{std::move(packaged)};
             auto fut = task->get_future();
-            pending[shard].push(task);
+            pendings[shard].push_back(task);
 	    //::crimson::get_logger(ceph_subsys_filestore).info("threadpool submit, concurrent_ops: {}", ++concurrent_ops);
-            //cond.notify_one();
+            conds[shard].notify_one();
             return fut.finally([task, this] {
 	      //--concurrent_ops;
               local_free_slots().signal();
