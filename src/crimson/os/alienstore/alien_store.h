@@ -24,7 +24,8 @@ public:
   class AlienOmapIterator final : public OmapIterator {
   public:
     AlienOmapIterator(ObjectMap::ObjectMapIterator& it,
-	AlienStore* store) : iter(it), store(store) {}
+	AlienStore* store, const CollectionRef& ch)
+      : iter(it), store(store), ch(ch) {}
     seastar::future<> seek_to_first();
     seastar::future<> upper_bound(const std::string& after);
     seastar::future<> lower_bound(const std::string& to);
@@ -37,6 +38,7 @@ public:
   private:
     ObjectMap::ObjectMapIterator iter;
     AlienStore* store;
+    CollectionRef ch;
   };
   AlienStore(const std::string& path, const ConfigValues& values);
   ~AlienStore() final;
@@ -122,5 +124,6 @@ private:
   seastar::gate transaction_gate;
   std::unordered_map<coll_t, CollectionRef> coll_map;
   //uint64_t concurrent_ops = 0;
+  size_t threadpool_size = 0;
 };
 }

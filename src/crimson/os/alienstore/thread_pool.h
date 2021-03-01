@@ -76,15 +76,16 @@ struct SubmitQueue {
 
 /// an engine for scheduling non-seastar tasks from seastar fibers
 class ThreadPool {
+  size_t n_threads;
   std::atomic<bool> stopping = false;
   std::mutex mutex;
   std::condition_variable cond;
   std::vector<std::thread> threads;
   seastar::sharded<SubmitQueue> submit_queue;
   const size_t queue_size;
-  boost::lockfree::queue<WorkItem*> pending;
+  std::vector<boost::lockfree::queue<WorkItem*>> pending;
 
-  void loop(std::chrono::milliseconds queue_max_wait);
+  void loop(std::chrono::milliseconds queue_max_wait, size_t shard);
   bool is_stopping() const {
     return stopping.load(std::memory_order_relaxed);
   }
@@ -94,7 +95,7 @@ class ThreadPool {
   }
   ThreadPool(const ThreadPool&) = delete;
   ThreadPool& operator=(const ThreadPool&) = delete;
-  std::atomic_long concurrent_ops = 0;
+  //std::atomic_long concurrent_ops = 0;
 public:
   /**
    * @param queue_sz the depth of pending queue. before a task is scheduled,
@@ -110,20 +111,20 @@ public:
   seastar::future<> start();
   seastar::future<> stop();
   template<typename Func, typename...Args>
-  auto submit(Func&& func, Args&&... args) {
+  auto submit(int shard, Func&& func, Args&&... args) {
     auto packaged = [func=std::move(func),
                      args=std::forward_as_tuple(args...)] {
       return std::apply(std::move(func), std::move(args));
     };
     return seastar::with_gate(submit_queue.local().pending_tasks,
-      [packaged=std::move(packaged), this] {
+      [packaged=std::move(packaged), shard, this] {
         return local_free_slots().wait()
-          .then([packaged=std::move(packaged), this] {
+          .then([packaged=std::move(packaged), shard, this] {
             auto task = new Task{std::move(packaged)};
             auto fut = task->get_future();
-            pending.push(task);
-//	    ::crimson::get_logger(ceph_subsys_filestore).info("threadpool submit, concurrent_ops: {}", ++concurrent_ops);
-            cond.notify_one();
+            pending[shard].push(task);
+	    //::crimson::get_logger(ceph_subsys_filestore).info("threadpool submit, concurrent_ops: {}", ++concurrent_ops);
+            //cond.notify_one();
             return fut.finally([task, this] {
 	      //--concurrent_ops;
               local_free_slots().signal();
