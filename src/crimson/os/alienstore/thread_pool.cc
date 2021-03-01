@@ -12,15 +12,15 @@ namespace crimson::os {
 
 ThreadPool::ThreadPool(size_t n_threads,
                        size_t queue_sz,
-                       long cpu_id)
+                       std::vector<uint64_t> cpus)
   : queue_size{round_up_to(queue_sz, seastar::smp::count)},
     pending{queue_size}
 {
   auto queue_max_wait = std::chrono::seconds(local_conf()->threadpool_empty_queue_max_wait);
   for (size_t i = 0; i < n_threads; i++) {
-    threads.emplace_back([this, cpu_id, queue_max_wait] {
-      if (cpu_id >= 0) {
-        pin(cpu_id);
+    threads.emplace_back([this, cpus, queue_max_wait] {
+      if (!cpus.empty()) {
+	pin(cpus);
       }
       loop(queue_max_wait);
     });
@@ -34,11 +34,13 @@ ThreadPool::~ThreadPool()
   }
 }
 
-void ThreadPool::pin(unsigned cpu_id)
+void ThreadPool::pin(std::vector<uint64_t> cpus)
 {
   cpu_set_t cs;
   CPU_ZERO(&cs);
-  CPU_SET(cpu_id, &cs);
+  for (auto cpu : cpus) {
+    CPU_SET(cpu, &cs);
+  }
   [[maybe_unused]] auto r = pthread_setaffinity_np(pthread_self(),
                                                    sizeof(cs), &cs);
   ceph_assert(r == 0);
