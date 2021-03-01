@@ -72,17 +72,25 @@ struct SubmitQueue {
   }
 };
 
-/// an engine for scheduling non-seastar tasks from seastar fibers
-class ThreadPool {
-  std::atomic<bool> stopping = false;
+struct ShardedWorkQueue {
   std::mutex mutex;
   std::condition_variable cond;
+  std::deque<WorkItem*> pending;
+  void reserve(size_t queue_size) {
+    pending.resize(queue_size);
+  }
+};
+
+/// an engine for scheduling non-seastar tasks from seastar fibers
+class ThreadPool {
+  size_t n_threads;
+  std::atomic<bool> stopping = false;
   std::vector<std::thread> threads;
   seastar::sharded<SubmitQueue> submit_queue;
   const size_t queue_size;
-  boost::lockfree::queue<WorkItem*> pending;
+  std::vector<ShardedWorkQueue> pending_queues;
 
-  void loop(std::chrono::milliseconds queue_max_wait);
+  void loop(std::chrono::milliseconds queue_max_wait, size_t shard);
   bool is_stopping() const {
     return stopping.load(std::memory_order_relaxed);
   }
@@ -106,26 +114,36 @@ public:
   ~ThreadPool();
   seastar::future<> start();
   seastar::future<> stop();
+  size_t size() {
+    return n_threads;
+  }
   template<typename Func, typename...Args>
-  auto submit(Func&& func, Args&&... args) {
+  auto submit(int shard, Func&& func, Args&&... args) {
     auto packaged = [func=std::move(func),
                      args=std::forward_as_tuple(args...)] {
       return std::apply(std::move(func), std::move(args));
     };
     return seastar::with_gate(submit_queue.local().pending_tasks,
-      [packaged=std::move(packaged), this] {
+      [packaged=std::move(packaged), shard, this] {
         return local_free_slots().wait()
-          .then([packaged=std::move(packaged), this] {
+          .then([packaged=std::move(packaged), shard, this] {
             auto task = new Task{std::move(packaged)};
             auto fut = task->get_future();
-            pending.push(task);
-            cond.notify_one();
+	    auto& queue = pending_queues[shard];
+            queue.pending.push_back(task);
+	    queue.cond.notify_one();
             return fut.finally([task, this] {
               local_free_slots().signal();
               delete task;
             });
           });
         });
+  }
+
+  template<typename Func>
+  auto submit(Func&& func) {
+    return submit(::rand() % n_threads,
+		  std::forward<Func>(func));
   }
 };
 
