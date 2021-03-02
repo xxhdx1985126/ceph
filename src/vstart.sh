@@ -677,6 +677,11 @@ EOF
             BLUESTORE_OPTS+="
         bdev ioring = true"
         fi
+        BLUESTORE_OPTS+="
+        bluestore prefer deferred size hdd = 0
+        bluestore throttle bytes = 1073741824
+        crimson_alien_thread_cpu_cores = 25-30,35-40"
+
     fi
     wconf <<EOF
 [client]
