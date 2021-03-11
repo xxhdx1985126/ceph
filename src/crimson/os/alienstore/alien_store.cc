@@ -353,7 +353,8 @@ auto AlienStore::omap_get_values(CollectionRef ch,
 }
 
 seastar::future<> AlienStore::do_transaction(CollectionRef ch,
-                                             ceph::os::Transaction&& txn)
+                                             ceph::os::Transaction&& txn,
+					     FuturizedStore::on_submit_func_t on_submit)
 {
   logger().debug("{}", __func__);
   auto id = seastar::this_shard_id();
@@ -361,8 +362,9 @@ seastar::future<> AlienStore::do_transaction(CollectionRef ch,
   return seastar::do_with(
     std::move(txn),
     std::move(done),
-    [this, ch, id] (auto &txn, auto &done) {
-      return seastar::with_gate(transaction_gate, [this, ch, id, &txn, &done] {
+    [this, ch, id, on_submit=std::move(on_submit)] (auto &txn, auto &done) mutable {
+      return seastar::with_gate(transaction_gate,
+	[this, ch, id, &txn, &done, on_submit=std::move(on_submit)]() mutable {
 	AlienCollection* alien_coll = static_cast<AlienCollection*>(ch.get());
 	return alien_coll->with_lock([this, ch, id, &txn, &done] {
 	  Context *crimson_wrapper =
@@ -372,9 +374,11 @@ seastar::future<> AlienStore::do_transaction(CollectionRef ch,
 	    auto c = static_cast<AlienCollection*>(ch.get());
 	    return store->queue_transaction(c->collection, std::move(txn));
 	  });
-	}).then([&done] (int r) {
+	}).then([&done, on_submit=std::move(on_submit)] (int r) {
 	  assert(r == 0);
-	  return done.get_future();
+	  return on_submit().then([&done] {
+	    return done.get_future();
+	  });
 	});
       });
     });

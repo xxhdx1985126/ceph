@@ -460,12 +460,13 @@ void SeaStore::on_error(ceph::os::Transaction &t) {
 
 seastar::future<> SeaStore::do_transaction(
   CollectionRef _ch,
-  ceph::os::Transaction&& _t)
+  ceph::os::Transaction&& _t,
+  FuturizedStore::on_submit_func_t on_submit)
 {
   return repeat_with_internal_context(
     _ch,
     std::move(_t),
-    [this](auto &ctx) {
+    [this, on_submit=std::move(on_submit)](auto &ctx) {
       return onode_manager->get_or_create_onodes(
 	*ctx.transaction, ctx.iter.get_objects()
       ).safe_then([this, &ctx](auto &&read_onodes) {
@@ -482,6 +483,8 @@ seastar::future<> SeaStore::do_transaction(
 	return onode_manager->write_dirty(*ctx.transaction, ctx.onodes);
       }).safe_then([this, &ctx] {
 	return transaction_manager->submit_transaction(std::move(ctx.transaction));
+      }).safe_then([on_submit=std::move(on_submit)] {
+	return on_submit();
       }).safe_then([&ctx]() {
 	for (auto i : {
 	    ctx.ext_transaction.get_on_applied(),
