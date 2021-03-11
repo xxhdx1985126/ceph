@@ -238,9 +238,16 @@ ClientRequest::do_process(Ref<PG>& pg, crimson::osd::ObjectContextRef obc)
       return conn->send(std::move(reply));
     }
   }
-  return pg->do_osd_ops(m, obc, op_info).safe_then_interruptible(
-      [this](Ref<MOSDOpReply> reply) -> interruptible_future<> {
-    return conn->send(std::move(reply));
+  return pg->do_osd_ops(m, obc, op_info,
+    [this, pg] {
+      return with_blocking_future(handle.enter(pp(*pg).wait_repop));
+  }).safe_then_interruptible(
+    [this, pg](Ref<MOSDOpReply> reply) -> interruptible_future<> {
+    return with_blocking_future_interruptible<IOInterruptCondition>(
+        handle.enter(pp(*pg).send_reply)).then_interruptible(
+          [this, reply=std::move(reply)] {
+          return conn->send(std::move(reply));
+        });
   }, crimson::ct_error::eagain::handle([this, pg]() mutable {
     return process_op(pg);
   }));

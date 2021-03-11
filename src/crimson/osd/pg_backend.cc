@@ -129,7 +129,8 @@ PGBackend::mutate_object(
   osd_op_params_t&& osd_op_p,
   epoch_t min_epoch,
   epoch_t map_epoch,
-  std::vector<pg_log_entry_t>&& log_entries)
+  std::vector<pg_log_entry_t>&& log_entries,
+  osdop_on_submit_func_t&& callback)
 {
   logger().trace("mutate_object: num_ops={}", txn.get_num_ops());
   if (obc->obs.exists) {
@@ -160,7 +161,8 @@ PGBackend::mutate_object(
   }
   return _submit_transaction(
     std::move(pg_shards), obc->obs.oi.soid, std::move(txn),
-    std::move(osd_op_p), min_epoch, map_epoch, std::move(log_entries));
+    std::move(osd_op_p), min_epoch, map_epoch, std::move(log_entries),
+    std::move(callback));
 }
 
 static inline bool _read_verify_data(

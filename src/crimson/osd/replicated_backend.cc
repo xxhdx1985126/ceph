@@ -45,7 +45,8 @@ ReplicatedBackend::_submit_transaction(std::set<pg_shard_t>&& pg_shards,
                                        ceph::os::Transaction&& txn,
                                        osd_op_params_t&& osd_op_p,
                                        epoch_t min_epoch, epoch_t map_epoch,
-				       std::vector<pg_log_entry_t>&& log_entries)
+				       std::vector<pg_log_entry_t>&& log_entries,
+				       osdop_on_submit_func_t&& callback)
 {
   if (__builtin_expect(stopping, false)) {
     throw crimson::common::system_shutdown_exception();
@@ -62,10 +63,13 @@ ReplicatedBackend::_submit_transaction(std::set<pg_shard_t>&& pg_shards,
   encode(txn, encoded_txn);
 
   return interruptor::parallel_for_each(std::move(pg_shards),
-    [=, encoded_txn=std::move(encoded_txn), txn=std::move(txn)]
+    [=, encoded_txn=std::move(encoded_txn), txn=std::move(txn),
+    callback=std::move(callback)]
     (auto pg_shard) mutable {
       if (pg_shard == whoami) {
-        return shard_services.get_store().do_transaction(coll,std::move(txn));
+        return shard_services.get_store().do_transaction(coll,
+							 std::move(txn),
+							 std::move(callback));
       } else {
         auto m = make_message<MOSDRepOp>(req_id, whoami,
                                          spg_t{pgid, pg_shard.shard}, hoid,
