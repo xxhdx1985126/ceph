@@ -47,6 +47,12 @@ public:
     OrderedExclusivePhase process = {
       "ClientRequest::PGPipeline::process"
     };
+    OrderedConcurrentPhase wait_repop = {
+      "ClientRequest::PGPipeline::wait_repop"
+    };
+    OrderedExclusivePhase send_reply = {
+      "ClientRequest::PGPipeline::send_reply"
+    };
     friend class ClientRequest;
   };
 
