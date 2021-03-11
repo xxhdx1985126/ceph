@@ -106,7 +106,7 @@ public:
   seastar::future<> do_transaction(
     CollectionRef ch,
     ceph::os::Transaction&& txn,
-    on_submit_func_t on_submit) final;
+    on_submit_func_t on_submit = [] { return seastar::now(); }) final;
 
   seastar::future<OmapIteratorRef> get_omap_iterator(
     CollectionRef ch,

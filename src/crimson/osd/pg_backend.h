@@ -45,6 +45,7 @@ protected:
       ::crimson::osd::IOInterruptCondition,
       ll_read_errorator>;
 
+  using osdop_on_submit_func_t = std::function<seastar::future<> (void)>;
 public:
   using load_metadata_ertr = crimson::errorator<
     crimson::ct_error::object_corrupted>;
@@ -166,7 +167,8 @@ public:
     osd_op_params_t&& osd_op_p,
     epoch_t min_epoch,
     epoch_t map_epoch,
-    std::vector<pg_log_entry_t>&& log_entries);
+    std::vector<pg_log_entry_t>&& log_entries,
+    osdop_on_submit_func_t&& callback);
   interruptible_future<std::tuple<std::vector<hobject_t>, hobject_t>> list_objects(
     const hobject_t& start,
     uint64_t limit) const;
@@ -286,7 +288,8 @@ private:
 		      ceph::os::Transaction&& txn,
 		      osd_op_params_t&& osd_op_p,
 		      epoch_t min_epoch, epoch_t max_epoch,
-		      std::vector<pg_log_entry_t>&& log_entries) = 0;
+		      std::vector<pg_log_entry_t>&& log_entries,
+		      osdop_on_submit_func_t&& callback) = 0;
   friend class ReplicatedRecoveryBackend;
   friend class ::crimson::osd::PG;
 };
