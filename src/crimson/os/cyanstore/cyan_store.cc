@@ -311,7 +311,8 @@ CyanStore::omap_get_header(CollectionRef ch,
 }
 
 seastar::future<> CyanStore::do_transaction(CollectionRef ch,
-                                            ceph::os::Transaction&& t)
+                                            ceph::os::Transaction&& t,
+					    FuturizedStore::on_submit_func_t on_submit)
 {
   using ceph::os::Transaction;
   int r = 0;
@@ -476,7 +477,7 @@ seastar::future<> CyanStore::do_transaction(CollectionRef ch,
       i->complete(0);
     }
   }
-  return seastar::now();
+  return on_submit();
 }
 
 int CyanStore::_remove(const coll_t& cid, const ghobject_t& oid)
