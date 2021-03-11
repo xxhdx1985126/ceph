@@ -73,12 +73,41 @@ struct SubmitQueue {
 };
 
 struct ShardedWorkQueue {
-  std::mutex mutex;
-  std::condition_variable cond;
-  std::deque<WorkItem*> pending;
+public:
   void reserve(size_t queue_size) {
     pending.resize(queue_size);
   }
+  WorkItem* pop_front(std::chrono::milliseconds& queue_max_wait) {
+    WorkItem* work_item = nullptr;
+    std::unique_lock lock{mutex};
+    cond.wait_for(lock, queue_max_wait,
+		  [this, &work_item] {
+      bool empty = true;
+      if (!pending.empty()) {
+	empty = false;
+	work_item = pending.front();
+	pending.pop_front();
+      }
+      return !empty || is_stopping();
+    });
+    return work_item;
+  }
+  void stop() {
+    stopping = true;
+    cond.notify_all();
+  }
+  void push_back(WorkItem* work_item) {
+    pending.push_back(work_item);
+    cond.notify_one();
+  }
+private:
+  bool is_stopping() {
+    return stopping;
+  }
+  bool stopping = false;
+  std::mutex mutex;
+  std::condition_variable cond;
+  std::deque<WorkItem*> pending;
 };
 
 /// an engine for scheduling non-seastar tasks from seastar fibers
@@ -129,9 +158,7 @@ public:
           .then([packaged=std::move(packaged), shard, this] {
             auto task = new Task{std::move(packaged)};
             auto fut = task->get_future();
-	    auto& queue = pending_queues[shard];
-            queue.pending.push_back(task);
-	    queue.cond.notify_one();
+	    pending_queues[shard].push_back(task);
             return fut.finally([task, this] {
               local_free_slots().signal();
               delete task;

@@ -51,24 +51,10 @@ void ThreadPool::pin(std::vector<uint64_t> cpus)
 
 void ThreadPool::loop(std::chrono::milliseconds queue_max_wait, size_t shard)
 {
-  auto& mutex = pending_queues[shard].mutex;
-  auto& cond = pending_queues[shard].cond;
-  auto& pending = pending_queues[shard].pending;
+  auto& pending = pending_queues[shard];
   for (;;) {
     WorkItem* work_item = nullptr;
-    {
-      std::unique_lock lock{mutex};
-      cond.wait_for(lock, queue_max_wait,
-		    [this, &work_item, &pending] {
-	bool empty = true;
-	if (!pending.empty()) {
-	  empty = false;
-	  work_item = pending.front();
-	  pending.pop_front();
-	}
-	return !empty || is_stopping();
-      });
-    }
+    work_item = pending.pop_front(queue_max_wait);
     if (work_item) {
       work_item->process();
     } else if (is_stopping()) {
@@ -88,7 +74,7 @@ seastar::future<> ThreadPool::stop()
   return submit_queue.stop().then([this] {
     stopping = true;
     for (auto& q : pending_queues) {
-      q.cond.notify_all();
+      q.stop();
     }
   });
 }
