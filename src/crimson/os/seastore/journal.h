@@ -95,33 +95,6 @@ struct extent_info_t {
 std::ostream &operator<<(std::ostream &out, const extent_info_t &header);
 
 /**
- * Callback interface for managing available segments
- */
-class JournalSegmentProvider {
-public:
-  using get_segment_ertr = crimson::errorator<
-    crimson::ct_error::input_output_error>;
-  using get_segment_ret = get_segment_ertr::future<segment_id_t>;
-  virtual get_segment_ret get_segment() = 0;
-
-  virtual void close_segment(segment_id_t) {}
-
-  virtual void set_journal_segment(
-    segment_id_t segment,
-    segment_seq_t seq) {}
-
-  virtual journal_seq_t get_journal_tail_target() const = 0;
-  virtual void update_journal_tail_committed(journal_seq_t tail_committed) = 0;
-
-  virtual void init_mark_segment_closed(
-    segment_id_t segment, segment_seq_t seq) {}
-
-  virtual segment_seq_t get_seq(segment_id_t id) { return 0; }
-
-  virtual ~JournalSegmentProvider() {}
-};
-
-/**
  * Manages stream of atomically written records to a SegmentManager.
  */
 class Journal {
