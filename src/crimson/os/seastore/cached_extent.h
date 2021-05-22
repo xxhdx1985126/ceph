@@ -19,6 +19,11 @@ namespace crimson::os::seastore {
 
 class CachedExtent;
 using CachedExtentRef = boost::intrusive_ptr<CachedExtent>;
+class Segment;
+using SegmentRef = boost::intrusive_ptr<Segment>;
+
+void intrusive_ptr_add_ref(Segment *);
+void intrusive_ptr_release(Segment *);
 
 // #define DEBUG_CACHED_EXTENT_REF
 #ifdef DEBUG_CACHED_EXTENT_REF
@@ -27,6 +32,9 @@ void intrusive_ptr_add_ref(CachedExtent *);
 void intrusive_ptr_release(CachedExtent *);
 
 #endif
+
+class ExtentAllocWriter;
+class SegmentAllocator;
 
 template <typename T>
 using TCachedExtentRef = boost::intrusive_ptr<T>;
@@ -258,6 +266,8 @@ public:
    */
   paddr_t get_paddr() const { return poffset; }
 
+  SegmentRef  get_allocated_segment() const { return allocated_segment; }
+
   /// Returns length of extent
   virtual extent_len_t get_length() const { return ptr.length(); }
 
@@ -288,6 +298,11 @@ public:
   friend bool operator== (const CachedExtent &a, const CachedExtent &b) {
     return a.poffset == b.poffset;
   }
+
+  /// facility for persisting the extent
+  ExtentAllocWriter* extent_writer = nullptr;
+
+  auto persist();
 
   virtual ~CachedExtent();
 
@@ -336,6 +351,10 @@ private:
 
   /// address of original block -- relative iff is_pending() and is_clean()
   paddr_t poffset;
+
+  /// the segment where the extent will be persisted, only available when
+  /// the extent is pending
+  SegmentRef allocated_segment;
 
   /// used to wait while in-progress commit completes
   std::optional<seastar::shared_promise<>> io_wait_promise;
@@ -396,6 +415,10 @@ protected:
 
   void set_paddr(paddr_t offset) { poffset = offset; }
 
+  void segment_allocated(SegmentRef segment) { allocated_segment = segment; }
+
+  void clear_allocated_segment() { allocated_segment = nullptr; }
+
   /**
    * maybe_generate_relative
    *
@@ -423,6 +446,8 @@ protected:
     }
   }
 
+  friend class crimson::os::seastore::ExtentAllocWriter;
+  friend class crimson::os::seastore::SegmentAllocator;
 };
 
 std::ostream &operator<<(std::ostream &, CachedExtent::extent_state_t);

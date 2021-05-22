@@ -398,89 +398,93 @@ BtreeLBAManager::rewrite_extent_ret BtreeLBAManager::rewrite_extent(
   if (extent->is_logical()) {
     auto lextent = extent->cast<LogicalCachedExtent>();
     cache.retire_extent(t, extent);
-    auto nlextent = cache.alloc_new_extent_by_type(
-      t,
+    return epm->alloc_new_extent_by_type(
       lextent->get_type(),
-      lextent->get_length())->cast<LogicalCachedExtent>();
-    lextent->get_bptr().copy_out(
-      0,
-      lextent->get_length(),
-      nlextent->get_bptr().c_str());
-    nlextent->set_laddr(lextent->get_laddr());
-    nlextent->set_pin(lextent->get_pin().duplicate());
+      lextent->get_length()).safe_then(
+      [this, &t, lextent=std::move(lextent), extent](CachedExtentRef nextent) mutable {
+      auto nlextent = nextent->cast<LogicalCachedExtent>();
+      lextent->get_bptr().copy_out(
+	0,
+	lextent->get_length(),
+	nlextent->get_bptr().c_str());
+      nlextent->set_laddr(lextent->get_laddr());
+      nlextent->set_pin(lextent->get_pin().duplicate());
 
-    logger().debug(
-      "{}: rewriting {} into {}",
-      __func__,
-      *lextent,
-      *nlextent);
+      logger().debug(
+	"{}: rewriting {} into {}",
+	__func__,
+	*lextent,
+	*nlextent);
 
-    return update_mapping(
-      t,
-      lextent->get_laddr(),
-      [prev_addr = lextent->get_paddr(), addr = nlextent->get_paddr()](
-	const lba_map_val_t &in) {
-	lba_map_val_t ret = in;
-	ceph_assert(in.paddr == prev_addr);
-	ret.paddr = addr;
-	return ret;
-      }).safe_then(
-	[nlextent](auto) {},
-	crimson::ct_error::enoent::handle([extent]() -> rewrite_extent_ret {
-	  ceph_assert(extent->has_been_invalidated());
-	  return crimson::ct_error::eagain::make();
-	}),
-	rewrite_extent_ertr::pass_further{},
-        /* ENOENT in particular should be impossible */
-	crimson::ct_error::assert_all{
-	  "Invalid error in BtreeLBAManager::rewrite_extent after update_mapping"
-	}
-      );
+      return update_mapping(
+	t,
+	lextent->get_laddr(),
+	[prev_addr = lextent->get_paddr(), addr = nlextent->get_paddr()](
+	  const lba_map_val_t &in) {
+	  lba_map_val_t ret = in;
+	  ceph_assert(in.paddr == prev_addr);
+	  ret.paddr = addr;
+	  return ret;
+	}).safe_then(
+	  [nlextent](auto) {},
+	  crimson::ct_error::enoent::handle([extent]() -> rewrite_extent_ret {
+	    ceph_assert(extent->has_been_invalidated());
+	    return crimson::ct_error::eagain::make();
+	  }),
+	  rewrite_extent_ertr::pass_further{},
+	  /* ENOENT in particular should be impossible */
+	  crimson::ct_error::assert_all{
+	    "Invalid error in BtreeLBAManager::rewrite_extent after update_mapping"
+	  }
+	);
+    });
   } else if (is_lba_node(*extent)) {
     auto lba_extent = extent->cast<LBANode>();
     cache.retire_extent(t, extent);
-    auto nlba_extent = cache.alloc_new_extent_by_type(
-      t,
+    return epm->alloc_new_extent_by_type(
       lba_extent->get_type(),
-      lba_extent->get_length())->cast<LBANode>();
-    lba_extent->get_bptr().copy_out(
-      0,
-      lba_extent->get_length(),
-      nlba_extent->get_bptr().c_str());
-    nlba_extent->pin.set_range(nlba_extent->get_node_meta());
+      lba_extent->get_length()).safe_then(
+      [this, lba_extent=std::move(lba_extent), extent, &t](CachedExtentRef nextent) {
+      auto nlba_extent = nextent->cast<LBANode>();
+      lba_extent->get_bptr().copy_out(
+	0,
+	lba_extent->get_length(),
+	nlba_extent->get_bptr().c_str());
+      nlba_extent->pin.set_range(nlba_extent->get_node_meta());
 
-    /* This is a bit underhanded.  Any relative addrs here must necessarily
-     * be record relative as we are rewriting a dirty extent.  Thus, we
-     * are using resolve_relative_addrs with a (likely negative) block
-     * relative offset to correct them to block-relative offsets adjusted
-     * for our new transaction location.
-     *
-     * Upon commit, these now block relative addresses will be interpretted
-     * against the real final address.
-     */
-    nlba_extent->resolve_relative_addrs(
-      make_record_relative_paddr(0) - nlba_extent->get_paddr());
+      /* This is a bit underhanded.  Any relative addrs here must necessarily
+       * be record relative as we are rewriting a dirty extent.  Thus, we
+       * are using resolve_relative_addrs with a (likely negative) block
+       * relative offset to correct them to block-relative offsets adjusted
+       * for our new transaction location.
+       *
+       * Upon commit, these now block relative addresses will be interpretted
+       * against the real final address.
+       */
+      nlba_extent->resolve_relative_addrs(
+	make_record_relative_paddr(0) - nlba_extent->get_paddr());
 
-    logger().debug(
-      "{}: rewriting {} into {}",
-      __func__,
-      *lba_extent,
-      *nlba_extent);
+      logger().debug(
+	"{}: rewriting {} into {}",
+	__func__,
+	*lba_extent,
+	*nlba_extent);
 
-    return update_internal_mapping(
-      t,
-      nlba_extent->get_node_meta().depth,
-      nlba_extent->get_node_meta().begin,
-      nlba_extent->get_paddr()).safe_then(
-	[](auto) {},
-	crimson::ct_error::enoent::handle([extent]() -> rewrite_extent_ret {
-	  ceph_assert(extent->has_been_invalidated());
-	  return crimson::ct_error::eagain::make();
-	}),
-	rewrite_extent_ertr::pass_further{},
-	crimson::ct_error::assert_all{
-	  "Invalid error in BtreeLBAManager::rewrite_extent update_internal_mapping"
-	});
+      return update_internal_mapping(
+	t,
+	nlba_extent->get_node_meta().depth,
+	nlba_extent->get_node_meta().begin,
+	nlba_extent->get_paddr()).safe_then(
+	  [](auto) {},
+	  crimson::ct_error::enoent::handle([extent]() -> rewrite_extent_ret {
+	    ceph_assert(extent->has_been_invalidated());
+	    return crimson::ct_error::eagain::make();
+	  }),
+	  rewrite_extent_ertr::pass_further{},
+	  crimson::ct_error::assert_all{
+	    "Invalid error in BtreeLBAManager::rewrite_extent update_internal_mapping"
+	  });
+    });
   } else {
     return rewrite_extent_ertr::now();
   }
@@ -525,9 +529,11 @@ BtreeLBAManager::get_physical_extent_if_live(
 
 BtreeLBAManager::BtreeLBAManager(
   SegmentManager &segment_manager,
-  Cache &cache)
+  Cache &cache,
+  ExtentPlacementManagerRef&& epm)
   : segment_manager(segment_manager),
-    cache(cache) {}
+    cache(cache),
+    epm(std::move(epm)) {}
 
 BtreeLBAManager::insert_mapping_ret BtreeLBAManager::insert_mapping(
   Transaction &t,

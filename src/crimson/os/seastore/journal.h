@@ -23,6 +23,7 @@ namespace crimson::os::seastore {
 
 using segment_nonce_t = uint32_t;
 
+class SegmentProvider;
 
 /**
  * Segment header
@@ -102,7 +103,7 @@ public:
   Journal(SegmentManager &segment_manager);
 
   /**
-   * Sets the JournalSegmentProvider.
+   * Sets the SegmentProvider.
    *
    * Not provided in constructor to allow the provider to not own
    * or construct the Journal (TransactionManager).
@@ -110,7 +111,7 @@ public:
    * Note, Journal does not own this ptr, user must ensure that
    * *provider outlives Journal.
    */
-  void set_segment_provider(JournalSegmentProvider *provider) {
+  void set_segment_provider(SegmentProvider *provider) {
     segment_provider = provider;
   }
 
@@ -231,7 +232,7 @@ public:
   }
 
 private:
-  JournalSegmentProvider *segment_provider = nullptr;
+  SegmentProvider *segment_provider = nullptr;
   SegmentManager &segment_manager;
 
   segment_seq_t next_journal_segment_seq = 0;

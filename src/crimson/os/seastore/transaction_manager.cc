@@ -241,8 +241,11 @@ TransactionManager::submit_transaction_direct(
 
     DEBUGT("about to submit to journal", tref);
 
-    return journal->submit_record(std::move(*record), tref.handle
-    ).safe_then([this, FNAME, &tref](auto p) mutable {
+    return seastar::parallel_for_each(tref.get_rewrite_block_list(), [](auto& extent) {
+      return extent->persist();
+    }).safe_then([this, record=std::move(record), &tref] {
+      return journal->submit_record(std::move(*record), tref.handle);
+    }).safe_then([this, FNAME, &tref](auto p) mutable {
       auto [addr, journal_seq] = p;
       DEBUGT("journal commit to {} seq {}", tref, addr, journal_seq);
       segment_cleaner->set_journal_head(journal_seq);

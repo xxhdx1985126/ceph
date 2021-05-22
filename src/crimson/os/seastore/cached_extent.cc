@@ -2,6 +2,7 @@
 // vim: ts=8 sw=2 smarttab
 
 #include "crimson/os/seastore/cached_extent.h"
+#include "crimson/os/seastore/extent_placement_manager.h"
 
 #include "crimson/common/log.h"
 
@@ -65,6 +66,11 @@ CachedExtent::~CachedExtent()
   if (parent_index) {
     parent_index->erase(*this);
   }
+}
+
+auto CachedExtent::persist() {
+  assert(extent_writer);
+  return extent_writer->write(this);
 }
 
 std::ostream &LogicalCachedExtent::print_detail(std::ostream &out) const

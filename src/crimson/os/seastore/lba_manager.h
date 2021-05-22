@@ -23,6 +23,9 @@
 
 namespace crimson::os::seastore {
 
+class ExtentPlacementManager;
+using ExtentPlacementManagerRef = std::unique_ptr<ExtentPlacementManager>;
+
 /**
  * Abstract interface for managing the logical to physical mapping
  */
@@ -218,7 +221,8 @@ class Cache;
 namespace lba_manager {
 LBAManagerRef create_lba_manager(
   SegmentManager &segment_manager,
-  Cache &cache);
+  Cache &cache,
+  ExtentPlacementManagerRef&& epm);
 }
 
 }

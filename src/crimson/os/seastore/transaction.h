@@ -85,6 +85,11 @@ public:
     write_set.insert(*ref);
   }
 
+  void add_rewrite_extent(CachedExtentRef ref) {
+    rewrite_block_list.emplace_back(ref);
+    write_set.insert(*ref);
+  }
+
   void add_mutated_extent(CachedExtentRef ref) {
     ceph_assert(!is_weak());
     mutated_block_list.push_back(ref);
@@ -106,6 +111,10 @@ public:
 
   const auto &get_mutated_block_list() {
     return mutated_block_list;
+  }
+
+  const auto &get_rewrite_block_list() {
+    return rewrite_block_list;
   }
 
   const auto &get_retired_set() {
@@ -135,6 +144,7 @@ private:
 
   std::list<CachedExtentRef> fresh_block_list;   ///< list of fresh blocks
   std::list<CachedExtentRef> mutated_block_list; ///< list of mutated blocks
+  std::list<CachedExtentRef> rewrite_block_list; ///< list of rewriten blocks
 
   pextent_set_t retired_set; ///< list of extents mutated by this transaction
 
