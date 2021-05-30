@@ -14,16 +14,12 @@
 #include "include/buffer.h"
 #include "crimson/common/errorator.h"
 #include "crimson/os/seastore/seastore_types.h"
+#include "crimson/os/seastore/segment_manager.h"
 
 namespace crimson::os::seastore {
 
 class CachedExtent;
 using CachedExtentRef = boost::intrusive_ptr<CachedExtent>;
-class Segment;
-using SegmentRef = boost::intrusive_ptr<Segment>;
-
-void intrusive_ptr_add_ref(Segment *);
-void intrusive_ptr_release(Segment *);
 
 // #define DEBUG_CACHED_EXTENT_REF
 #ifdef DEBUG_CACHED_EXTENT_REF
@@ -302,7 +298,13 @@ public:
   /// facility for persisting the extent
   ExtentAllocWriter* extent_writer = nullptr;
 
-  auto persist();
+  using persist_ertr = crimson::errorator<
+    crimson::ct_error::input_output_error,
+    crimson::ct_error::invarg,
+    crimson::ct_error::ebadf,
+    crimson::ct_error::enospc
+    >;
+  persist_ertr::future<> persist();
 
   virtual ~CachedExtent();
 

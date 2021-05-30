@@ -123,6 +123,8 @@ private:
   Cache& cache;
 
   friend class crimson::os::seastore::SeaStore;
+  friend std::unique_ptr<crimson::os::seastore::SeaStore>
+    make_seastore(const std::string&, const ConfigValues&);
 };
 
 using ExtentPlacementManagerRef = std::unique_ptr<ExtentPlacementManager>;

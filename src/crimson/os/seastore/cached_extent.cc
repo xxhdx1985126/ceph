@@ -68,7 +68,8 @@ CachedExtent::~CachedExtent()
   }
 }
 
-auto CachedExtent::persist() {
+CachedExtent::persist_ertr::future<>
+CachedExtent::persist() {
   assert(extent_writer);
   return extent_writer->write(this);
 }
