@@ -106,6 +106,11 @@ public:
   alloc_extent_ertr::future<CachedExtentRef> alloc_new_extent_by_type(
     extent_types_t type,
     segment_off_t length);
+
+  void add_segment_manager(heat_level hl, SegmentManager& smr) {
+    segment_allocators.try_emplace(hl, segment_provider, smr, cache);
+  }
+
 protected:
   virtual heat_level calc_heat(hint_t hint) {
     return heat_level::DEFAULT;
@@ -114,17 +119,9 @@ protected:
     return lifetime_level::DEFAULT;
   }
 private:
-  void add_segment_manager(heat_level hl, SegmentManager& smr) {
-    segment_allocators.try_emplace(hl, segment_provider, smr, cache);
-  }
-
   std::map<heat_level, SegmentAllocator> segment_allocators;
   SegmentProvider& segment_provider;
   Cache& cache;
-
-  friend class crimson::os::seastore::SeaStore;
-  friend std::unique_ptr<crimson::os::seastore::SeaStore>
-    make_seastore(const std::string&, const ConfigValues&);
 };
 
 using ExtentPlacementManagerRef = std::unique_ptr<ExtentPlacementManager>;
