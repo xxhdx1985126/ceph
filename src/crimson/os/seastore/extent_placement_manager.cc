@@ -10,7 +10,7 @@
 
 namespace crimson::os::seastore {
 
-ExtentAllocWriter::write_ertr::future<>
+ExtentAllocWriter::write_ertr::future<SegmentRef>
 ExtentAllocWriter::write(CachedExtent* extent) {
   bufferlist bl;
   extent->prepare_write();
@@ -19,16 +19,19 @@ ExtentAllocWriter::write(CachedExtent* extent) {
   assert(extent->extent_writer);
   assert(segment);
   auto old_segment_iter = open_segments.begin();
+  std::optional<SegmentRef> closed_segment;
   if (segment.get() != old_segment_iter->get()) {
     // segment writes are ordered, so when an opened segment isn't the current
     // one being written to, it is full and should be closed.
-    (void) open_segments.front()->close();
+    closed_segment = std::move(*old_segment_iter);
     open_segments.erase(old_segment_iter);
   }
   return segment->write(extent->get_paddr().offset, bl).safe_then(
-    [this, extent, segment] {
+    [this, extent, segment, closed_segment=std::move(closed_segment)] {
     extent->extent_writer = nullptr;
     extent->clear_allocated_segment();
+    return write_ertr::make_ready_future<std::optional<segment_id_t>>(
+        closed_segment);
   });
 }
 

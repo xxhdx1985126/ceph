@@ -39,6 +39,7 @@ struct segment_header_t {
 
   journal_seq_t journal_tail;
   segment_nonce_t segment_nonce;
+  std::map<segment_id_t, segment_off_t> segment_rewritten_to;
 
   DENC(segment_header_t, v, p) {
     DENC_START(1, 1, p);
@@ -46,6 +47,7 @@ struct segment_header_t {
     denc(v.physical_segment_id, p);
     denc(v.journal_tail, p);
     denc(v.segment_nonce, p);
+    denc(v.segment_rewritten_to, p);
     DENC_FINISH(p);
   }
 };
@@ -60,6 +62,9 @@ struct record_header_t {
   segment_nonce_t segment_nonce;// nonce of containing segment
   segment_off_t committed_to;   // records in this segment prior to committed_to
                                 // have been fully written
+  uint64_t segment_rewritten_to_len;	// length of metadata about the last
+					// written addrs of rewritten block
+					// segments
   checksum_t data_crc;          // crc of data payload
 
 

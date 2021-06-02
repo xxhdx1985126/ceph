@@ -114,11 +114,20 @@ ceph::bufferlist Journal::encode_record(
     (uint32_t)record.extents.size(),
     current_segment_nonce,
     committed_to,
+    // segments last rewritten offs length
+    sizeof(uint32_t) + record.rewritten_segment_offs.size()
+      * (sizeof(segment_id_t) + sizeof(segment_off_t)),
+    // segments to be closed
+    sizeof(uint32_t) + record.closed_segments.size()
+      * sizeof(segment_id_t),
     data_bl.crc32c(-1)
   };
   encode(header, bl);
 
   auto metadata_crc_filler = bl.append_hole(sizeof(uint32_t));
+
+  encode(record.rewritten_segment_offs, bl);
+  encode(record.closed_segments, bl);
 
   for (const auto &i: record.extents) {
     encode(extent_info_t(i), bl);
@@ -237,6 +246,12 @@ Journal::record_size_t Journal::get_encoded_record_length(
   extent_len_t metadata =
     (extent_len_t)ceph::encoded_sizeof_bounded<record_header_t>();
   metadata += sizeof(checksum_t) /* crc */;
+  // segments last rewritten offs length
+  metadata += sizeof(uint32_t) + record.rewritten_segment_offs.size()
+    * (sizeof(segment_id_t) + sizeof(segment_off_t));
+  // segments to be closed
+  metadata += sizeof(uint32_t) + record.closed_segments.size()
+    * sizeof(segment_id_t),
   metadata += record.extents.size() *
     ceph::encoded_sizeof_bounded<extent_info_t>();
   extent_len_t data = 0;
@@ -534,6 +549,8 @@ std::optional<std::vector<delta_info_t>> Journal::try_decode_deltas(
   auto bliter = bl.cbegin();
   bliter += ceph::encoded_sizeof_bounded<record_header_t>();
   bliter += sizeof(checksum_t) /* crc */;
+  // segments last rewritten offs length
+  bliter += header.segment_rewritten_to_len;
   bliter += header.extents  * ceph::encoded_sizeof_bounded<extent_info_t>();
   logger().debug("{}: decoding {} deltas", __func__, header.deltas);
   std::vector<delta_info_t> deltas(header.deltas);
@@ -554,6 +571,7 @@ std::optional<std::vector<extent_info_t>> Journal::try_decode_extent_infos(
   auto bliter = bl.cbegin();
   bliter += ceph::encoded_sizeof_bounded<record_header_t>();
   bliter += sizeof(checksum_t) /* crc */;
+  bliter += header.segment_rewritten_to_len;
   logger().debug("{}: decoding {} extents", __func__, header.extents);
   std::vector<extent_info_t> extent_infos(header.extents);
   for (auto &&i : extent_infos) {

@@ -40,7 +40,8 @@ public:
   ExtentAllocWriter(SegmentProvider& sp, SegmentManager& sm)
     : segment_provider(sp), segment_manager(sm) {}
   alloc_extent_ertr::future<alloc_t> alloc(segment_off_t length);
-  write_ertr::future<> write(CachedExtent* extent);
+  // may return the id of the segment that will be closed
+  write_ertr::future<SegmentRef> write(CachedExtent* extent);
 private:
   bool _needs_roll(segment_off_t length) const;
   roll_segment_ertr::future<> roll_segment();

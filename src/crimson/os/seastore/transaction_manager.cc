@@ -242,11 +242,24 @@ TransactionManager::submit_transaction_direct(
 
     DEBUGT("about to submit to journal", tref);
 
-    return ExtentAllocWriter::write_ertr::parallel_for_each(
-      tref.get_rewrite_block_list(), [](auto& extent) {
-      return extent->persist();
-    }).safe_then([this, record=std::move(record), &tref]() mutable {
-      return journal->submit_record(std::move(*record), tref.handle);
+    return seastar::do_with(
+      std::map<segment_id_t, segment_off_t>(),
+      std::move(record),
+      [this](auto& closed_segments, auto& record) {
+      return ExtentAllocWriter::write_ertr::parallel_for_each(
+	tref.get_rewrite_block_list(), [this, &closed_segments](auto& extent) {
+	return extent->persist().safe_then([this, &closed_segments](auto segment) {
+	  if (segment) {
+	    closed_segments.emplace_back(segment->get_segment_id());
+	    return segment->close();
+	  }
+	  return seastar::now();
+	});
+      }).safe_then([this, &closed_segments, &record]() mutable {
+	record->closed_segments = std::move(closed_segments);
+      }).safe_then([this, &record, &tref]() mutable {
+	return journal->submit_record(std::move(*record), tref.handle);
+      });
     }).safe_then([this, FNAME, &tref](auto p) mutable {
       auto [addr, journal_seq] = p;
       DEBUGT("journal commit to {} seq {}", tref, addr, journal_seq);

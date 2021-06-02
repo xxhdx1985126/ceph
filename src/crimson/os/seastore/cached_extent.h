@@ -304,7 +304,7 @@ public:
     crimson::ct_error::ebadf,
     crimson::ct_error::enospc
     >;
-  persist_ertr::future<> persist();
+  persist_ertr::future<SegmentRef> persist();
 
   virtual ~CachedExtent();
 

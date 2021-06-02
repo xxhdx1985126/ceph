@@ -414,6 +414,8 @@ struct delta_info_t {
 std::ostream &operator<<(std::ostream &lhs, const delta_info_t &rhs);
 
 struct record_t {
+  std::map<segment_id_t, segment_off_t> rewritten_segment_offs;
+  std::vector<segment_id_t> closed_segments;
   std::vector<extent_t> extents;
   std::vector<delta_info_t> deltas;
 };

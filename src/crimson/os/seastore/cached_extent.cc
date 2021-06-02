@@ -68,7 +68,7 @@ CachedExtent::~CachedExtent()
   }
 }
 
-CachedExtent::persist_ertr::future<>
+CachedExtent::persist_ertr::future<SegmentRef>
 CachedExtent::persist() {
   assert(extent_writer);
   return extent_writer->write(this);
