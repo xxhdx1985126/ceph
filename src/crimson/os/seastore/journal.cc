@@ -8,6 +8,7 @@
 #include "crimson/os/seastore/journal.h"
 
 #include "include/intarith.h"
+#include "crimson/os/seastore/extent_placement_manager.h"
 #include "crimson/os/seastore/segment_cleaner.h"
 #include "crimson/os/seastore/segment_manager.h"
 
@@ -49,8 +50,8 @@ segment_nonce_t generate_nonce(
     sizeof(meta.seastore_id.uuid));
 }
 
-Journal::Journal(SegmentManager &segment_manager)
-  : segment_manager(segment_manager) {}
+Journal::Journal(SegmentManager &segment_manager, ExtentPlacementManager& epm)
+  : segment_manager(segment_manager), epm(epm) {}
 
 
 Journal::initialize_segment_ertr::future<segment_seq_t>
@@ -72,7 +73,8 @@ Journal::initialize_segment(Segment &segment)
     seq,
     segment.get_segment_id(),
     segment_provider->get_journal_tail_target(),
-    current_segment_nonce};
+    current_segment_nonce,
+    epm.get_live_segments()};
   encode(header, bl);
 
   bufferptr bp(
@@ -542,6 +544,41 @@ Journal::read_validate_record_metadata_ret Journal::read_validate_record_metadat
     });
 }
 
+void Journal::try_decode_ep_info(
+  const record_header_t& header,
+  const bufferlist& bl,
+  extent_alloc_info_t& extent_alloc_info)
+{
+  extent_placement_info_t ep_info;
+  auto bp = bl.cbegin();
+  if (header.segment_rewritten_to_len) {
+    try {
+      decode(ep_info.rewritten_segment_offs, bp);
+    } catch (ceph::buffer::error &e) {
+      assert(0 == "unexpected buffer decode error!");
+    }
+  }
+  if (header.closed_segments_len) {
+    try {
+      decode(ep_info.closed_segments, bp);
+    } catch (ceph::buffer::error &e) {
+      assert(0 == "unexpected buffer decode error!");
+    }
+  }
+
+  for (auto [id, off] : ep_info.rewritten_segment_offs) {
+    auto it = extent_alloc_info.find(id);
+    if (it == extent_alloc_info.end()) {
+      extent_alloc_info.emplace(id, off);
+    } else if (it->second < off){
+      extent_alloc_info[id] = off;
+    }
+  }
+  for (auto id : ep_info.closed_segments) {
+    extent_alloc_info.erase(id);
+  }
+}
+
 std::optional<std::vector<delta_info_t>> Journal::try_decode_deltas(
   record_header_t header,
   const bufferlist &bl)
@@ -549,8 +586,6 @@ std::optional<std::vector<delta_info_t>> Journal::try_decode_deltas(
   auto bliter = bl.cbegin();
   bliter += ceph::encoded_sizeof_bounded<record_header_t>();
   bliter += sizeof(checksum_t) /* crc */;
-  // segments last rewritten offs length
-  bliter += header.segment_rewritten_to_len;
   bliter += header.extents  * ceph::encoded_sizeof_bounded<extent_info_t>();
   logger().debug("{}: decoding {} deltas", __func__, header.deltas);
   std::vector<delta_info_t> deltas(header.deltas);
@@ -584,11 +619,12 @@ std::optional<std::vector<extent_info_t>> Journal::try_decode_extent_infos(
   return extent_infos;
 }
 
-Journal::replay_ertr::future<>
+Journal::replay_ertr::future<extent_alloc_info_t>
 Journal::replay_segment(
   journal_seq_t seq,
   segment_header_t header,
-  delta_handler_t &handler)
+  delta_handler_t &handler,
+  extent_alloc_info_t& extent_alloc_info)
 {
   logger().debug("replay_segment: starting at {}", seq);
   return seastar::do_with(
@@ -642,7 +678,8 @@ Journal::replay_segment(
 	cursor,
 	header.segment_nonce,
 	std::numeric_limits<size_t>::max(),
-	dhandler).safe_then([](auto){});
+	dhandler,
+	extent_alloc_info).safe_then([](auto){});
     });
 }
 
@@ -655,9 +692,15 @@ Journal::replay_ret Journal::replay(delta_handler_t &&delta_handler)
         [this, &handler, &segments](auto replay_segs) mutable {
           logger().debug("replay: found {} segments", replay_segs.size());
           segments = std::move(replay_segs);
-          return crimson::do_for_each(segments, [this, &handler](auto i) mutable {
-            return replay_segment(i.first, i.second, handler);
-          });
+	  return seastar::do_with(extent_alloc_info_t(), [this, &handler]
+	    (auto& extent_alloc_info) {
+	    return crimson::do_for_each(segments, [this, &handler](auto i) mutable {
+	      for (auto [id, off] : i.second.segment_rewritten_to) {
+		if ()
+	      }
+	      return replay_segment(i.first, i.second, handler);
+	    });
+	  });
         });
     });
 }
@@ -717,7 +760,8 @@ Journal::scan_valid_records_ret Journal::scan_valid_records(
     scan_valid_records_cursor &cursor,
     segment_nonce_t nonce,
     size_t budget,
-    found_record_handler_t &handler)
+    found_record_handler_t &handler,
+    extent_alloc_info_t& extent_alloc_info)
 {
   if (cursor.offset.offset == 0) {
     cursor.offset.offset = segment_manager.get_block_size();
@@ -725,9 +769,9 @@ Journal::scan_valid_records_ret Journal::scan_valid_records(
   auto retref = std::make_unique<size_t>(0);
   auto budget_used = *retref;
   return crimson::do_until(
-    [=, &cursor, &budget_used, &handler]() mutable
+    [=, &cursor, &budget_used, &handler, &extent_alloc_info]() mutable
     -> scan_valid_records_ertr::future<bool> {
-      return [=, &handler, &cursor, &budget_used] {
+      return [=, &handler, &cursor, &budget_used, &extent_alloc_info]() mutable {
 	if (!cursor.last_valid_header_found) {
 	  return read_validate_record_metadata(cursor.offset, nonce
 	  ).safe_then([=, &cursor](auto md) {
@@ -755,9 +799,9 @@ Journal::scan_valid_records_ret Journal::scan_valid_records(
 		md->first.dlength + md->first.mdlength;
 	      return scan_valid_records_ertr::now();
 	    }
-	  }).safe_then([=, &cursor, &budget_used, &handler] {
+	  }).safe_then([=, &cursor, &budget_used, &handler, &extent_alloc_info]() mutable {
 	    return crimson::do_until(
-	      [=, &budget_used, &cursor, &handler] {
+	      [=, &budget_used, &cursor, &handler, &extent_alloc_info]() mutable {
 		logger().debug(
 		  "Journal::scan_valid_records: valid record read, processing queue");
 		if (cursor.pending_records.empty()) {
@@ -774,6 +818,9 @@ Journal::scan_valid_records_ret Journal::scan_valid_records(
 		}
 		budget_used +=
 		  next.header.dlength + next.header.mdlength;
+
+		try_decode_ep_info(next.header, next.mdbuffer, extent_alloc_info);
+
 		return handler(
 		  next.offset,
 		  next.header,
@@ -788,13 +835,17 @@ Journal::scan_valid_records_ret Journal::scan_valid_records(
 	  assert(!cursor.pending_records.empty());
 	  auto &next = cursor.pending_records.front();
 	  return read_validate_data(next.offset, next.header
-	  ).safe_then([=, &budget_used, &next, &cursor, &handler](auto valid) {
+	  ).safe_then([=, &budget_used, &next, &cursor, &handler, &extent_alloc_info]
+	    (auto valid) mutable {
 	    if (!valid) {
 	      cursor.pending_records.clear();
 	      return scan_valid_records_ertr::now();
 	    }
 	    budget_used +=
 	      next.header.dlength + next.header.mdlength;
+
+	    try_decode_ep_info(next.header, next.mdbuffer, extent_alloc_info);
+
 	    return handler(
 	      next.offset,
 	      next.header,

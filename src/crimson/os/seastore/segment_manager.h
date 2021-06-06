@@ -134,7 +134,15 @@ public:
   }
   virtual const seastore_meta_t &get_meta() const = 0;
 
+  uint16_t get_segment_manager_id() {
+    return segment_manager_id;
+  }
+
+  SegmentManager(uint16_t segment_manager_id)
+    : segment_manager_id(segment_manager_id) {}
   virtual ~SegmentManager() {}
+protected:
+  uint16_t segment_manager_id;
 };
 using SegmentManagerRef = std::unique_ptr<SegmentManager>;
 

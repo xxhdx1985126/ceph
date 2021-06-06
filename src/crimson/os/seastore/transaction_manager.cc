@@ -255,9 +255,8 @@ TransactionManager::submit_transaction_direct(
 	  }
 	  return seastar::now();
 	});
-      }).safe_then([this, &closed_segments, &record]() mutable {
+      }).safe_then([this, &record, &tref, &closed_segments, &record]() mutable {
 	record->closed_segments = std::move(closed_segments);
-      }).safe_then([this, &record, &tref]() mutable {
 	return journal->submit_record(std::move(*record), tref.handle);
       });
     }).safe_then([this, FNAME, &tref](auto p) mutable {

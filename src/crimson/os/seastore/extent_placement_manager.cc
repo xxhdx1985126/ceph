@@ -26,10 +26,14 @@ ExtentAllocWriter::write(CachedExtent* extent) {
     closed_segment = std::move(*old_segment_iter);
     open_segments.erase(old_segment_iter);
   }
-  return segment->write(extent->get_paddr().offset, bl).safe_then(
+  write_to = extent->get_paddr();
+  assert(write_to >= allocated_to);
+  return segment->write(write_to.offset, bl).safe_then(
     [this, extent, segment, closed_segment=std::move(closed_segment)] {
     extent->extent_writer = nullptr;
     extent->clear_allocated_segment();
+    committed_to = extent->get_addr();
+    assert(commtted_to >= write_to);
     return write_ertr::make_ready_future<std::optional<segment_id_t>>(
         closed_segment);
   });

@@ -46,11 +46,19 @@ private:
   bool _needs_roll(segment_off_t length) const;
   roll_segment_ertr::future<> roll_segment();
 
+  void get_live_segments(std::map<segment_id_t, segment_off_t>& segments) {
+    segments.emplace(committed_to.segment, committed_to.offset);
+  }
+
   SegmentProvider& segment_provider;
   SegmentManager& segment_manager;
   SegmentRef current_segment;
   std::vector<SegmentRef> open_segments;
   segment_off_t allocated_to = 0;
+  paddr_t write_to = {NULL_SEG_ID, 0};
+  paddr_t committed_to = {NULL_SEG_ID, 0};
+
+  friend struct SegmentAllocator;
 };
 
 struct SegmentAllocator {
@@ -78,15 +86,26 @@ public:
       return nextent;
     });
   }
+
 private:
+  void get_live_segments(std::map<segment_id_t, segment_off_t>& segments) {
+    for (auto& [ll, writer] : allocators) {
+      writer.get_live_segments(segments);
+    }
+  }
   SegmentProvider& segment_provider;
   SegmentManager& segment_manager;
   std::map<lifetime_level, ExtentAllocWriter> allocators;
   Cache& cache;
+
+  friend class ExtentPlacementManager;
 };
+
+using SegmentAllocatorRef = seastar::shared_ptr<SegmentAllocator>;
 
 class ExtentPlacementManager {
 public:
+  using segment_manager_id_t = uint16_t;
   using alloc_extent_ertr = ExtentAllocWriter::alloc_extent_ertr;
   ExtentPlacementManager(SegmentProvider& segment_provider, Cache& cache)
     : segment_provider(segment_provider), cache(cache) {}
@@ -109,7 +128,18 @@ public:
     segment_off_t length);
 
   void add_segment_manager(heat_level hl, SegmentManager& smr) {
-    segment_allocators.try_emplace(hl, segment_provider, smr, cache);
+    auto segment_allocator = seastar::make_shared<SegmentAllocator>(
+        segment_provider, smr, cache);
+    segment_allocators.emplace(hl, segment_allocator);
+    segment_allocator_initializers.emplace(
+        smr->get_segment_manager_id(), segment_allocator);
+  }
+
+  std::map<segment_id_t, segment_off_t> get_live_segments() {
+    std::map<segment_id_t, segment_off_t> segments;
+    for (auto& [hl, segment_allocator] : segment_allocators) {
+      segment_allocator.get_live_segments(segments);
+    }
   }
 
 protected:
@@ -120,7 +150,9 @@ protected:
     return lifetime_level::DEFAULT;
   }
 private:
-  std::map<heat_level, SegmentAllocator> segment_allocators;
+  std::map<heat_level, SegmentAllocatorRef> segment_allocators;
+  std::map<segment_manager_id_t, SegmentAllocatorRef>
+  segment_allocator_initializers;
   SegmentProvider& segment_provider;
   Cache& cache;
 };

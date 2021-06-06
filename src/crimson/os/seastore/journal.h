@@ -24,6 +24,7 @@ namespace crimson::os::seastore {
 using segment_nonce_t = uint32_t;
 
 class SegmentProvider;
+class ExtentPlacementManager;
 
 /**
  * Segment header
@@ -39,7 +40,7 @@ struct segment_header_t {
 
   journal_seq_t journal_tail;
   segment_nonce_t segment_nonce;
-  std::map<segment_id_t, segment_off_t> segment_rewritten_to;
+  extent_alloc_info_t segment_rewritten_to;
 
   DENC(segment_header_t, v, p) {
     DENC_START(1, 1, p);
@@ -65,6 +66,7 @@ struct record_header_t {
   uint64_t segment_rewritten_to_len;	// length of metadata about the last
 					// written addrs of rewritten block
 					// segments
+  uint64_t closed_segments_len;
   checksum_t data_crc;          // crc of data payload
 
 
@@ -76,6 +78,8 @@ struct record_header_t {
     denc(v.extents, p);
     denc(v.segment_nonce, p);
     denc(v.committed_to, p);
+    denc(v.segment_rewritten_to_len, p);
+    denc(v.closed_segments_len, p);
     denc(v.data_crc, p);
     DENC_FINISH(p);
   }
@@ -105,7 +109,7 @@ std::ostream &operator<<(std::ostream &out, const extent_info_t &header);
  */
 class Journal {
 public:
-  Journal(SegmentManager &segment_manager);
+  Journal(SegmentManager &segment_manager, ExtentPlacementManager& epm);
 
   /**
    * Sets the SegmentProvider.
@@ -239,6 +243,7 @@ public:
 private:
   SegmentProvider *segment_provider = nullptr;
   SegmentManager &segment_manager;
+  ExtentPlacementManager& epm;
 
   segment_seq_t next_journal_segment_seq = 0;
   segment_nonce_t current_segment_nonce = 0;

@@ -57,8 +57,9 @@ constexpr segment_id_t ZERO_SEG_ID =
 
 std::ostream &segment_to_stream(std::ostream &, const segment_id_t &t);
 
-#define device_id(id) (id >> 60)
-#define segment_manager_id(id) (id << 4 >> 36)
+uint16_t get_segment_manager_id(segment_id_t id) {
+  return id >> 60;
+}
 
 // Offset within a segment on disk, see SegmentManager
 // may be negative for relative offsets
@@ -413,9 +414,15 @@ struct delta_info_t {
 
 std::ostream &operator<<(std::ostream &lhs, const delta_info_t &rhs);
 
-struct record_t {
-  std::map<segment_id_t, segment_off_t> rewritten_segment_offs;
+using extent_alloc_info_t = std::map<segment_id_t, segment_off_t>;
+
+struct extent_placement_info_t {
+  extent_alloc_info_t rewritten_segment_offs;
   std::vector<segment_id_t> closed_segments;
+};
+
+struct record_t {
+  extent_placement_info_t ep_info;
   std::vector<extent_t> extents;
   std::vector<delta_info_t> deltas;
 };
