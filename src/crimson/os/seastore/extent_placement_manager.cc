@@ -54,8 +54,8 @@ ExtentAllocWriter::alloc(segment_off_t length) {
 }
 
 bool ExtentAllocWriter::_needs_roll(segment_off_t length) const {
-  return allocated_to + length >
-    current_segment->get_write_capacity();
+  return !current_segment || (allocated_to + length >
+          current_segment->get_write_capacity());
 }
 
 ExtentAllocWriter::roll_segment_ertr::future<>
@@ -137,6 +137,7 @@ ExtentPlacementManager::alloc_new_extent_by_type(
     ceph_assert(0 == "impossible");
     return alloc_extent_ertr::make_ready_future<CachedExtentRef>(CachedExtentRef());
   }
+  return alloc_extent_ertr::make_ready_future<CachedExtentRef>(CachedExtentRef());
 }
 
 }

@@ -18,10 +18,14 @@
 #include "crimson/os/seastore/seastore_types.h"
 #include "crimson/os/seastore/lba_manager.h"
 #include "crimson/os/seastore/cache.h"
-#include "crimson/os/seastore/extent_placement_manager.h"
 #include "crimson/os/seastore/segment_manager.h"
 
 #include "crimson/os/seastore/lba_manager/btree/lba_btree_node.h"
+
+namespace crimson::os::seastore {
+class ExtentPlacementManager;
+using ExtentPlacementManagerRef = std::unique_ptr<ExtentPlacementManager>;
+}
 
 namespace crimson::os::seastore::lba_manager::btree {
 

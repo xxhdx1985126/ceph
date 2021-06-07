@@ -348,6 +348,12 @@ private:
     record_header_t header,
     const bufferlist &bl);
 
+  /// attempts to decode extent placement infos
+  void try_decode_ep_info(
+    const record_header_t& header,
+    const bufferlist& bl,
+    extent_alloc_info_t& extent_alloc_info);
+
   /// read record metadata for record starting at start
   using read_validate_record_metadata_ertr = replay_ertr;
   using read_validate_record_metadata_ret =
@@ -406,7 +412,8 @@ private:
     scan_valid_records_cursor &cursor, ///< [in, out] cursor, updated during call
     segment_nonce_t nonce,             ///< [in] nonce for segment
     size_t budget,                     ///< [in] max budget to use
-    found_record_handler_t &handler    ///< [in] handler for records
+    found_record_handler_t &handler,   ///< [in] handler for records
+    std::optional<extent_alloc_info_t>& alloc_info    ///> [out] extent placement infos
   ); ///< @return used budget
 
   /// replays records starting at start through end of segment
@@ -414,7 +421,8 @@ private:
   replay_segment(
     journal_seq_t start,             ///< [in] starting addr, seq
     segment_header_t header,         ///< [in] segment header
-    delta_handler_t &delta_handler   ///< [in] processes deltas in order
+    delta_handler_t &delta_handler,  ///< [in] processes deltas in order
+    std::optional<extent_alloc_info_t>& alloc_info  ///> [out] extent placement infos
   );
 
   extent_len_t max_record_length() const;

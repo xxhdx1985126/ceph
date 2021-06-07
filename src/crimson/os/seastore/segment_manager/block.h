@@ -141,8 +141,10 @@ public:
     >;
   close_ertr::future<> close();
 
+  BlockSegmentManager(const std::string &path)
+    : SegmentManager(0), device_path(path) {}
   BlockSegmentManager(const std::string &path, uint16_t segment_manager_id)
-    : SegmentManger(segment_manager_id), device_path(path) {}
+    : SegmentManager(segment_manager_id), device_path(path) {}
   ~BlockSegmentManager();
 
   open_ertr::future<SegmentRef> open(segment_id_t id) final;

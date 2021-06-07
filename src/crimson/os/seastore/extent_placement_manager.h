@@ -3,7 +3,6 @@
 
 #pragma once
 #include "crimson/os/seastore/cache.h"
-#include "crimson/os/seastore/cached_extent.h"
 
 namespace crimson::os::seastore {
 
@@ -42,13 +41,20 @@ public:
   alloc_extent_ertr::future<alloc_t> alloc(segment_off_t length);
   // may return the id of the segment that will be closed
   write_ertr::future<SegmentRef> write(CachedExtent* extent);
-private:
-  bool _needs_roll(segment_off_t length) const;
-  roll_segment_ertr::future<> roll_segment();
 
   void get_live_segments(std::map<segment_id_t, segment_off_t>& segments) {
     segments.emplace(committed_to.segment, committed_to.offset);
   }
+
+  void set_current_segment(SegmentRef segment, segment_off_t alloc_to) {
+    current_segment = segment;
+    open_segments.emplace_back(segment);
+    allocated_to = alloc_to;
+  }
+
+private:
+  bool _needs_roll(segment_off_t length) const;
+  roll_segment_ertr::future<> roll_segment();
 
   SegmentProvider& segment_provider;
   SegmentManager& segment_manager;
@@ -58,47 +64,66 @@ private:
   paddr_t write_to = {NULL_SEG_ID, 0};
   paddr_t committed_to = {NULL_SEG_ID, 0};
 
-  friend struct SegmentAllocator;
 };
 
-struct SegmentAllocator {
+using ExtentAllocWriterRef = seastar::shared_ptr<ExtentAllocWriter>;
+
+class SegmentAllocator {
 public:
   using alloc_extent_ertr = ExtentAllocWriter::alloc_extent_ertr;
   SegmentAllocator(SegmentProvider& sp, SegmentManager& sm, Cache& cache)
     : segment_provider(sp), segment_manager(sm), cache(cache) {}
-  template <typename T>
-  alloc_extent_ertr::future<TCachedExtentRef<T>> alloc(
+  alloc_extent_ertr::future<std::tuple<alloc_t, ExtentAllocWriterRef>> alloc(
     lifetime_level ltl,
     segment_off_t length)
   {
     auto iter = allocators.find(ltl);
     if (iter == allocators.end()) {
-      iter = allocators.try_emplace(ltl, segment_provider, segment_manager).first;
+      iter = allocators.emplace(
+          ltl,
+          seastar::make_shared<ExtentAllocWriter>(
+            segment_provider, segment_manager)).first;
     }
     auto& allocator = iter->second;
 
-    return allocator.alloc(length).safe_then(
-      [this, &allocator, length](auto alloc_addr) {
-      auto nextent = cache.alloc_new_extent<T>(length);
-      nextent->set_paddr(std::move(alloc_addr.addr));
-      nextent->segment_allocated(alloc_addr.segment);
-      nextent->extent_writer = &allocator;
-      return nextent;
+    return allocator->alloc(length).safe_then([allocator](auto alloc_addr) {
+      return alloc_extent_ertr::make_ready_future<
+        std::tuple<alloc_t, ExtentAllocWriterRef>>(
+            std::make_tuple(alloc_addr, allocator));
     });
   }
 
-private:
+  using add_allocator_ertr = crimson::errorator<
+    crimson::ct_error::input_output_error,
+    crimson::ct_error::invarg,
+    crimson::ct_error::enoent>;
+  add_allocator_ertr::future<> add_allocator(
+    lifetime_level ltl,
+    segment_id_t segment_id,
+    segment_off_t alloc_to)
+  {
+    return segment_manager.open(segment_id).safe_then(
+      [this, ltl, alloc_to](auto segment) {
+      auto [iter, inserted] = allocators.emplace(
+        ltl,
+        seastar::make_shared<ExtentAllocWriter>(
+          segment_provider, segment_manager));
+      assert(inserted);
+      auto& allocator = iter->second;
+      allocator->set_current_segment(segment, alloc_to);
+      return add_allocator_ertr::now();
+    });
+  }
   void get_live_segments(std::map<segment_id_t, segment_off_t>& segments) {
     for (auto& [ll, writer] : allocators) {
-      writer.get_live_segments(segments);
+      writer->get_live_segments(segments);
     }
   }
+private:
   SegmentProvider& segment_provider;
   SegmentManager& segment_manager;
-  std::map<lifetime_level, ExtentAllocWriter> allocators;
+  std::map<lifetime_level, ExtentAllocWriterRef> allocators;
   Cache& cache;
-
-  friend class ExtentPlacementManager;
 };
 
 using SegmentAllocatorRef = seastar::shared_ptr<SegmentAllocator>;
@@ -120,7 +145,16 @@ public:
     auto& allocator = iter->second;
     auto l = predict_lifetime(hint);
 
-    return allocator.alloc<T>(l, size);
+    return allocator->alloc(l, size).safe_then(
+      [this, size](auto tpl) {
+      auto alloc_addr = std::get<0>(tpl);
+      auto allocator = std::get<1>(tpl);
+      auto nextent = cache.alloc_new_extent<T>(size);
+      nextent->set_paddr(std::move(alloc_addr.addr));
+      nextent->segment_allocated(alloc_addr.segment);
+      nextent->extent_writer = allocator;
+      return nextent;
+    });
   }
 
   alloc_extent_ertr::future<CachedExtentRef> alloc_new_extent_by_type(
@@ -132,14 +166,28 @@ public:
         segment_provider, smr, cache);
     segment_allocators.emplace(hl, segment_allocator);
     segment_allocator_initializers.emplace(
-        smr->get_segment_manager_id(), segment_allocator);
+        smr.get_segment_manager_id(), segment_allocator);
+  }
+
+  using new_placement_ertr = SegmentAllocator::add_allocator_ertr;
+  new_placement_ertr::future<> add_new_placement(
+    heat_level hl,
+    lifetime_level ltl,
+    segment_id_t segment,
+    segment_off_t alloc_to)
+  {
+    auto iter = segment_allocators.find(hl);
+    assert(iter != segment_allocators.end());
+    auto& segment_allocator = iter->second;
+    return segment_allocator->add_allocator(ltl, segment, alloc_to);
   }
 
   std::map<segment_id_t, segment_off_t> get_live_segments() {
     std::map<segment_id_t, segment_off_t> segments;
     for (auto& [hl, segment_allocator] : segment_allocators) {
-      segment_allocator.get_live_segments(segments);
+      segment_allocator->get_live_segments(segments);
     }
+    return segments;
   }
 
 protected:

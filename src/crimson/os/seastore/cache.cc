@@ -331,10 +331,10 @@ std::optional<record_t> Cache::try_construct_record(Transaction &t)
   for (auto& i : t.rewrite_block_list) {
     DEBUGT("rewritten block {}", t, *i);
     auto addr = i->get_paddr();
-    auto iter = record.rewritten_segment_offs.find(addr.segment);
-    if (iter == record.rewritten_segment_offs.end() ||
+    auto iter = record.ep_info.rewritten_segment_offs.find(addr.segment);
+    if (iter == record.ep_info.rewritten_segment_offs.end() ||
 	iter->second < addr.offset) {
-      record.rewritten_segment_offs.emplace(addr.segment, addr.offset);
+      record.ep_info.rewritten_segment_offs.emplace(addr.segment, addr.offset);
     }
   }
 

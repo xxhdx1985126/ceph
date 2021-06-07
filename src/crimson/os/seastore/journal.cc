@@ -117,10 +117,10 @@ ceph::bufferlist Journal::encode_record(
     current_segment_nonce,
     committed_to,
     // segments last rewritten offs length
-    sizeof(uint32_t) + record.rewritten_segment_offs.size()
+    sizeof(uint32_t) + record.ep_info.rewritten_segment_offs.size()
       * (sizeof(segment_id_t) + sizeof(segment_off_t)),
     // segments to be closed
-    sizeof(uint32_t) + record.closed_segments.size()
+    sizeof(uint32_t) + record.ep_info.closed_segments.size()
       * sizeof(segment_id_t),
     data_bl.crc32c(-1)
   };
@@ -128,8 +128,8 @@ ceph::bufferlist Journal::encode_record(
 
   auto metadata_crc_filler = bl.append_hole(sizeof(uint32_t));
 
-  encode(record.rewritten_segment_offs, bl);
-  encode(record.closed_segments, bl);
+  encode(record.ep_info.rewritten_segment_offs, bl);
+  encode(record.ep_info.closed_segments, bl);
 
   for (const auto &i: record.extents) {
     encode(extent_info_t(i), bl);
@@ -249,10 +249,10 @@ Journal::record_size_t Journal::get_encoded_record_length(
     (extent_len_t)ceph::encoded_sizeof_bounded<record_header_t>();
   metadata += sizeof(checksum_t) /* crc */;
   // segments last rewritten offs length
-  metadata += sizeof(uint32_t) + record.rewritten_segment_offs.size()
+  metadata += sizeof(uint32_t) + record.ep_info.rewritten_segment_offs.size()
     * (sizeof(segment_id_t) + sizeof(segment_off_t));
   // segments to be closed
-  metadata += sizeof(uint32_t) + record.closed_segments.size()
+  metadata += sizeof(uint32_t) + record.ep_info.closed_segments.size()
     * sizeof(segment_id_t),
   metadata += record.extents.size() *
     ceph::encoded_sizeof_bounded<extent_info_t>();
@@ -571,7 +571,7 @@ void Journal::try_decode_ep_info(
     if (it == extent_alloc_info.end()) {
       extent_alloc_info.emplace(id, off);
     } else if (it->second < off){
-      extent_alloc_info[id] = off;
+      it->second = off;
     }
   }
   for (auto id : ep_info.closed_segments) {
@@ -619,12 +619,12 @@ std::optional<std::vector<extent_info_t>> Journal::try_decode_extent_infos(
   return extent_infos;
 }
 
-Journal::replay_ertr::future<extent_alloc_info_t>
+Journal::replay_ertr::future<>
 Journal::replay_segment(
   journal_seq_t seq,
   segment_header_t header,
   delta_handler_t &handler,
-  extent_alloc_info_t& extent_alloc_info)
+  std::optional<extent_alloc_info_t>& extent_alloc_info)
 {
   logger().debug("replay_segment: starting at {}", seq);
   return seastar::do_with(
@@ -673,7 +673,7 @@ Journal::replay_segment(
 	      });
 	  });
       }),
-    [=](auto &cursor, auto &dhandler) {
+    [=](auto &cursor, auto &dhandler) mutable {
       return scan_valid_records(
 	cursor,
 	header.segment_nonce,
@@ -691,14 +691,29 @@ Journal::replay_ret Journal::replay(delta_handler_t &&delta_handler)
       return find_replay_segments().safe_then(
         [this, &handler, &segments](auto replay_segs) mutable {
           logger().debug("replay: found {} segments", replay_segs.size());
-          segments = std::move(replay_segs);
-	  return seastar::do_with(extent_alloc_info_t(), [this, &handler]
+	  return seastar::do_with(std::make_optional(extent_alloc_info_t()),
+	    [this, &handler, segments = std::move(replay_segs)]
 	    (auto& extent_alloc_info) {
-	    return crimson::do_for_each(segments, [this, &handler](auto i) mutable {
+	    return crimson::do_for_each(segments, [this, &handler, &extent_alloc_info]
+	      (auto i) mutable {
+	      // try to find all rewrite block segments' latest written addresses
 	      for (auto [id, off] : i.second.segment_rewritten_to) {
-		if ()
+		auto iter = extent_alloc_info->find(id);
+		if (iter == extent_alloc_info->end()) {
+		  extent_alloc_info->emplace(id, off);
+		} else if (iter->second < off) {
+		  iter->second = off;
+		}
 	      }
-	      return replay_segment(i.first, i.second, handler);
+	      return replay_segment(i.first, i.second, handler, extent_alloc_info);
+	    }).safe_then([this, &extent_alloc_info] {
+	      crimson::do_for_each(*extent_alloc_info, [this](auto iter) {
+		return epm.add_new_placement(
+		  heat_level::DEFAULT,
+		  lifetime_level::DEFAULT,
+		  iter.first,
+		  iter.second);
+	      });
 	    });
 	  });
         });
@@ -745,11 +760,13 @@ Journal::scan_extents_ret Journal::scan_extents(
 	  return scan_extents_ertr::now();
 	}),
       [=, &cursor](auto &dhandler) {
+	std::optional<extent_alloc_info_t> alloc_info;
 	return scan_valid_records(
 	  cursor,
 	  segment_nonce,
 	  bytes_to_read,
-	  dhandler).safe_then([](auto){});
+	  dhandler,
+	  alloc_info).safe_then([](auto){});
       });
   }).safe_then([ret=std::move(ret)] {
     return std::move(*ret);
@@ -757,11 +774,11 @@ Journal::scan_extents_ret Journal::scan_extents(
 }
 
 Journal::scan_valid_records_ret Journal::scan_valid_records(
-    scan_valid_records_cursor &cursor,
-    segment_nonce_t nonce,
-    size_t budget,
-    found_record_handler_t &handler,
-    extent_alloc_info_t& extent_alloc_info)
+  scan_valid_records_cursor &cursor,
+  segment_nonce_t nonce,
+  size_t budget,
+  found_record_handler_t &handler,
+  std::optional<extent_alloc_info_t>& extent_alloc_info)
 {
   if (cursor.offset.offset == 0) {
     cursor.offset.offset = segment_manager.get_block_size();
@@ -819,7 +836,11 @@ Journal::scan_valid_records_ret Journal::scan_valid_records(
 		budget_used +=
 		  next.header.dlength + next.header.mdlength;
 
-		try_decode_ep_info(next.header, next.mdbuffer, extent_alloc_info);
+		if (extent_alloc_info) {
+		  try_decode_ep_info(next.header,
+				     next.mdbuffer,
+				     *extent_alloc_info);
+		}
 
 		return handler(
 		  next.offset,
@@ -844,7 +865,9 @@ Journal::scan_valid_records_ret Journal::scan_valid_records(
 	    budget_used +=
 	      next.header.dlength + next.header.mdlength;
 
-	    try_decode_ep_info(next.header, next.mdbuffer, extent_alloc_info);
+	    if (extent_alloc_info) {
+	      try_decode_ep_info(next.header, next.mdbuffer, *extent_alloc_info);
+	    }
 
 	    return handler(
 	      next.offset,

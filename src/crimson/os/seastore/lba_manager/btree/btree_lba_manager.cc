@@ -7,6 +7,7 @@
 #include "crimson/common/log.h"
 
 #include "include/buffer.h"
+#include "crimson/os/seastore/extent_placement_manager.h"
 #include "crimson/os/seastore/lba_manager/btree/btree_lba_manager.h"
 #include "crimson/os/seastore/lba_manager/btree/lba_btree_node_impl.h"
 

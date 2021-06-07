@@ -32,6 +32,8 @@ void intrusive_ptr_release(CachedExtent *);
 class ExtentAllocWriter;
 class SegmentAllocator;
 
+using ExtentAllocWriterRef = seastar::shared_ptr<ExtentAllocWriter>;
+
 template <typename T>
 using TCachedExtentRef = boost::intrusive_ptr<T>;
 
@@ -296,7 +298,7 @@ public:
   }
 
   /// facility for persisting the extent
-  ExtentAllocWriter* extent_writer = nullptr;
+  ExtentAllocWriterRef extent_writer;
 
   using persist_ertr = crimson::errorator<
     crimson::ct_error::input_output_error,

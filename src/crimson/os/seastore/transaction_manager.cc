@@ -243,20 +243,20 @@ TransactionManager::submit_transaction_direct(
     DEBUGT("about to submit to journal", tref);
 
     return seastar::do_with(
-      std::map<segment_id_t, segment_off_t>(),
+      std::vector<segment_id_t>(),
       std::move(record),
-      [this](auto& closed_segments, auto& record) {
-      return ExtentAllocWriter::write_ertr::parallel_for_each(
+      [this, &tref](auto& closed_segments, auto& record) {
+      return Segment::close_ertr::parallel_for_each(
 	tref.get_rewrite_block_list(), [this, &closed_segments](auto& extent) {
 	return extent->persist().safe_then([this, &closed_segments](auto segment) {
 	  if (segment) {
 	    closed_segments.emplace_back(segment->get_segment_id());
 	    return segment->close();
 	  }
-	  return seastar::now();
-	});
-      }).safe_then([this, &record, &tref, &closed_segments, &record]() mutable {
-	record->closed_segments = std::move(closed_segments);
+	  return Segment::close_ertr::now();
+	}, crimson::ct_error::assert_all{"unexpected errors!"});
+      }).safe_then([this, &record, &tref, &closed_segments]() mutable {
+	record->ep_info.closed_segments = std::move(closed_segments);
 	return journal->submit_record(std::move(*record), tref.handle);
       });
     }).safe_then([this, FNAME, &tref](auto p) mutable {
