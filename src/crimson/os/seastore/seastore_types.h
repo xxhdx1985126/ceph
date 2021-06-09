@@ -57,9 +57,7 @@ constexpr segment_id_t ZERO_SEG_ID =
 
 std::ostream &segment_to_stream(std::ostream &, const segment_id_t &t);
 
-uint16_t get_segment_manager_id(segment_id_t id) {
-  return id >> 60;
-}
+uint16_t get_segment_manager_id(segment_id_t id);
 
 // Offset within a segment on disk, see SegmentManager
 // may be negative for relative offsets

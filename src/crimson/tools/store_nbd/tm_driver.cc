@@ -136,9 +136,9 @@ void TMDriver::init()
     SegmentCleaner::config_t::get_default(),
     false /* detailed */);
   segment_cleaner->mount(*segment_manager);
-  auto journal = std::make_unique<Journal>(*segment_manager);
   auto cache = std::make_unique<Cache>(*segment_manager);
   auto epm = std::make_unique<ExtentPlacementManager>(*segment_cleaner, *cache);
+  auto journal = std::make_unique<Journal>(*segment_manager, *epm);
   auto lba_manager = lba_manager::create_lba_manager(*segment_manager, *cache, std::move(epm));
 
   journal->set_segment_provider(&*segment_cleaner);

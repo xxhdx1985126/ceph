@@ -110,4 +110,9 @@ std::ostream &operator<<(std::ostream &lhs, const delta_info_t &rhs)
 	     << ")";
 }
 
+uint16_t get_segment_manager_id(segment_id_t id)
+{
+  return id >> 60;
+}
+
 }

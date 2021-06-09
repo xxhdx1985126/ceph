@@ -19,7 +19,7 @@ ExtentAllocWriter::write(CachedExtent* extent) {
   assert(extent->extent_writer);
   assert(segment);
   auto old_segment_iter = open_segments.begin();
-  std::optional<SegmentRef> closed_segment;
+  SegmentRef closed_segment;
   if (segment.get() != old_segment_iter->get()) {
     // segment writes are ordered, so when an opened segment isn't the current
     // one being written to, it is full and should be closed.
@@ -27,15 +27,15 @@ ExtentAllocWriter::write(CachedExtent* extent) {
     open_segments.erase(old_segment_iter);
   }
   write_to = extent->get_paddr();
-  assert(write_to >= allocated_to);
+  assert(write_to.segment = segment->get_segment_id());
+  assert(write_to.offset >= allocated_to);
   return segment->write(write_to.offset, bl).safe_then(
     [this, extent, segment, closed_segment=std::move(closed_segment)] {
     extent->extent_writer = nullptr;
     extent->clear_allocated_segment();
-    committed_to = extent->get_addr();
-    assert(commtted_to >= write_to);
-    return write_ertr::make_ready_future<std::optional<segment_id_t>>(
-        closed_segment);
+    committed_to = extent->get_paddr();
+    assert(committed_to >= write_to);
+    return write_ertr::make_ready_future<SegmentRef>(closed_segment);
   });
 }
 

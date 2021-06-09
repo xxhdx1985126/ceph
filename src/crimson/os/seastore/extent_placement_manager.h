@@ -63,7 +63,6 @@ private:
   segment_off_t allocated_to = 0;
   paddr_t write_to = {NULL_SEG_ID, 0};
   paddr_t committed_to = {NULL_SEG_ID, 0};
-
 };
 
 using ExtentAllocWriterRef = seastar::shared_ptr<ExtentAllocWriter>;
@@ -73,7 +72,8 @@ public:
   using alloc_extent_ertr = ExtentAllocWriter::alloc_extent_ertr;
   SegmentAllocator(SegmentProvider& sp, SegmentManager& sm, Cache& cache)
     : segment_provider(sp), segment_manager(sm), cache(cache) {}
-  alloc_extent_ertr::future<std::tuple<alloc_t, ExtentAllocWriterRef>> alloc(
+  template <typename T>
+  alloc_extent_ertr::future<TCachedExtentRef<T>> alloc(
     lifetime_level ltl,
     segment_off_t length)
   {
@@ -86,10 +86,13 @@ public:
     }
     auto& allocator = iter->second;
 
-    return allocator->alloc(length).safe_then([allocator](auto alloc_addr) {
-      return alloc_extent_ertr::make_ready_future<
-        std::tuple<alloc_t, ExtentAllocWriterRef>>(
-            std::make_tuple(alloc_addr, allocator));
+    return allocator->alloc(length).safe_then(
+      [this, &allocator, length](auto alloc_addr) {
+      auto nextent = cache.alloc_new_extent<T>(length);
+      nextent->set_paddr(std::move(alloc_addr.addr));
+      nextent->segment_allocated(alloc_addr.segment);
+      nextent->extent_writer = allocator;
+      return nextent;
     });
   }
 
@@ -145,16 +148,7 @@ public:
     auto& allocator = iter->second;
     auto l = predict_lifetime(hint);
 
-    return allocator->alloc(l, size).safe_then(
-      [this, size](auto tpl) {
-      auto alloc_addr = std::get<0>(tpl);
-      auto allocator = std::get<1>(tpl);
-      auto nextent = cache.alloc_new_extent<T>(size);
-      nextent->set_paddr(std::move(alloc_addr.addr));
-      nextent->segment_allocated(alloc_addr.segment);
-      nextent->extent_writer = allocator;
-      return nextent;
-    });
+    return allocator->alloc<T>(l, size);
   }
 
   alloc_extent_ertr::future<CachedExtentRef> alloc_new_extent_by_type(

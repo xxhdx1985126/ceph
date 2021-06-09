@@ -707,7 +707,7 @@ Journal::replay_ret Journal::replay(delta_handler_t &&delta_handler)
 	      }
 	      return replay_segment(i.first, i.second, handler, extent_alloc_info);
 	    }).safe_then([this, &extent_alloc_info] {
-	      crimson::do_for_each(*extent_alloc_info, [this](auto iter) {
+	      return crimson::do_for_each(*extent_alloc_info, [this](auto iter) {
 		return epm.add_new_placement(
 		  heat_level::DEFAULT,
 		  lifetime_level::DEFAULT,
