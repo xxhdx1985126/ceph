@@ -17,9 +17,12 @@
 
 namespace crimson::os::seastore {
 
+class OolExtent;
 class Transaction;
 class CachedExtent;
 using CachedExtentRef = boost::intrusive_ptr<CachedExtent>;
+class SegmentedAllocator;
+class TransactionManager;
 
 // #define DEBUG_CACHED_EXTENT_REF
 #ifdef DEBUG_CACHED_EXTENT_REF
@@ -320,6 +323,15 @@ public:
 
   virtual ~CachedExtent();
 
+  /// type of the backend device that will hold this extent
+  device_type_t backend_type = device_type_t::NONE;
+
+  /// hint for allocators
+  ool_placement_hint_t hint;
+
+  bool is_ool() const {
+    return !poffset.is_relative();
+  }
 private:
   template <typename T>
   friend class read_set_item_t;
@@ -368,6 +380,10 @@ private:
 
   /// address of original block -- relative iff is_pending() and is_clean()
   paddr_t poffset;
+
+  // absolute address for the ool extent, poffset will be updated to
+  // this value, after the transaction for the ool extent completed
+  paddr_t ool_offset;
 
   /// used to wait while in-progress commit completes
   std::optional<seastar::shared_promise<>> io_wait_promise;
@@ -457,6 +473,9 @@ protected:
     }
   }
 
+  friend class crimson::os::seastore::OolExtent;
+  friend class crimson::os::seastore::SegmentedAllocator;
+  friend class crimson::os::seastore::TransactionManager;
 };
 
 std::ostream &operator<<(std::ostream &, CachedExtent::extent_state_t);

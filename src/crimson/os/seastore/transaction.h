@@ -84,12 +84,18 @@ public:
     ceph_assert(inserted);
   }
 
-  void add_fresh_extent(CachedExtentRef ref) {
+  void add_fresh_extent(CachedExtentRef ref, bool set_addr = true) {
     ceph_assert(!is_weak());
     fresh_block_list.push_back(ref);
-    ref->set_paddr(make_record_relative_paddr(offset));
-    offset += ref->get_length();
+    if (set_addr) {
+      ref->set_paddr(make_record_relative_paddr(offset));
+      offset += ref->get_length();
+    }
     write_set.insert(*ref);
+  }
+
+  void add_delayed_alloc_extent(LogicalCachedExtentRef ref) {
+    delayed_alloc_list.emplace_back(ref);
   }
 
   void add_mutated_extent(CachedExtentRef ref) {
@@ -132,6 +138,10 @@ public:
 
   const auto &get_fresh_block_list() {
     return fresh_block_list;
+  }
+
+  auto& get_delayed_alloc_list() {
+    return delayed_alloc_list;
   }
 
   const auto &get_mutated_block_list() {
@@ -233,6 +243,9 @@ private:
 
   std::list<CachedExtentRef> fresh_block_list;   ///< list of fresh blocks
   std::list<CachedExtentRef> mutated_block_list; ///< list of mutated blocks
+  ///< list of ool extents whose addresses are not
+  //   determine until transaction submission
+  std::list<LogicalCachedExtentRef> delayed_alloc_list;
 
   pextent_set_t retired_set; ///< list of extents mutated by this transaction
 
