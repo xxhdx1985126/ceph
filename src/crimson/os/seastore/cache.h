@@ -372,13 +372,38 @@ public:
    *
    * Allocates a fresh extent.  addr will be relative until commit.
    */
-  template <typename T>
+  template <
+    typename T,
+    std::enable_if_t<is_base_of_v<LogicalCachedExtent, T>, int> = 0>
   TCachedExtentRef<T> alloc_new_extent(
-    Transaction &t,      ///< [in, out] current transaction
-    segment_off_t length ///< [in] length
+    Transaction &t,       ///< [in, out] current transaction
+    segment_off_t length, ///< [in] length
+    bool delay = false    ///< [in] whether the address is determined now
   ) {
     auto ret = CachedExtent::make_cached_extent_ref<T>(
       alloc_cache_buf(length));
+    if (delay) {
+      // only logical extents' poffset allocation can be delayed
+      assert(ret->is_logical());
+      t.add_delayed_alloc_extent(ret);
+    } else {
+      t.add_fresh_extent(ret);
+    }
+    ret->state = CachedExtent::extent_state_t::INITIAL_WRITE_PENDING;
+    return ret;
+  }
+
+  template <
+    typename T,
+    std::enable_if_t<!is_base_of_v<LogicalCachedExtent, T>, int> = 0>
+  TCachedExtentRef<T> alloc_new_extent(
+    Transaction &t,       ///< [in, out] current transaction
+    segment_off_t length, ///< [in] length
+    bool delay = false    ///< [in] whether the address is determined now
+  ) {
+    auto ret = CachedExtent::make_cached_extent_ref<T>(
+      alloc_cache_buf(length));
+    assert(!ret->is_logical());
     t.add_fresh_extent(ret);
     ret->state = CachedExtent::extent_state_t::INITIAL_WRITE_PENDING;
     return ret;
@@ -392,7 +417,8 @@ public:
   CachedExtentRef alloc_new_extent_by_type(
     Transaction &t,       ///< [in, out] current transaction
     extent_types_t type,  ///< [in] type tag
-    segment_off_t length  ///< [in] length
+    segment_off_t length, ///< [in] length
+    bool delay = false	  ///< [in] whether the address is determined now
     );
 
   /**
