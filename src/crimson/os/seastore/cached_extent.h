@@ -14,6 +14,11 @@
 #include "include/buffer.h"
 #include "crimson/common/errorator.h"
 #include "crimson/os/seastore/seastore_types.h"
+#include "crimson/os/seastore/segment_manager.h"
+
+namespace crimson::os::seastore::lba_manager::btree {
+class BtreeLBAManager;
+}
 
 namespace crimson::os::seastore {
 
@@ -28,6 +33,10 @@ void intrusive_ptr_add_ref(CachedExtent *);
 void intrusive_ptr_release(CachedExtent *);
 
 #endif
+
+class ExtentRewriter;
+class SegmentedRewriter;
+class SegmentedAllocator;
 
 template <typename T>
 using TCachedExtentRef = boost::intrusive_ptr<T>;
@@ -391,6 +400,9 @@ private:
 
   read_set_item_t<Transaction>::list transactions;
 
+  friend class SegmentedRewriter;
+  friend class SegmentedAllocator;
+  friend class TransactionManager;
 protected:
   CachedExtent(CachedExtent &&other) = delete;
   CachedExtent(ceph::bufferptr &&ptr) : ptr(std::move(ptr)) {}
@@ -456,7 +468,6 @@ protected:
       return addr;
     }
   }
-
 };
 
 std::ostream &operator<<(std::ostream &, CachedExtent::extent_state_t);
@@ -748,6 +759,8 @@ public:
   }
 };
 
+class LogicalCachedExtent;
+using LogicalCachedExtentRef = TCachedExtentRef<LogicalCachedExtent>;
 /**
  * LogicalCachedExtent
  *
@@ -797,6 +810,14 @@ public:
   }
 
   std::ostream &print_detail(std::ostream &out) const final;
+
+  /// facility for persisting the extent
+  ExtentRewriter* extent_writer;
+
+  LogicalCachedExtentRef get_old_extent() {
+    return old_extent;
+  }
+
 protected:
   virtual void apply_delta(const ceph::bufferlist &bl) = 0;
   virtual std::ostream &print_detail_l(std::ostream &out) const {
@@ -811,12 +832,19 @@ protected:
     logical_on_delta_write();
   }
 
+  // the extent being rewritten
+  LogicalCachedExtentRef old_extent;
+
 private:
   laddr_t laddr = L_ADDR_NULL;
   LBAPinRef pin;
+
+  friend class crimson::os::seastore::SegmentedRewriter;
+  friend class crimson::os::seastore::SegmentedAllocator;
+  friend class crimson::os::seastore::lba_manager::btree::BtreeLBAManager;
+  friend class Cache;
 };
 
-using LogicalCachedExtentRef = TCachedExtentRef<LogicalCachedExtent>;
 struct ref_laddr_cmp {
   using is_transparent = laddr_t;
   bool operator()(const LogicalCachedExtentRef &lhs,
