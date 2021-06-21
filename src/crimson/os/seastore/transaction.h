@@ -6,7 +6,7 @@
 #include <iostream>
 
 #include <boost/intrusive/list.hpp>
-
+#include "crimson/common/log.h"
 #include "crimson/os/seastore/ordering_handle.h"
 #include "crimson/os/seastore/seastore_types.h"
 #include "crimson/os/seastore/cached_extent.h"
@@ -34,16 +34,19 @@ public:
     RETIRED
   };
   get_extent_ret get_extent(paddr_t addr, CachedExtentRef *out) {
+    ::crimson::get_logger(ceph_subsys_seastore).debug("{} {}", __func__, addr);
     if (retired_set.count(addr)) {
       return get_extent_ret::RETIRED;
     } else if (auto iter = write_set.find_offset(addr);
 	iter != write_set.end()) {
+      ::crimson::get_logger(ceph_subsys_seastore).debug("{} found in write_set {}", __func__, *iter);
       if (out)
 	*out = CachedExtentRef(&*iter);
       return get_extent_ret::PRESENT;
     } else if (
       auto iter = read_set.find(addr);
       iter != read_set.end()) {
+      ::crimson::get_logger(ceph_subsys_seastore).debug("{} found in read_set {}", __func__, *iter->ref);
       if (out)
 	*out = iter->ref;
       return get_extent_ret::PRESENT;
@@ -69,6 +72,25 @@ public:
 
   void add_to_retired_uncached(paddr_t addr, extent_len_t length) {
     retired_uncached.emplace_back(std::make_pair(addr, length));
+  }
+
+  void dump_write_set() {
+    for (auto it = write_set.begin();
+	 it != write_set.end();
+	 ++it) {
+	::crimson::get_logger(ceph_subsys_seastore).debug(
+	    "{} write_set: {}", (void*)this, *it);
+    }
+  }
+  void dump_write_set(paddr_t addr) {
+    for (auto it = write_set.begin();
+	 it != write_set.end();
+	 ++it) {
+	if (it->poffset == addr) {
+	  ::crimson::get_logger(ceph_subsys_seastore).debug(
+	      "{} write_set: {}", (void*)this, *it);
+	}
+    }
   }
 
   void add_to_read_set(CachedExtentRef ref) {

@@ -274,6 +274,7 @@ public:
     auto result = t.get_extent(offset, &ret);
     if (result != Transaction::get_extent_ret::ABSENT) {
       assert(result != Transaction::get_extent_ret::RETIRED);
+      ::crimson::get_logger(ceph_subsys_seastore).debug("{} {} extent: {}", __func__, (void*)&t, *ret);
       return seastar::make_ready_future<TCachedExtentRef<T>>(
 	ret->cast<T>());
     } else {

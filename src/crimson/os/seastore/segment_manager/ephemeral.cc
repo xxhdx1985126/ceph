@@ -151,7 +151,7 @@ SegmentManager::open_ertr::future<SegmentRef> EphemeralSegmentManager::open(
   }
 
   if (segment_state[id] != segment_state_t::EMPTY) {
-    logger().error("EphemeralSegmentManager::open: segment {} not empty", id);
+    logger().error("EphemeralSegmentManager::open: segment {} not empty, state: {}", id, segment_state[id]);
     return crimson::ct_error::invarg::make();
   }
 
