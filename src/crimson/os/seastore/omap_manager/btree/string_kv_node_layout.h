@@ -312,6 +312,7 @@ public:
       uint16_t index) : node(parent), index(index) {}
 
   public:
+    using reference = iter_t<is_const>;
     iter_t(const iter_t &) = default;
     iter_t(iter_t &&) = default;
     iter_t &operator=(const iter_t &) = default;
