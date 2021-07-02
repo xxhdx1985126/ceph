@@ -145,6 +145,7 @@ LBAInternalNode::mutate_mapping_ret LBAInternalNode::mutate_mapping_internal(
     assert(0 == "impossible");
     return crimson::ct_error::enoent::make();
   }
+  logger().debug("{}, {} {} -> {}", __func__, *this, laddr, mutation_pt->get_val());
   return get_lba_btree_extent(
     c,
     this,
