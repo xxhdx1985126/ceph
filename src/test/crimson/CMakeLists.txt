@@ -1,4 +1,5 @@
 # the crimson's backfill doesn't need nor use seastar
+
 add_executable(unittest-crimson-backfill
   test_backfill.cc
   ${PROJECT_SOURCE_DIR}/src/auth/Crypto.cc
@@ -53,6 +54,9 @@ add_executable(unittest-seastar-config
 add_ceph_unittest(unittest-seastar-config
   --memory 256M --smp 4)
 target_link_libraries(unittest-seastar-config crimson)
+
+add_executable(unittest-intrusive-set test_intrusive_set.cc)
+add_ceph_unittest(unittest-intrusive-set)
 
 add_executable(unittest-seastar-monc
   test_monc.cc)
