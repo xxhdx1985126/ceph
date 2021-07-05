@@ -37,12 +37,15 @@ public:
     ::crimson::get_logger(ceph_subsys_seastore).debug("{} {}", __func__, addr);
     if (retired_set.count(addr)) {
       return get_extent_ret::RETIRED;
-    } else if (auto iter = find_in_write_set(addr);
+    } else if (auto iter = write_set.find_offset(addr);
 	iter != write_set.end()) {
       ::crimson::get_logger(ceph_subsys_seastore).debug("{} found in write_set {}", __func__, *iter);
       if (out)
 	*out = CachedExtentRef(&*iter);
       return get_extent_ret::PRESENT;
+    } else if (auto iter = find_in_write_set(addr);
+	iter != write_set.end()) {
+      assert("shouldn't reach this point" == 0);
     } else if (
       auto iter = read_set.find(addr);
       iter != read_set.end()) {
