@@ -127,12 +127,12 @@ public:
     }
   }
 
-  void mark_segment_to_release(segment_id_t segment) {
+  void mark_segment_to_release(device_segment_t segment) {
     assert(to_release == NULL_SEG_ID);
     to_release = segment;
   }
 
-  segment_id_t get_segment_to_release() const {
+  device_segment_t get_segment_to_release() const {
     return to_release;
   }
 
@@ -250,7 +250,7 @@ private:
   pextent_set_t retired_set; ///< list of extents mutated by this transaction
 
   ///< if != NULL_SEG_ID, release this segment after completion
-  segment_id_t to_release = NULL_SEG_ID;
+  device_segment_t to_release = {NULL_SEG_ID};
 
   retired_extent_gate_t::token_t retired_gate_token;
 
