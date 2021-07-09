@@ -117,7 +117,7 @@ struct journal_test_t : seastar_test_suite_t, SegmentProvider {
 	std::vector<std::pair<segment_id_t, segment_header_t>>(),
 	[this](auto& segments) {
 	return crimson::do_for_each(
-	  boost::make_counting_iterator(segment_id_t{0}),
+	  boost::make_counting_iterator(internal_segment_id_t{0}),
 	  boost::make_counting_iterator(segment_manager->get_num_segments()),
 	  [this, &segments](auto segment_id) {
 	  return scanner->read_segment_header(segment_id)

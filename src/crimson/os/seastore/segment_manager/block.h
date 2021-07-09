@@ -83,14 +83,14 @@ public:
     return bptr.length();
   }
 
-  segment_state_t get(segment_id_t offset) const {
+  segment_state_t get(internal_segment_id_t offset) const {
     assert(offset < get_capacity());
     return static_cast<segment_state_t>(
       layout.template Pointer<0>(
 	bptr.c_str())[offset]);
   }
 
-  void set(segment_id_t offset, segment_state_t state) {
+  void set(internal_segment_id_t offset, segment_state_t state) {
     assert(offset < get_capacity());
     layout.template Pointer<0>(bptr.c_str())[offset] =
       static_cast<uint8_t>(state);
@@ -141,7 +141,11 @@ public:
     >;
   close_ertr::future<> close();
 
-  BlockSegmentManager(const std::string &path) : device_path(path) {
+  BlockSegmentManager(
+    const std::string &path,
+    device_id_t device_id = 0)
+  : device_path(path),
+    device_id(device_id) {
     register_metrics();
   }
   ~BlockSegmentManager();
@@ -165,11 +169,35 @@ public:
     return superblock.segment_size;
   }
 
+  device_id_t get_device_id() const final {
+    return device_id;
+  }
+
   // public so tests can bypass segment interface when simpler
   Segment::write_ertr::future<> segment_write(
     paddr_t addr,
     ceph::bufferlist bl,
     bool ignore_check=false);
+
+  boost::counting_iterator<
+    segment_id_t,
+    std::forward_iterator_tag,
+    device_segment_id_t> begin() final {
+    return boost::counting_iterator<
+      segment_id_t,
+      std::forward_iterator_tag,
+      device_segment_id_t>(segment_id_t{device_id, 0});
+  }
+
+  boost::counting_iterator<
+    segment_id_t,
+    std::forward_iterator_tag,
+    device_segment_id_t> end() final {
+    return boost::counting_iterator<
+      segment_id_t,
+      std::forward_iterator_tag,
+      device_segment_id_t>(segment_id_t{device_id, get_num_segments()});
+  }
 
 private:
   friend class BlockSegment;
@@ -213,9 +241,11 @@ private:
   block_sm_superblock_t superblock;
   seastar::file device;
 
+  device_id_t device_id = 0;
+
   size_t get_offset(paddr_t addr) {
     return superblock.first_segment_offset +
-      (addr.segment * superblock.segment_size) +
+      (addr.segment.internal_segment_id() * superblock.segment_size) +
       addr.offset;
   }
 

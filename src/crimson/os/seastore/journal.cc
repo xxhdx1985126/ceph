@@ -186,7 +186,6 @@ Journal::roll_journal_segment()
       crimson::ct_error::all_same_way([] { ceph_assert(0 == "TODO"); })
     );
 }
-
 Journal::open_for_write_ret Journal::open_for_write()
 {
   return roll_journal_segment().safe_then([this](auto seq) {
@@ -227,6 +226,7 @@ Journal::prep_replay_segments(
     [this](auto &seg) {
       segment_provider->init_mark_segment_closed(
 	seg.first,
+	segment_manager.get_num_segments(),
 	seg.second.journal_segment_seq,
 	false);
     });

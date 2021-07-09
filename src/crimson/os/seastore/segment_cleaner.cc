@@ -25,7 +25,7 @@ bool SpaceTrackerSimple::equals(const SpaceTrackerI &_other) const
   }
 
   bool all_match = true;
-  for (segment_id_t i = 0; i < live_bytes_by_segment.size(); ++i) {
+  for (internal_segment_id_t i = 0; i < live_bytes_by_segment.size(); ++i) {
     if (other.live_bytes_by_segment[i] != live_bytes_by_segment[i]) {
       all_match = false;
       logger().debug(
@@ -40,7 +40,7 @@ bool SpaceTrackerSimple::equals(const SpaceTrackerI &_other) const
 }
 
 int64_t SpaceTrackerDetailed::SegmentMap::allocate(
-  segment_id_t segment,
+  internal_segment_id_t segment,
   segment_off_t offset,
   extent_len_t len,
   const extent_len_t block_size)
@@ -72,7 +72,7 @@ int64_t SpaceTrackerDetailed::SegmentMap::allocate(
 }
 
 int64_t SpaceTrackerDetailed::SegmentMap::release(
-  segment_id_t segment,
+  internal_segment_id_t segment,
   segment_off_t offset,
   extent_len_t len,
   const extent_len_t block_size)
@@ -114,7 +114,7 @@ bool SpaceTrackerDetailed::equals(const SpaceTrackerI &_other) const
   }
 
   bool all_match = true;
-  for (segment_id_t i = 0; i < segment_usage.size(); ++i) {
+  for (internal_segment_id_t i = 0; i < segment_usage.size(); ++i) {
     if (other.segment_usage[i].get_usage() != segment_usage[i].get_usage()) {
       all_match = false;
       logger().error(
@@ -137,7 +137,7 @@ void SpaceTrackerDetailed::SegmentMap::dump_usage(extent_len_t block_size) const
   }
 }
 
-void SpaceTrackerDetailed::dump_usage(segment_id_t id) const
+void SpaceTrackerDetailed::dump_usage(internal_segment_id_t id) const
 {
   logger().debug("SpaceTrackerDetailed::dump_usage {}", id);
   segment_usage[id].dump_usage(block_size);
@@ -166,13 +166,14 @@ void SegmentCleaner::register_metrics()
 
 SegmentCleaner::get_segment_ret SegmentCleaner::get_segment()
 {
-  for (size_t i = 0; i < segments.size(); ++i) {
-    if (segments[i].is_empty()) {
-      mark_open(i);
+  for (internal_segment_id_t i = 0; i < segments.size(); ++i) {
+    auto& segment_info = segments[i];
+    if (segment_info.is_empty()) {
+      mark_open(segment_info.segment);
       logger().debug("{}: returning segment {}", __func__, i);
       return get_segment_ret(
 	get_segment_ertr::ready_future_marker{},
-	i);
+	segment_info.segment);
     }
   }
   assert(0 == "out of space handling todo");
@@ -382,8 +383,8 @@ SegmentCleaner::init_segments_ret SegmentCleaner::init_segments() {
     std::vector<std::pair<segment_id_t, segment_header_t>>(),
     [this](auto& segments) {
     return crimson::do_for_each(
-      boost::make_counting_iterator(segment_id_t{0}),
-      boost::make_counting_iterator(segment_id_t{num_segments}),
+      boost::make_counting_iterator(internal_segment_id_t{0}),
+      boost::make_counting_iterator(internal_segment_id_t{num_segments}),
       [this, &segments](auto segment_id) {
       return scanner->read_segment_header(segment_id)
       .safe_then([&segments, segment_id, this](auto header) {
@@ -391,6 +392,7 @@ SegmentCleaner::init_segments_ret SegmentCleaner::init_segments() {
 	  logger().debug("Scanner::init_segments: out-of-line segment {}", segment_id);
 	  init_mark_segment_closed(
 	    segment_id,
+	    num_segments,
 	    header.journal_segment_seq,
 	    true);
 	} else {

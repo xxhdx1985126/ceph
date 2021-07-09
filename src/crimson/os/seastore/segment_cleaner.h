@@ -24,6 +24,7 @@ struct segment_info_t {
   // Will be non-null for any segments in the current journal
   segment_seq_t journal_segment_seq = NULL_SEG_SEQ;
 
+  segment_id_t segment;
 
   bool out_of_line;
 
@@ -44,6 +45,92 @@ struct segment_info_t {
   bool is_open() const {
     return state == Segment::segment_state_t::OPEN;
   }
+};
+
+struct segment_manager_info_t {
+  device_id_t device_id = 0;
+  internal_segment_id_t num_segments = 0;
+  internal_segment_id_t segment_offset = 0;
+};
+
+class segment_info_set_t {
+public:
+  segment_info_t& operator[](segment_id_t id) {
+    auto d_id = id.device_id();
+    auto& sm_info = sm_info_map[d_id];
+    assert(sm_info);
+    assert(sm_info->device_id == d_id);
+    auto segment_off = sm_info->segment_offset + id.internal_segment_id();
+    auto& segment_info = segments[segment_off];
+    assert(segment_info.segment == id);
+    return segment_info;
+  }
+  const segment_info_t& operator[](segment_id_t id) const {
+    auto d_id = id.device_id();
+    auto& sm_info = sm_info_map.at(d_id);
+    assert(sm_info);
+    assert(sm_info->device_id == d_id);
+    auto segment_off = sm_info->segment_offset + id.internal_segment_id();
+    auto& segment_info = segments[segment_off];
+    assert(segment_info.segment == id);
+    return segment_info;
+  }
+  std::optional<segment_manager_info_t>& operator[](device_id_t id) {
+    auto& sm_info = sm_info_map[id];
+    assert(!sm_info || sm_info->device_id == id);
+    return sm_info;
+  }
+  segment_info_t& operator[](internal_segment_id_t pos) {
+    return segments[pos];
+  }
+  void clear() {
+    segments.clear();
+    sm_info_map.clear();
+  }
+  void resize(std::vector<SegmentManager*> sms) {
+    assert(segments.empty() && sm_info_map.empty());
+    internal_segment_id_t num_segments = 0;
+    for (device_id_t i = 0; i < sms.size(); i++) {
+      // segment managers need to be added in the order of device id
+      assert(i > 0 ? sms[i]->get_device_id() > sms[i-1]->get_device_id() : 1);
+      sm_info_map.try_emplace(
+	sms[i]->get_device_id(),
+	std::make_optional<segment_manager_info_t>({sms[i]->get_device_id(),
+	sms[i]->get_num_segments(),
+	(i ?
+	  sm_info_map[i-1]->segment_offset + sm_info_map[i-1]->num_segments :
+	  0)}));
+      auto total_segments = num_segments + sms[i]->get_num_segments();
+      segments.resize(total_segments);
+      for (internal_segment_id_t j = num_segments; j < total_segments; j++) {
+	segments[j].segment = j - num_segments;
+      }
+      num_segments = total_segments;
+    }
+  }
+  internal_segment_id_t size() const {
+#ifndef NDEBUG
+    internal_segment_id_t size;
+    if (sm_info_map.empty()) {
+      assert(segments.empty());
+      return 0;
+    }
+    auto& sm_info = sm_info_map.rbegin()->second;
+    size = sm_info->segment_offset + sm_info->num_segments;
+    assert(size == segments.size());
+    return size;
+  }
+#else
+  return segments.size();
+#endif
+  internal_segment_id_t segment_pos(segment_id_t id) {
+    auto d_id = id.device_id();
+    auto& sm_info = sm_info_map[d_id];
+    return sm_info->segment_offset + id.internal_segment_id();
+  }
+private:
+  std::vector<segment_info_t> segments;
+  std::map<device_id_t, std::optional<segment_manager_info_t>> sm_info_map;
 };
 
 /**
@@ -67,6 +154,7 @@ public:
 
   virtual void init_mark_segment_closed(
     segment_id_t segment,
+    internal_segment_id_t num_segments_by_sm,
     segment_seq_t seq,
     bool out_of_line) {}
 
@@ -78,23 +166,23 @@ public:
 class SpaceTrackerI {
 public:
   virtual int64_t allocate(
-    segment_id_t segment,
+    internal_segment_id_t segment,
     segment_off_t offset,
     extent_len_t len) = 0;
 
   virtual int64_t release(
-    segment_id_t segment,
+    internal_segment_id_t segment,
     segment_off_t offset,
     extent_len_t len) = 0;
 
   virtual int64_t get_usage(
-    segment_id_t segment) const = 0;
+    internal_segment_id_t segment) const = 0;
 
   virtual bool equals(const SpaceTrackerI &other) const = 0;
 
   virtual std::unique_ptr<SpaceTrackerI> make_empty() const = 0;
 
-  virtual void dump_usage(segment_id_t) const = 0;
+  virtual void dump_usage(internal_segment_id_t) const = 0;
 
   virtual void reset() = 0;
 
@@ -106,36 +194,36 @@ class SpaceTrackerSimple : public SpaceTrackerI {
   // Tracks live space for each segment
   std::vector<int64_t> live_bytes_by_segment;
 
-  int64_t update_usage(segment_id_t segment, int64_t delta) {
+  int64_t update_usage(internal_segment_id_t segment, int64_t delta) {
     assert(segment < live_bytes_by_segment.size());
     live_bytes_by_segment[segment] += delta;
     assert(live_bytes_by_segment[segment] >= 0);
     return live_bytes_by_segment[segment];
   }
 public:
-  SpaceTrackerSimple(segment_id_t num_segments)
+  SpaceTrackerSimple(internal_segment_id_t num_segments)
     : live_bytes_by_segment(num_segments, 0) {}
 
   int64_t allocate(
-    segment_id_t segment,
+    internal_segment_id_t segment,
     segment_off_t offset,
     extent_len_t len) final {
     return update_usage(segment, len);
   }
 
   int64_t release(
-    segment_id_t segment,
+    internal_segment_id_t segment,
     segment_off_t offset,
     extent_len_t len) final {
     return update_usage(segment, -len);
   }
 
-  int64_t get_usage(segment_id_t segment) const final {
+  int64_t get_usage(internal_segment_id_t segment) const final {
     assert(segment < live_bytes_by_segment.size());
     return live_bytes_by_segment[segment];
   }
 
-  void dump_usage(segment_id_t) const final {}
+  void dump_usage(internal_segment_id_t) const final {}
 
   void reset() final {
     for (auto &i: live_bytes_by_segment)
@@ -156,7 +244,7 @@ class SpaceTrackerDetailed : public SpaceTrackerI {
     std::vector<bool> bitmap;
 
   public:
-    SegmentMap(size_t blocks) : bitmap(blocks, false) {}
+    SegmentMap(internal_segment_id_t blocks) : bitmap(blocks, false) {}
 
     int64_t update_usage(int64_t delta) {
       used += delta;
@@ -164,13 +252,13 @@ class SpaceTrackerDetailed : public SpaceTrackerI {
     }
 
     int64_t allocate(
-      segment_id_t segment,
+      internal_segment_id_t segment,
       segment_off_t offset,
       extent_len_t len,
       const extent_len_t block_size);
 
     int64_t release(
-      segment_id_t segment,
+      internal_segment_id_t segment,
       segment_off_t offset,
       extent_len_t len,
       const extent_len_t block_size);
@@ -195,13 +283,13 @@ class SpaceTrackerDetailed : public SpaceTrackerI {
   std::vector<SegmentMap> segment_usage;
 
 public:
-  SpaceTrackerDetailed(segment_id_t num_segments, size_t segment_size, size_t block_size)
+  SpaceTrackerDetailed(internal_segment_id_t num_segments, size_t segment_size, size_t block_size)
     : block_size(block_size),
       segment_size(segment_size),
       segment_usage(num_segments, segment_size / block_size) {}
 
   int64_t allocate(
-    segment_id_t segment,
+    internal_segment_id_t segment,
     segment_off_t offset,
     extent_len_t len) final {
     assert(segment < segment_usage.size());
@@ -209,19 +297,19 @@ public:
   }
 
   int64_t release(
-    segment_id_t segment,
+    internal_segment_id_t segment,
     segment_off_t offset,
     extent_len_t len) final {
     assert(segment < segment_usage.size());
     return segment_usage[segment].release(segment, offset, len, block_size);
   }
 
-  int64_t get_usage(segment_id_t segment) const final {
+  int64_t get_usage(internal_segment_id_t segment) const final {
     assert(segment < segment_usage.size());
     return segment_usage[segment].get_usage();
   }
 
-  void dump_usage(segment_id_t seg) const final;
+  void dump_usage(internal_segment_id_t seg) const final;
 
   void reset() final {
     for (auto &i: segment_usage)
@@ -380,14 +468,15 @@ private:
   const bool detailed;
   const config_t config;
 
-  segment_id_t num_segments = 0;
+  internal_segment_id_t num_segments = 0;
   size_t segment_size = 0;
   size_t block_size = 0;
+
 
   ScannerRef scanner;
 
   SpaceTrackerIRef space_tracker;
-  std::vector<segment_info_t> segments;
+  segment_info_set_t segments;
   size_t empty_segments;
   int64_t used_bytes = 0;
   bool init_complete = false;
@@ -439,7 +528,7 @@ public:
 	num_segments));
 
     segments.clear();
-    segments.resize(num_segments);
+    segments.resize({&sm});
     empty_segments = num_segments;
   }
 
@@ -456,7 +545,10 @@ public:
 
   void set_journal_segment(
     segment_id_t segment, segment_seq_t seq) final {
-    assert(segment < segments.size());
+    assert(segment.device_id() ==
+      segments[segment.device_id()]->device_id);
+    assert(segment.internal_segment_id() <
+      segments[segment.device_id()]->num_segments);
     segments[segment].journal_segment_seq = seq;
     assert(segments[segment].is_open());
   }
@@ -491,6 +583,8 @@ public:
 
   void init_mark_segment_closed(
     segment_id_t segment,
+    // number of segments of the current segment manager
+    internal_segment_id_t num_segments_by_sm,
     segment_seq_t seq,
     bool out_of_line) final
   {
@@ -516,14 +610,17 @@ public:
     paddr_t addr,
     extent_len_t len,
     bool init_scan = false) {
-    assert(addr.segment < segments.size());
+    assert(addr.segment.device_id() ==
+      segments[addr.segment.device_id()]->device_id);
+    assert(addr.segment.internal_segment_id() <
+      segments[addr.segment.device_id()]->num_segments);
 
     if (!init_scan && !init_complete)
       return;
 
     used_bytes += len;
     [[maybe_unused]] auto ret = space_tracker->allocate(
-      addr.segment,
+      segments.segment_pos(addr.segment),
       addr.offset,
       len);
     gc_process.maybe_wake_on_space_used();
@@ -537,10 +634,13 @@ public:
       return;
 
     used_bytes -= len;
-    assert(addr.segment < segments.size());
+    assert(addr.segment.device_id() ==
+      segments[addr.segment.device_id()]->device_id);
+    assert(addr.segment.internal_segment_id() <
+      segments[addr.segment.device_id()]->num_segments);
 
     [[maybe_unused]] auto ret = space_tracker->release(
-      addr.segment,
+      segments.segment_pos(addr.segment),
       addr.offset,
       len);
     maybe_wake_gc_blocked_io();
@@ -549,12 +649,14 @@ public:
 
   segment_id_t get_next_gc_target() const {
     segment_id_t ret = NULL_SEG_ID;
+    segment_seq_t seq = NULL_SEG_SEQ;
     int64_t least_live_bytes = std::numeric_limits<int64_t>::max();
-    for (segment_id_t i = 0; i < segments.size(); ++i) {
+    for (internal_segment_id_t i = 0; i < segments.size(); ++i) {
       if (segments[i].is_closed() &&
 	  !segments[i].is_in_journal(journal_tail_committed) &&
 	  space_tracker->get_usage(i) < least_live_bytes) {
-	ret = i;
+	ret = segments[i].segment;
+	seq = segments[i].journal_segment_seq;
 	least_live_bytes = space_tracker->get_usage(i);
       }
     }
@@ -562,7 +664,7 @@ public:
       crimson::get_logger(ceph_subsys_seastore).debug(
 	"SegmentCleaner::get_next_gc_target: segment {} seq {}",
 	ret,
-	segments[ret].journal_segment_seq);
+	seq);
     }
     return ret;
   }
@@ -930,7 +1032,10 @@ private:
   }
 
   void mark_closed(segment_id_t segment) {
-    assert(segments.size() > segment);
+    assert(segment.device_id() ==
+      segments[segment.device_id()]->device_id);
+    assert(segment.internal_segment_id() <
+      segments[segment.device_id()]->num_segments);
     if (init_complete) {
       assert(segments[segment].is_open());
     } else {
@@ -945,20 +1050,25 @@ private:
   }
 
   void mark_empty(segment_id_t segment) {
-    assert(segments.size() > segment);
+    assert(segment.device_id() ==
+      segments[segment.device_id()]->device_id);
+    assert(segment.internal_segment_id() <
+      segments[segment.device_id()]->num_segments);
     assert(segments[segment].is_closed());
-    assert(segments.size() > empty_segments);
     ++empty_segments;
-    if (space_tracker->get_usage(segment) != 0) {
-      space_tracker->dump_usage(segment);
-      assert(space_tracker->get_usage(segment) == 0);
+    if (space_tracker->get_usage(segments.segment_pos(segment)) != 0) {
+      space_tracker->dump_usage(segments.segment_pos(segment));
+      assert(space_tracker->get_usage(segments.segment_pos(segment)) == 0);
     }
     segments[segment].state = Segment::segment_state_t::EMPTY;
     maybe_wake_gc_blocked_io();
   }
 
   void mark_open(segment_id_t segment) {
-    assert(segments.size() > segment);
+    assert(segment.device_id() ==
+      segments[segment.device_id()]->device_id);
+    assert(segment.internal_segment_id() <
+      segments[segment.device_id()]->num_segments);
     assert(segments[segment].is_empty());
     assert(empty_segments > 0);
     --empty_segments;
