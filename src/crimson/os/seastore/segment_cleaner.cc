@@ -143,9 +143,13 @@ void SpaceTrackerDetailed::dump_usage(segment_id_t id) const
   segment_usage[id].dump_usage(block_size);
 }
 
-SegmentCleaner::SegmentCleaner(config_t config, bool detailed)
+SegmentCleaner::SegmentCleaner(
+  config_t config,
+  bool detailed,
+  uint16_t segment_manager_id)
   : detailed(detailed),
     config(config),
+    segment_manager_id(segment_manager_id),
     gc_process(*this)
 {
   register_metrics();
@@ -168,7 +172,7 @@ SegmentCleaner::get_segment_ret SegmentCleaner::get_segment()
       logger().debug("{}: returning segment {}", __func__, i);
       return get_segment_ret(
 	get_segment_ertr::ready_future_marker{},
-	i);
+	add_segment_manager_id(i, segment_manager_id));
     }
   }
   assert(0 == "out of space handling todo");

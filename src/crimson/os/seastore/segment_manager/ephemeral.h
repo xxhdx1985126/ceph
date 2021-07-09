@@ -65,9 +65,18 @@ class EphemeralSegmentManager final : public SegmentManager {
 
   Segment::close_ertr::future<> segment_close(segment_id_t id);
 
+  segment_manager_id_t segment_manager_id = 0;
+
 public:
-  EphemeralSegmentManager(ephemeral_config_t config) : config(config) {}
+  EphemeralSegmentManager(
+    ephemeral_config_t config,
+    segment_manager_id_t segment_manager_id = 0)
+    : config(config), segment_manager_id(segment_manager_id) {}
   ~EphemeralSegmentManager();
+
+  segment_manager_id_t get_segment_manager_id() const {
+    return segment_manager_id;
+  }
 
   using init_ertr = crimson::errorator<
     crimson::ct_error::enospc,

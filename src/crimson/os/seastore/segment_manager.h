@@ -134,6 +134,8 @@ public:
   }
   virtual const seastore_meta_t &get_meta() const = 0;
 
+  virtual uint8_t get_segment_manager_id() const = 0;
+
   virtual ~SegmentManager() {}
 };
 using SegmentManagerRef = std::unique_ptr<SegmentManager>;

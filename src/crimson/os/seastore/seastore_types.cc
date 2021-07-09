@@ -97,6 +97,20 @@ std::ostream &operator<<(std::ostream &out, const paddr_list_t &rhs)
   return out << ']';
 }
 
+uint8_t get_segment_manager_id(segment_id_t id) {
+  return (uint16_t)((id & SM_ID_MASK) >>
+      (sizeof(segment_id_t) - segment_manager_id_len));
+}
+
+segment_id_t add_segment_manager_id(segment_id_t id, uint16_t sm_id) {
+  return id + (sm_id <<
+      (sizeof(segment_id_t) - segment_manager_id_len));
+}
+
+segment_id_t strip_segment_manager_id(segment_id_t id) {
+  return id & (~SM_ID_MASK);
+}
+
 std::ostream &operator<<(std::ostream &lhs, const delta_info_t &rhs)
 {
   return lhs << "delta_info_t("
