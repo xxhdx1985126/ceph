@@ -305,7 +305,7 @@ read_superblock(seastar::file &device, seastar::stat_data sd)
 
 BlockSegment::BlockSegment(
   BlockSegmentManager &manager, segment_id_t id)
-  : manager(manager), id(id) {}
+  : manager(manager), id(strip_device_id(id)) {}
 
 segment_off_t BlockSegment::get_write_capacity() const
 {
@@ -333,6 +333,8 @@ Segment::write_ertr::future<> BlockSegment::write(
 Segment::close_ertr::future<> BlockSegmentManager::segment_close(
     segment_id_t id, segment_off_t write_pointer)
 {
+  assert(crimson::os::seastore::get_device_id(id) == device_id);
+  id = strip_device_id(id);
   assert(tracker);
   tracker->set(id, segment_state_t::CLOSED);
   ++stats.closed_segments;
@@ -441,6 +443,8 @@ BlockSegmentManager::close_ertr::future<> BlockSegmentManager::close()
 SegmentManager::open_ertr::future<SegmentRef> BlockSegmentManager::open(
   segment_id_t id)
 {
+  assert(crimson::os::seastore::get_device_id(id) == device_id);
+  id = strip_device_id(id);
   if (id >= get_num_segments()) {
     logger().error("BlockSegmentManager::open: invalid segment {}", id);
     return crimson::ct_error::invarg::make();
@@ -468,6 +472,8 @@ SegmentManager::open_ertr::future<SegmentRef> BlockSegmentManager::open(
 SegmentManager::release_ertr::future<> BlockSegmentManager::release(
   segment_id_t id)
 {
+  assert(crimson::os::seastore::get_device_id(id) == device_id);
+  id = strip_device_id(id);
   logger().debug("BlockSegmentManager::release: {}", id);
 
   if (id >= get_num_segments()) {
