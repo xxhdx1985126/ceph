@@ -145,13 +145,16 @@ void SpaceTrackerDetailed::dump_usage(segment_id_t id) const
 
 SegmentCleaner::SegmentCleaner(
   config_t config,
+  ScannerRef&& scr,
   bool detailed,
   device_id_t device_id)
   : detailed(detailed),
     config(config),
+    scanner(std::move(scr)),
     device_id(device_id),
     gc_process(*this)
 {
+  scanner->segment_cleaner = this;
   register_metrics();
 }
 
@@ -313,7 +316,7 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
     }
     next.offset = 0;
     scan_cursor =
-      std::make_unique<ExtentCallbackInterface::scan_extents_cursor>(
+      std::make_unique<Scanner::scan_extents_cursor>(
 	next);
     logger().debug(
       "SegmentCleaner::do_gc: starting gc on segment {}",
@@ -322,7 +325,7 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
     ceph_assert(!scan_cursor->is_complete());
   }
 
-  return ecb->scan_extents(
+  return scanner->scan_extents(
     *scan_cursor,
     config.reclaim_bytes_stride
   ).safe_then([this](auto &&_extents) {
