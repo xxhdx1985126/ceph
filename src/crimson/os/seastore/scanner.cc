@@ -347,7 +347,7 @@ Scanner::init_segments() {
       .safe_then([&segments, segment_id, this](auto header) {
 	if (header.out_of_line) {
           logger().debug("Scanner::init_segments: out-of-line segment {}", segment_id);
-	  segment_cleaner->init_mark_segment_closed(segment_id, header.journal_segment_seq);
+	  segment_cleaner->init_mark_segment_closed(segment_id, header.journal_segment_seq, true);
 	} else {
           logger().debug("Scanner::init_segments: journal segment {}", segment_id);
 	  segments.emplace_back(std::make_pair(segment_id, std::move(header)));
