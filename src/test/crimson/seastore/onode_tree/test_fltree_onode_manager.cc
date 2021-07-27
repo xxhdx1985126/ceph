@@ -84,14 +84,17 @@ struct fltree_onode_manager_test_t
     ).then([this] {
       return tm->mount(
       ).safe_then([this] {
-	return seastar::do_with(
-	  create_mutate_transaction(),
-	  [this](auto &t) {
-	    return manager->mkfs(*t
-	    ).safe_then([this, &t] {
-	      return submit_transaction_fut(*t);
+	return repeat_eagain([this] {
+	  return seastar::do_with(
+	    create_mutate_transaction(),
+	    [this](auto &t) {
+	      logger().debug("submitting");
+	      return manager->mkfs(*t
+	      ).safe_then([this, &t] {
+		return submit_transaction_fut(*t);
+	      });
 	    });
-	  });
+	});
       }).safe_then([this] {
 	return tm->close();
       }).handle_error(
