@@ -187,9 +187,10 @@ SegmentCleaner::get_segment_ret SegmentCleaner::get_segment()
 void SegmentCleaner::update_journal_tail_target(journal_seq_t target)
 {
   logger().debug(
-    "{}: {}",
+    "{}: {}, current tail target {}",
     __func__,
-    target);
+    target,
+    journal_tail_target);
   assert(journal_tail_target == journal_seq_t() || target >= journal_tail_target);
   if (journal_tail_target == journal_seq_t() || target > journal_tail_target) {
     journal_tail_target = target;
