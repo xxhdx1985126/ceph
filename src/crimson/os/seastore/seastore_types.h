@@ -266,6 +266,7 @@ enum device_type_t {
 };
 
 bool need_delayed_allocation(device_type_t type);
+std::string device_type_name(device_type_t dtype);
 
 /* Monotonically increasing identifier for the location of a
  * journal_record.
@@ -884,3 +885,40 @@ WRITE_CLASS_DENC_BOUNDED(crimson::os::seastore::delta_info_t)
 WRITE_CLASS_DENC_BOUNDED(crimson::os::seastore::record_header_t)
 WRITE_CLASS_DENC_BOUNDED(crimson::os::seastore::extent_info_t)
 WRITE_CLASS_DENC_BOUNDED(crimson::os::seastore::segment_header_t)
+
+template<>
+struct denc_traits<crimson::os::seastore::device_type_t> {
+  static constexpr bool supported = true;
+  static constexpr bool featured = false;
+  static constexpr bool bounded = true;
+  static constexpr bool need_contiguous = false;
+
+  static void bound_encode(
+    const crimson::os::seastore::device_type_t &o,
+    size_t& p,
+    uint64_t f=0) {
+    p += sizeof(crimson::os::seastore::device_type_t);
+  }
+  template<class It>
+  static std::enable_if_t<!is_const_iterator_v<It>>
+  encode(
+    const crimson::os::seastore::device_type_t &o,
+    It& p,
+    uint64_t f=0) {
+    get_pos_add<crimson::os::seastore::device_type_t>(p) = o;
+  }
+  template<class It>
+  static std::enable_if_t<is_const_iterator_v<It>>
+  decode(
+    crimson::os::seastore::device_type_t& o,
+    It& p,
+    uint64_t f=0) {
+    o = get_pos_add<crimson::os::seastore::device_type_t>(p);
+  }
+  static void decode(
+    crimson::os::seastore::device_type_t& o,
+    ceph::buffer::list::const_iterator &p) {
+    p.copy(sizeof(crimson::os::seastore::device_type_t),
+	   reinterpret_cast<char*>(&o));
+  }
+};

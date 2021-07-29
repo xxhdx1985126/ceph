@@ -38,12 +38,13 @@ struct btree_lba_manager_test :
 
   btree_lba_manager_test()
     : segment_manager(segment_manager::create_test_ephemeral()),
-      scanner(new Scanner(*segment_manager)),
+      scanner(new Scanner()),
       journal(*segment_manager, *scanner),
-      cache(*segment_manager),
+      cache(*scanner),
       lba_manager(new BtreeLBAManager(*segment_manager, cache)),
       block_size(segment_manager->get_block_size())
   {
+    scanner->add_segment_manager(segment_manager.get());
     journal.set_segment_provider(this);
     journal.set_write_pipeline(&pipeline);
   }

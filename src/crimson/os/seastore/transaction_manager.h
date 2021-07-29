@@ -31,6 +31,7 @@
 
 namespace crimson::os::seastore {
 class Journal;
+class SeaStore;
 
 template <typename F>
 auto repeat_eagain(F &&f) {
@@ -554,6 +555,7 @@ private:
   rewrite_extent_ret rewrite_logical_extent(
     Transaction& t,
     LogicalCachedExtentRef extent);
+
 public:
   // Testing interfaces
   auto get_segment_cleaner() {
@@ -563,6 +565,11 @@ public:
   auto get_lba_manager() {
     return lba_manager.get();
   }
+
+  auto get_extent_placement_manager() {
+    return epm.get();
+  }
+  friend class crimson::os::seastore::SeaStore;
 };
 using TransactionManagerRef = std::unique_ptr<TransactionManager>;
 

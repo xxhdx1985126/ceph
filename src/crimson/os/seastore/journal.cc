@@ -361,7 +361,7 @@ Journal::replay_segment(
 	crimson::ct_error::assert_all{
 	  "shouldn't meet with any other error other replay_ertr"
 	}
-      );;
+      );
     });
 }
 

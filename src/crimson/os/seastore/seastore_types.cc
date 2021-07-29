@@ -216,4 +216,19 @@ bool need_delayed_allocation(device_type_t type) {
   return type <= RANDOM_BLOCK;
 }
 
+std::string device_type_name(device_type_t dtype) {
+  switch(dtype) {
+  case device_type_t::NONE:
+    return "none";
+  case device_type_t::SEGMENTED:
+    return "segmented";
+  case device_type_t::RANDOM_BLOCK:
+    return "random_block";
+  case device_type_t::PMEM:
+    return "pmen";
+  default:
+    return "unknown";
+  }
+}
+
 }

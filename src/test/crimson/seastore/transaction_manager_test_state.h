@@ -70,14 +70,14 @@ protected:
 
 auto get_transaction_manager(
   SegmentManager &segment_manager) {
-  auto scanner = std::make_unique<Scanner>(segment_manager);
+  auto scanner = std::make_unique<Scanner>();
   auto& scanner_ref = *scanner.get();
   auto segment_cleaner = std::make_unique<SegmentCleaner>(
     SegmentCleaner::config_t::get_default(),
     std::move(scanner),
     true);
   auto journal = std::make_unique<Journal>(segment_manager, scanner_ref);
-  auto cache = std::make_unique<Cache>(segment_manager);
+  auto cache = std::make_unique<Cache>(scanner_ref);
   auto lba_manager = lba_manager::create_lba_manager(segment_manager, *cache);
 
   auto epm = std::make_unique<ExtentPlacementManager>(*cache, *lba_manager);
@@ -89,6 +89,8 @@ auto get_transaction_manager(
       segment_manager,
       *lba_manager,
       *journal));
+
+  scanner_ref.add_segment_manager(&segment_manager);
 
   journal->set_segment_provider(&*segment_cleaner);
 
@@ -105,10 +107,13 @@ auto get_seastore(SegmentManagerRef sm) {
   auto tm = get_transaction_manager(*sm);
   auto cm = std::make_unique<collection_manager::FlatCollectionManager>(*tm);
   return std::make_unique<SeaStore>(
+    "empty_path",
     std::move(sm),
     std::move(tm),
     std::move(cm),
-    std::make_unique<crimson::os::seastore::onode::FLTreeOnodeManager>(*tm));
+    std::make_unique<crimson::os::seastore::onode::FLTreeOnodeManager>(*tm),
+    *tm->get_extent_placement_manager(),
+    *tm->get_segment_cleaner()->get_scanner());
 }
 
 
@@ -190,22 +195,44 @@ protected:
 
 class TestSegmentManagerWrapper final : public SegmentManager {
   SegmentManager &sm;
-  device_id_t device_id = 0;
 public:
   TestSegmentManagerWrapper(
-    SegmentManager &sm,
-    device_id_t device_id = 0)
-    : sm(sm), device_id(device_id) {}
+    SegmentManager &sm)
+    : sm(sm) {}
 
   device_id_t get_device_id() const {
-    return device_id;
+    return sm.get_device_id();
+  }
+
+  close_ertr::future<> close() final {
+    return close_ertr::now();
+  }
+
+  secondary_device_set_t& get_secondary_devices() final {
+    return sm.get_secondary_devices();
+  }
+
+  device_spec_t get_device_spec() const final {
+    return sm.get_device_spec();
+  }
+  
+  magic_t get_magic() const final {
+    return sm.get_magic();
+  }
+
+  boost::counting_iterator<segment_id_t> begin() final {
+    return sm.begin();
+  }
+
+  boost::counting_iterator<segment_id_t> end() final {
+    return sm.end();
   }
 
   mount_ret mount() final {
     return mount_ertr::now(); // we handle this above
   }
 
-  mkfs_ret mkfs(seastore_meta_t c) final {
+  mkfs_ret mkfs(segment_manager_config_t c) final {
     return mkfs_ertr::now(); // we handle this above
   }
 

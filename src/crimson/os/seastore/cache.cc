@@ -18,8 +18,8 @@
 
 namespace crimson::os::seastore {
 
-Cache::Cache(SegmentManager &segment_manager) :
-  segment_manager(segment_manager)
+Cache::Cache(ExtentReader &extent_reader) :
+  extent_reader(extent_reader)
 {
   register_metrics();
 }

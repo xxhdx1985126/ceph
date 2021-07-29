@@ -32,14 +32,20 @@ using crimson::common::local_conf;
 namespace crimson::os::seastore {
 
 SeaStore::SeaStore(
+  std::string path_root,
   SegmentManagerRef sm,
   TransactionManagerRef tm,
   CollectionManagerRef cm,
-  OnodeManagerRef om)
-  : segment_manager(std::move(sm)),
+  OnodeManagerRef om,
+  ExtentPlacementManager& epm,
+  Scanner& scanner)
+  : primary_segment_manager(std::move(sm)),
     transaction_manager(std::move(tm)),
     collection_manager(std::move(cm)),
-    onode_manager(std::move(om))
+    onode_manager(std::move(om)),
+    path_root(path_root),
+    epm(epm),
+    scanner(scanner)
 {
   register_metrics();
 }
@@ -87,8 +93,38 @@ seastar::future<> SeaStore::stop()
 
 seastar::future<> SeaStore::mount()
 {
-  return segment_manager->mount(
+  ::crimson::get_logger(ceph_subsys_seastore).debug("seastore mount");
+  return primary_segment_manager->mount(
   ).safe_then([this] {
+    auto& sec_devices = primary_segment_manager->get_secondary_devices();
+    return crimson::do_for_each(sec_devices, [this](auto& p) {
+      auto& spec = p.second;
+      auto dtype = std::get<1>(spec);
+      auto device_id = std::get<2>(spec);
+      auto secondary_sm = std::make_unique<
+	segment_manager::block::BlockSegmentManager
+	>(path_root + "/block." + device_type_name(dtype)
+	    + "." + std::to_string(device_id));
+      secondary_segment_managers.emplace_back(std::move(secondary_sm));
+      auto& segment_manager = *secondary_segment_managers.back();
+
+      auto& tm = transaction_manager->get_tm();
+      epm.add_allocator(
+	device_type_t::SEGMENTED,
+	std::make_unique<SegmentedAllocator>(
+	  *tm.segment_cleaner,
+	  segment_manager,
+	  *tm.lba_manager,
+	  *tm.journal));
+
+      scanner.add_segment_manager(&segment_manager);
+      return segment_manager.mount().safe_then([&segment_manager, &spec] {
+	device_spec_t spec2 = segment_manager.get_device_spec();
+	ceph_assert(spec2 == spec);
+	return seastar::now();
+      });
+    });
+  }).safe_then([this] {
     return transaction_manager->mount();
   }).handle_error(
     crimson::ct_error::assert_all{
@@ -99,8 +135,17 @@ seastar::future<> SeaStore::mount()
 
 seastar::future<> SeaStore::umount()
 {
+  ::crimson::get_logger(ceph_subsys_seastore).debug("seastore umount");
   return transaction_manager->close(
-  ).handle_error(
+  ).safe_then([this] {
+    return crimson::do_for_each(
+      secondary_segment_managers,
+      [](auto& segment_manager) {
+      return segment_manager->close();
+    }).safe_then([this] {
+      return primary_segment_manager->close();
+    });
+  }).handle_error(
     crimson::ct_error::assert_all{
       "Invalid error in SeaStore::umount"
     }
@@ -109,10 +154,43 @@ seastar::future<> SeaStore::umount()
 
 seastar::future<> SeaStore::mkfs(uuid_d new_osd_fsid)
 {
-  return segment_manager->mkfs(
-    seastore_meta_t{new_osd_fsid}
-  ).safe_then([this] {
-    return segment_manager->mount();
+  seastore_meta_t meta{new_osd_fsid};
+
+  return seastar::do_with(
+    secondary_device_set_t(),
+    device_type_t::SEGMENTED,
+    1,
+    [this, new_osd_fsid, meta](auto& devices, device_type_t dtype, device_id_t device_id) {
+    auto secondary_sm = std::make_unique<
+      segment_manager::block::BlockSegmentManager
+      >(path_root + "/block." + device_type_name(dtype) + "." + std::to_string(device_id));
+
+    magic_t magic = std::rand();
+    devices.emplace(
+      device_id,
+      std::make_tuple(
+	magic, dtype, device_id));
+    secondary_segment_managers.emplace_back(std::move(secondary_sm));
+    return secondary_segment_managers.back()->mkfs(
+      segment_manager_config_t{
+	false,
+	magic,
+	dtype,
+	device_id++,
+	meta
+    }).safe_then([this, &devices, new_osd_fsid, meta] {
+      return primary_segment_manager->mkfs(
+	segment_manager_config_t{
+	  true,
+	  (magic_t)std::rand(),
+	  device_type_t::SEGMENTED,
+	  0,
+	  meta,
+	  std::move(devices)
+	});
+    });
+  }).safe_then([this] {
+    return primary_segment_manager->mount();
   }).safe_then([this] {
     return transaction_manager->mkfs();
   }).safe_then([this] {
@@ -1188,7 +1266,7 @@ seastar::future<std::tuple<int, std::string>> SeaStore::read_meta(const std::str
 
 uuid_d SeaStore::get_fsid() const
 {
-  return segment_manager->get_meta().seastore_id;
+  return primary_segment_manager->get_meta().seastore_id;
 }
 
 std::unique_ptr<SeaStore> make_seastore(
@@ -1199,7 +1277,8 @@ std::unique_ptr<SeaStore> make_seastore(
     segment_manager::block::BlockSegmentManager
     >(device + "/block");
 
-  auto scanner = std::make_unique<Scanner>(*sm);
+  auto scanner = std::make_unique<Scanner>();
+  scanner->add_segment_manager(sm.get());
   auto& scanner_ref = *scanner.get();
   auto segment_cleaner = std::make_unique<SegmentCleaner>(
     SegmentCleaner::config_t::get_default(),
@@ -1207,7 +1286,7 @@ std::unique_ptr<SeaStore> make_seastore(
     false /* detailed */);
 
   auto journal = std::make_unique<Journal>(*sm, scanner_ref);
-  auto cache = std::make_unique<Cache>(*sm);
+  auto cache = std::make_unique<Cache>(scanner_ref);
   auto lba_manager = lba_manager::create_lba_manager(*sm, *cache);
 
   auto epm = std::make_unique<ExtentPlacementManager>(*cache, *lba_manager);
@@ -1219,6 +1298,8 @@ std::unique_ptr<SeaStore> make_seastore(
       *sm,
       *lba_manager,
       *journal));
+
+  auto& epm_ref = *epm.get();
 
   journal->set_segment_provider(&*segment_cleaner);
 
@@ -1232,10 +1313,13 @@ std::unique_ptr<SeaStore> make_seastore(
 
   auto cm = std::make_unique<collection_manager::FlatCollectionManager>(*tm);
   return std::make_unique<SeaStore>(
+    std::move(device),
     std::move(sm),
     std::move(tm),
     std::move(cm),
-    std::make_unique<crimson::os::seastore::onode::FLTreeOnodeManager>(*tm));
+    std::make_unique<crimson::os::seastore::onode::FLTreeOnodeManager>(*tm),
+    epm_ref,
+    scanner_ref);
 }
 
 }

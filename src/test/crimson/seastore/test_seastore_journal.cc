@@ -79,7 +79,7 @@ struct journal_test_t : seastar_test_suite_t, SegmentProvider {
   journal_test_t()
     : segment_manager(segment_manager::create_test_ephemeral()),
       block_size(segment_manager->get_block_size()),
-      scanner(std::make_unique<Scanner>(*segment_manager))
+      scanner(std::make_unique<Scanner>())
   {
   }
 
@@ -121,7 +121,7 @@ struct journal_test_t : seastar_test_suite_t, SegmentProvider {
 	  boost::make_counting_iterator(segment_id_t{0}),
 	  boost::make_counting_iterator(segment_manager->get_num_segments()),
 	  [this, &segments](auto segment_id) {
-	  return scanner->read_segment_header(segment_id)
+	  return scanner->read_segment_header(*segment_manager, segment_id)
 	  .safe_then([&segments, segment_id](auto header) {
 	    if (!header.out_of_line) {
 	      segments.emplace_back(std::make_pair(segment_id, std::move(header)));

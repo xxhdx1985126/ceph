@@ -872,6 +872,10 @@ public:
 	return blocked_io_wake->get_future();
       });
   }
+
+  auto get_scanner() {
+    return scanner.get();
+  }
 private:
   void maybe_wake_gc_blocked_io() {
     if (!should_block_on_gc() && blocked_io_wake) {

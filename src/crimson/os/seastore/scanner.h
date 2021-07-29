@@ -5,13 +5,13 @@
 
 #include "crimson/common/errorator.h"
 #include "crimson/os/seastore/seastore_types.h"
+#include "crimson/os/seastore/segment_manager.h"
 
 namespace crimson::os::seastore {
 
-class SegmentManager;
 class SegmentCleaner;
 
-class Scanner {
+class ExtentReader {
 public:
   using read_ertr = crimson::errorator<
     crimson::ct_error::input_output_error,
@@ -19,8 +19,22 @@ public:
     crimson::ct_error::enoent,
     crimson::ct_error::erange>;
 
-  Scanner(SegmentManager& sm)
-    : segment_manager(sm) {}
+  virtual read_ertr::future<> read(
+    paddr_t addr,
+    size_t len,
+    ceph::bufferptr& out) = 0;
+
+  virtual ~ExtentReader() {}
+};
+
+class Scanner : public ExtentReader {
+public:
+  using read_ertr = crimson::errorator<
+    crimson::ct_error::input_output_error,
+    crimson::ct_error::invarg,
+    crimson::ct_error::enoent,
+    crimson::ct_error::erange>;
+
   using read_segment_header_ertr = crimson::errorator<
     crimson::ct_error::enoent,
     crimson::ct_error::enodata,
@@ -28,7 +42,9 @@ public:
     >;
   using read_segment_header_ret = read_segment_header_ertr::future<
     segment_header_t>;
-  read_segment_header_ret read_segment_header(segment_id_t segment);
+  read_segment_header_ret read_segment_header(
+    SegmentManager& segment_manager,
+    segment_id_t segment);
 
   /**
    * scan_extents
@@ -72,6 +88,7 @@ public:
       std::optional<std::pair<record_header_t, bufferlist>>
     >;
   read_validate_record_metadata_ret read_validate_record_metadata(
+    SegmentManager& segment_manager,
     paddr_t start,
     segment_nonce_t nonce);
 
@@ -84,6 +101,7 @@ public:
   using read_validate_data_ertr = read_ertr;
   using read_validate_data_ret = read_validate_data_ertr::future<bool>;
   read_validate_data_ret read_validate_data(
+    SegmentManager& segment_manager,
     paddr_t record_base,
     const record_header_t &header  ///< caller must ensure lifetime through
                                    ///  future resolution
@@ -99,9 +117,18 @@ public:
   /// validate embedded metadata checksum
   static bool validate_metadata(const bufferlist &bl);
 
+  read_ertr::future<> read(
+    paddr_t addr,
+    size_t len,
+    ceph::bufferptr& out) final;
 
+  void add_segment_manager(SegmentManager* segment_manager) {
+    segment_managers.emplace(
+      segment_manager->get_device_id(),
+      segment_manager);
+  }
 private:
-  SegmentManager& segment_manager;
+  std::map<device_id_t, SegmentManager*> segment_managers;
   SegmentCleaner* segment_cleaner = nullptr;
 
   friend class crimson::os::seastore::SegmentCleaner;

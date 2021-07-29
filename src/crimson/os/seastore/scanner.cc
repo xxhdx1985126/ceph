@@ -15,7 +15,9 @@ namespace {
 namespace crimson::os::seastore {
 
 Scanner::read_segment_header_ret
-Scanner::read_segment_header(segment_id_t segment)
+Scanner::read_segment_header(
+  SegmentManager& segment_manager,
+  segment_id_t segment)
 {
   return segment_manager.read(
     paddr_t{segment, 0},
@@ -25,7 +27,7 @@ Scanner::read_segment_header(segment_id_t segment)
     crimson::ct_error::assert_all{
       "Invalid error in Scanner::read_segment_header"
     }
-  ).safe_then([=](bufferptr bptr) -> read_segment_header_ret {
+  ).safe_then([this, segment, &segment_manager](bufferptr bptr) -> read_segment_header_ret {
     logger().debug("segment {} bptr size {}", segment, bptr.length());
 
     segment_header_t header;
@@ -62,13 +64,15 @@ Scanner::scan_extents_ret Scanner::scan_extents(
 {
   auto ret = std::make_unique<scan_extents_ret_bare>();
   auto* extents = ret.get();
-  return read_segment_header(cursor.get_offset().segment
+  auto segment_manager = segment_managers.at(
+    get_device_id(cursor.get_offset().segment));
+  return read_segment_header(*segment_manager, cursor.get_offset().segment
   ).handle_error(
     scan_extents_ertr::pass_further{},
     crimson::ct_error::assert_all{
       "Invalid error in Scanner::scan_extents"
     }
-  ).safe_then([bytes_to_read, extents, &cursor, this](auto segment_header) {
+  ).safe_then([bytes_to_read, extents, &cursor, this, &segment_manager](auto segment_header) {
     auto segment_nonce = segment_header.segment_nonce;
     return seastar::do_with(
       found_record_handler_t(
@@ -113,17 +117,19 @@ Scanner::scan_valid_records_ret Scanner::scan_valid_records(
   size_t budget,
   found_record_handler_t &handler)
 {
+  auto segment_manager = segment_managers.at(
+    get_device_id(cursor.offset.segment));
   if (cursor.offset.offset == 0) {
-    cursor.offset.offset = segment_manager.get_block_size();
+    cursor.offset.offset = segment_manager->get_block_size();
   }
   auto retref = std::make_unique<size_t>(0);
   auto budget_used = *retref;
   return crimson::repeat(
     [=, &cursor, &budget_used, &handler]() mutable
     -> scan_valid_records_ertr::future<seastar::stop_iteration> {
-      return [=, &handler, &cursor, &budget_used] {
+      return [=, &handler, &cursor, &budget_used]() mutable {
 	if (!cursor.last_valid_header_found) {
-	  return read_validate_record_metadata(cursor.offset, nonce
+	  return read_validate_record_metadata(*segment_manager, cursor.offset, nonce
 	  ).safe_then([=, &cursor](auto md) {
 	    logger().debug(
 	      "Scanner::scan_valid_records: read complete {}",
@@ -184,7 +190,7 @@ Scanner::scan_valid_records_ret Scanner::scan_valid_records(
 	} else {
 	  assert(!cursor.pending_records.empty());
 	  auto &next = cursor.pending_records.front();
-	  return read_validate_data(next.offset, next.header
+	  return read_validate_data(*segment_manager, next.offset, next.header
 	  ).safe_then([=, &budget_used, &next, &cursor, &handler](auto valid) {
 	    if (!valid) {
 	      cursor.pending_records.clear();
@@ -218,6 +224,7 @@ Scanner::scan_valid_records_ret Scanner::scan_valid_records(
 
 Scanner::read_validate_record_metadata_ret
 Scanner::read_validate_record_metadata(
+  SegmentManager& segment_manager,
   paddr_t start,
   segment_nonce_t nonce)
 {
@@ -229,7 +236,7 @@ Scanner::read_validate_record_metadata(
   }
   return segment_manager.read(start, block_size
   ).safe_then(
-    [=](bufferptr bptr) mutable
+    [=, &segment_manager](bufferptr bptr) mutable
     -> read_validate_record_metadata_ret {
       logger().debug("read_validate_record_metadata: reading {}", start);
       auto block_size = segment_manager.get_block_size();
@@ -306,6 +313,7 @@ Scanner::try_decode_extent_infos(
 
 Scanner::read_validate_data_ret
 Scanner::read_validate_data(
+  SegmentManager& segment_manager,
   paddr_t record_base,
   const record_header_t &header)
 {
@@ -340,34 +348,46 @@ Scanner::init_segments() {
     std::vector<std::pair<segment_id_t, segment_header_t>>(),
     [this](auto& segments) {
     return crimson::do_for_each(
-      boost::make_counting_iterator(segment_id_t{0}),
-      boost::make_counting_iterator(segment_manager.get_num_segments()),
-      [this, &segments](auto segment_id) {
-      return read_segment_header(segment_id)
-      .safe_then([&segments, segment_id, this](auto header) {
-	if (header.out_of_line) {
-          logger().debug("Scanner::init_segments: out-of-line segment {}", segment_id);
-	  segment_cleaner->init_mark_segment_closed(segment_id, header.journal_segment_seq, true);
-	} else {
-          logger().debug("Scanner::init_segments: journal segment {}", segment_id);
-	  segments.emplace_back(std::make_pair(segment_id, std::move(header)));
-	}
-	return seastar::now();
-      }).handle_error(
-        crimson::ct_error::enoent::handle([](auto) {
-          return init_segments_ertr::now();
-        }),
-        crimson::ct_error::enodata::handle([](auto) {
-          return init_segments_ertr::now();
-        }),
-        crimson::ct_error::input_output_error::pass_further{}
-      );
+      segment_managers,
+      [this, &segments](auto& p) {
+      auto& segment_manager = p.second;
+      return crimson::do_for_each(
+        segment_manager->begin(),
+        segment_manager->end(),
+        [this, &segments, segment_manager](auto segment_id) {
+        return read_segment_header(*segment_manager, segment_id)
+        .safe_then([&segments, segment_id, this](auto header) {
+          if (header.out_of_line) {
+            logger().debug("Scanner::init_segments: out-of-line segment {}", segment_id);
+            segment_cleaner->init_mark_segment_closed(segment_id, header.journal_segment_seq, true);
+          } else {
+            logger().debug("Scanner::init_segments: journal segment {}", segment_id);
+            segments.emplace_back(std::make_pair(segment_id, std::move(header)));
+          }
+          return seastar::now();
+        }).handle_error(
+          crimson::ct_error::enoent::handle([](auto) {
+            return init_segments_ertr::now();
+          }),
+          crimson::ct_error::enodata::handle([](auto) {
+            return init_segments_ertr::now();
+          }),
+          crimson::ct_error::input_output_error::pass_further{}
+        );
+      });
     }).safe_then([&segments] {
       return seastar::make_ready_future<
 	std::vector<std::pair<segment_id_t, segment_header_t>>>(
 	  std::move(segments));
     });
   });
+}
+
+Scanner::read_ertr::future<>
+Scanner::read(paddr_t addr, size_t len, ceph::bufferptr& out)
+{
+  auto segment_manager = segment_managers.at(get_device_id(addr.segment));
+  return segment_manager->read(addr, len, out);
 }
 
 } // namespace crimson::os::seastore

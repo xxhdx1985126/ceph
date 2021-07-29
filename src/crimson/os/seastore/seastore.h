@@ -28,6 +28,8 @@ namespace crimson::os::seastore {
 class Onode;
 using OnodeRef = boost::intrusive_ptr<Onode>;
 class TransactionManager;
+class ExtentPlacementManager;
+class Scanner;
 
 class SeastoreCollection final : public FuturizedCollection {
 public:
@@ -42,10 +44,13 @@ class SeaStore final : public FuturizedStore {
 public:
 
   SeaStore(
+    std::string path_root,
     SegmentManagerRef sm,
     TransactionManagerRef tm,
     CollectionManagerRef cm,
-    OnodeManagerRef om);
+    OnodeManagerRef om,
+    ExtentPlacementManager& epm,
+    Scanner& scanner);
   ~SeaStore();
     
   seastar::future<> stop() final;
@@ -266,10 +271,14 @@ private:
     const std::optional<string> &_start,
     OMapManager::omap_list_config_t config);
 
-  SegmentManagerRef segment_manager;
+  SegmentManagerRef primary_segment_manager;
+  std::vector<SegmentManagerRef> secondary_segment_managers;
   InterruptedTMRef transaction_manager;
   CollectionManagerRef collection_manager;
   OnodeManagerRef onode_manager;
+  std::string path_root;
+  ExtentPlacementManager& epm;
+  Scanner& scanner;
 
   using tm_iertr = TransactionManager::base_iertr;
   using tm_ertr = with_trans_ertr<tm_iertr>;
