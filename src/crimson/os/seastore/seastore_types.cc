@@ -215,4 +215,17 @@ bool need_delayed_allocation(device_type_t type) {
   return type <= RANDOM_BLOCK;
 }
 
+device_type_t string_to_device_type(std::string type) {
+  if (type == "segmented") {
+    return device_type_t::SEGMENTED;
+  }
+  if (type == "random_block") {
+    return device_type_t::RANDOM_BLOCK;
+  }
+  if (type == "pmen") {
+    return device_type_t::PMEM;
+  }
+  return device_type_t::NONE;
+}
+
 }

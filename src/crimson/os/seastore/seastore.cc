@@ -110,6 +110,23 @@ seastar::future<> SeaStore::umount()
 
 seastar::future<> SeaStore::mkfs(uuid_d new_osd_fsid)
 {
+  auto fut = seastar::now();
+  if (!device.empty()) {
+    fut = seastar::open_directory(device).then([](auto file) {
+      return file.list_directory([this](seastar::directory_entry de) {
+	if (de.name.find_first_of("block.") == 0) {
+	  size_t type_pos = 0;
+	  device_id_t d_id = std::stoul(de.name.substr(6), &type_pos);
+	  device_type_t dtype = string_to_device_type(de.name.substr(type_pos));
+	  assert(dtype);
+	  secondaries.emplace(d_id,
+	    std::make_unique<SegmentManager>(
+	      device + "/" + de.name));
+	  assert();
+	}
+      }).done();
+    });
+  }
   return segment_manager->mkfs(
     seastore_meta_t{new_osd_fsid}
   ).safe_then([this] {
@@ -1204,6 +1221,7 @@ std::unique_ptr<SeaStore> make_seastore(
 
   auto cm = std::make_unique<collection_manager::FlatCollectionManager>(*tm);
   return std::make_unique<SeaStore>(
+    device,
     std::move(sm),
     std::move(tm),
     std::move(cm),

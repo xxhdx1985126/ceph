@@ -180,6 +180,7 @@ with_mgr_restful=false
 filestore_path=
 kstore_path=
 declare -a block_devs
+declare -a secondary_block_devs
 
 VSTART_SEC="client.vstart.sh"
 
@@ -244,6 +245,7 @@ options:
 	--no-parallel: dont start all OSDs in parallel
 	--jaeger: use jaegertracing for tracing
 	--seastore-devs: comma-separated list of blockdevs to use for seastore
+        --seastore-secondary-des: comma-separated list of secondary blockdevs to use for seastore
 EOF
 
 usage_exit() {
@@ -259,6 +261,21 @@ parse_block_devs() {
     local dev
     IFS=',' read -r -a block_devs <<< "$devs"
     for dev in "${block_devs[@]}"; do
+        if [ ! -b $dev ] || [ ! -w $dev ]; then
+            echo "All $opt_name must refer to writable block devices"
+            exit 1
+        fi
+    done
+}
+
+parse_secondary_devs() {
+    local opt_name=$1
+    shift
+    local devs=$1
+    shift
+    local dev
+    IFS=',' read -r -a secondary_block_devs <<< "$devs"
+    for dev in "${secondary_block_devs[@]}"; do
         if [ ! -b $dev ] || [ ! -w $dev ]; then
             echo "All $opt_name must refer to writable block devices"
             exit 1
@@ -465,6 +482,10 @@ case $1 in
         ;;
     --seastore-devs)
         parse_block_devs --seastore-devs "$2"
+        shift
+        ;;
+    --seastore-secondary-devs)
+        parse_secondary_devs --seastore-devs "$2"
         shift
         ;;
     --bluestore-spdk)
@@ -943,6 +964,7 @@ EOF
                 if [ -n "${block_devs[$osd]}" ]; then
                     dd if=/dev/zero of=${block_devs[$osd]} bs=1M count=1
                     ln -s ${block_devs[$osd]} $CEPH_DEV_DIR/osd$osd/block
+                    ln -s ${block_devs[$osd]} $CEPH_DEV_DIR/osd$osd/block.1.segmented
                 fi
             fi
             if [ "$objectstore" == "bluestore" ]; then
