@@ -405,6 +405,10 @@ public:
 
   void add_allocator(device_type_t type, ExtentAllocatorRef&& allocator) {
     allocators[type].emplace_back(std::move(allocator));
+    LOG_PREFIX(ExtentPlacementManager::add_allocator);
+    DEBUG("allocators for {}: {}",
+      device_type_to_string(type),
+      allocators[type].size());
   }
 
 private:
