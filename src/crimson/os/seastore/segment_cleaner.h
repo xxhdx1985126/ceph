@@ -387,7 +387,7 @@ private:
   ExtentCallbackInterface *ecb = nullptr;
 
   /// populated if there is an IO blocked on hard limits
-  std::optional<seastar::promise<>> blocked_io_wake;
+  std::optional<seastar::shared_promise<>> blocked_io_wake;
 
 public:
   SegmentCleaner(config_t config, bool detailed = false);
@@ -845,8 +845,8 @@ public:
 	return !should_block_on_gc();
       },
       [this] {
-	blocked_io_wake = seastar::promise<>();
-	return blocked_io_wake->get_future();
+	blocked_io_wake = seastar::shared_promise<>();
+	return blocked_io_wake->get_shared_future();
       });
   }
 private:
