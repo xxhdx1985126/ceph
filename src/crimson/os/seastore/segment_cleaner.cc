@@ -23,7 +23,24 @@ void segment_manager_info_t<SegmentInfoT>::init_segment_infos(
   for (device_segment_id_t j = 0; j < num_segments; j++) {
     segment_infos[j].segment = segment_id_t(device_id, j);
     crimson::get_logger(ceph_subsys_seastore).debug("added segment: {}", segment_id_t(device_id, j));
+    if constexpr (std::is_same_v<SegmentInfoT, segment_info_t>) {
+      segment_infos[j].smit = this;
+    }
   }
+}
+
+void segment_info_t::set_open() {
+  assert(state == Segment::segment_state_t::EMPTY);
+  state = Segment::segment_state_t::OPEN;
+  written_to = 0;
+  set_unavail();
+}
+
+void segment_info_t::set_empty() {
+  assert(state == Segment::segment_state_t::CLOSED);
+  state = Segment::segment_state_t::EMPTY;
+  written_to = 0;
+  smit->usis.erase(usii);
 }
 
 bool SpaceTrackerSimple::equals(const SpaceTrackerI &_other) const
@@ -179,23 +196,6 @@ void SegmentCleaner::register_metrics()
     sm::make_counter("segments_released", stats.segments_released,
 		     sm::description("total number of extents released by SegmentCleaner")),
   });
-}
-
-SegmentCleaner::get_segment_ret SegmentCleaner::get_segment()
-{
-  for (auto& segment_info : segments) {
-    if (segment_info.is_empty()) {
-      mark_open(segment_info.segment);
-      logger().debug("{}: returning segment {}", __func__, segment_info.segment);
-      return get_segment_ret(
-	get_segment_ertr::ready_future_marker{},
-	segment_info.segment);
-    }
-  }
-  assert(0 == "out of space handling todo");
-  return get_segment_ret(
-    get_segment_ertr::ready_future_marker{},
-    0);
 }
 
 SegmentCleaner::get_segment_ret SegmentCleaner::get_segment(device_id_t id)

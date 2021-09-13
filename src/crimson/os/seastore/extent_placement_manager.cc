@@ -175,6 +175,8 @@ SegmentedAllocator::Writer::write(
               current_segment->segment->get_segment_id(),
               allocated_to);
             allocated_to += rsize.mdlength + rsize.dlength;
+            segment_provider.set_segment_written_to({
+              current_segment->segment->get_segment_id(), allocated_to});
             return _write(t, record);
           }
         ).si_then([]()
@@ -223,6 +225,8 @@ SegmentedAllocator::Writer::init_segment(Segment& segment) {
   bl.clear();
   bl.append(bp);
   allocated_to = segment_manager.get_block_size();
+  segment_provider.set_segment_written_to({
+    segment.get_segment_id(), allocated_to});
   return segment.write(0, bl).handle_error(
     crimson::ct_error::input_output_error::pass_further{},
     crimson::ct_error::assert_all{
