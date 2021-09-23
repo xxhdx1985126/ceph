@@ -20,8 +20,8 @@ using std::string_view;
 
 namespace crimson::os::seastore {
 
-Cache::Cache(SegmentManager &segment_manager) :
-  segment_manager(segment_manager)
+Cache::Cache(ExtentReader &reader) :
+  reader(reader)
 {
   register_metrics();
 }
