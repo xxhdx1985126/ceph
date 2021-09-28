@@ -894,28 +894,39 @@ public:
     assert(ret >= 0);
   }
 
+  double calc_gc_benefit_cost(segment_id_t id) const {
+    double util = space_tracker->calc_utilization(id);
+    auto cur_time = ceph::real_clock::now();
+    assert(cur_time > segments[id].last_modified);
+    auto segment_age = cur_time - segments[id].last_modified;
+    uint64_t age = segment_age.count();
+    return (1 - util) * age / (1 + util);
+  }
+
   journal_seq_t get_next_gc_target() const {
     segment_id_t id = NULL_SEG_ID;
     segment_seq_t seq = NULL_SEG_SEQ;
-    int64_t least_live_bytes = std::numeric_limits<int64_t>::max();
+    int64_t max_benefit_cost = 0;
     for (auto it = segments.begin();
 	 it != segments.end();
 	 ++it) {
       auto _id = it->first;
       const auto& segment_info = it->second;
+      double benefit_cost = calc_gc_benefit_cost(_id);
       if (segment_info.is_closed() &&
 	  !segment_info.is_in_journal(journal_tail_committed) &&
-	  space_tracker->get_usage(_id) < least_live_bytes) {
+	  benefit_cost > max_benefit_cost) {
 	id = _id;
 	seq = segment_info.journal_segment_seq;
-	least_live_bytes = space_tracker->get_usage(id);
+	max_benefit_cost = benefit_cost;
       }
     }
     if (id != NULL_SEG_ID) {
       crimson::get_logger(ceph_subsys_seastore).debug(
-	"SegmentCleaner::get_next_gc_target: segment {} seq {}",
+	"SegmentCleaner::get_next_gc_target: segment {} seq {}, benefit_cost {}",
 	id,
-	seq);
+	seq,
+	max_benefit_cost);
       return journal_seq_t{seq, paddr_t::make_seg_paddr(id, 0)};
     } else {
       return journal_seq_t();
