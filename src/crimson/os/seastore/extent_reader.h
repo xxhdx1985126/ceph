@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <queue>
+
 #include "crimson/common/errorator.h"
 #include "crimson/os/seastore/seastore_types.h"
 #include "crimson/os/seastore/segment_manager.h"
@@ -33,6 +35,15 @@ public:
     segment_header_t>;
   read_segment_header_ret read_segment_header(segment_id_t segment);
 
+  class extent_age_comparator {
+  public:
+    bool operator()(
+      const std::pair<paddr_t, extent_info_t>& l,
+      const std::pair<paddr_t, extent_info_t>& r) {
+      return l.second.last_modified > r.second.last_modified;
+    }
+  };
+
   /**
    * scan_extents
    *
@@ -44,9 +55,20 @@ public:
    */
   using scan_extents_cursor = scan_valid_records_cursor;
   using scan_extents_ertr = read_ertr::extend<crimson::ct_error::enodata>;
-  using scan_extents_ret_bare = std::list<std::pair<paddr_t, extent_info_t>>;
-  using scan_extents_ret = scan_extents_ertr::future<scan_extents_ret_bare>;
-  scan_extents_ret scan_extents(
+  template <bool compare_by_age>
+  using scan_extents_ret_bare =
+    std::conditional_t<
+      compare_by_age,
+      std::priority_queue<
+        std::pair<paddr_t, extent_info_t>,
+        std::vector<std::pair<paddr_t, extent_info_t>>,
+        extent_age_comparator>,
+      std::list<std::pair<paddr_t, extent_info_t>>>;
+  template <bool compare_by_age>
+  using scan_extents_ret = scan_extents_ertr::future<
+    scan_extents_ret_bare<compare_by_age>>;
+  template <bool compare_by_age = false>
+  scan_extents_ret<compare_by_age> scan_extents(
     scan_extents_cursor &cursor,
     extent_len_t bytes_to_read
   );

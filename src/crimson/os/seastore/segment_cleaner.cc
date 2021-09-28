@@ -362,7 +362,7 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
     ceph_assert(!scan_cursor->is_complete());
   }
 
-  return scanner->scan_extents(
+  return scanner->scan_extents<true>(
     *scan_cursor,
     config.reclaim_bytes_stride
   ).safe_then([this](auto &&_extents) {
@@ -376,45 +376,65 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
         return ecb->with_transaction_intr(
             Transaction::src_t::CLEANER,
             [this, &extents](auto& t) {
-          return trans_intr::do_for_each(
-              extents,
-              [this, &t](auto &extent) {
-	    auto& addr = extent.first;
-	    auto& info = extent.second;
-            logger().debug(
-              "SegmentCleaner::gc_reclaim_space: checking extent {}",
-              info);
-            return ecb->get_extent_if_live(
-              t,
-              info.type,
-              addr,
-              info.addr,
-              info.len
-            ).si_then([addr=addr, &t, this, &info](CachedExtentRef ext) {
-              if (!ext) {
-                logger().debug(
-                  "SegmentCleaner::gc_reclaim_space: addr {} dead, skipping",
-                  addr);
-                return ExtentCallbackInterface::rewrite_extent_iertr::now();
-              } else {
-                logger().debug(
-                  "SegmentCleaner::gc_reclaim_space: addr {} alive, gc'ing {}",
-                  addr,
-                  *ext);
-		assert(info.last_modified);
-		if (ext->get_last_modified() == ceph::real_clock::time_point()) {
-		  ext->set_last_modified(ceph::real_clock::duration(info.last_modified));
+	  return seastar::do_with(
+	    // TODO: this is a copy, to make sure we can re-add all extents to
+	    // 	     the transaction when there's transaction conflicts, need make
+	    // 	     some optimization
+	    extents,
+	    [this, &t](auto& extents) {
+	    return trans_intr::repeat(
+		[this, &t, &extents]() mutable {
+	      if (extents.empty()) {
+		return ExtentCallbackInterface::rewrite_extent_iertr::make_ready_future<
+		  seastar::stop_iteration>(seastar::stop_iteration::yes);
+	      }
+	      auto& extent = extents.top();
+	      auto& addr = extent.first;
+	      auto& info = extent.second;
+	      logger().debug(
+		"SegmentCleaner::gc_reclaim_space: checking extent {}, {} extents left",
+		info, extents.size());
+	      return ecb->get_extent_if_live(
+		t,
+		info.type,
+		addr,
+		info.addr,
+		info.len
+	      ).si_then([addr=addr, &t, this, &info](CachedExtentRef ext) {
+		if (!ext) {
+		  logger().debug(
+		    "SegmentCleaner::gc_reclaim_space: addr {} dead, skipping",
+		    addr);
+		  return ExtentCallbackInterface::rewrite_extent_iertr::now();
 		} else {
-		  assert(info.last_modified <=
-		    ext->get_last_modified().time_since_epoch().count());
+		  logger().debug(
+		    "SegmentCleaner::gc_reclaim_space: addr {} alive, gc'ing {}",
+		    addr,
+		    *ext);
+		  assert(info.last_modified);
+		  if (ext->get_last_modified() == ceph::real_clock::time_point()) {
+		    ext->set_last_modified(ceph::real_clock::duration(info.last_modified));
+		  } else {
+		    assert(info.last_modified <=
+		      ext->get_last_modified().time_since_epoch().count());
+		  }
+		  ext->set_last_modified(ceph::real_clock::now());
+		  return ecb->rewrite_extent(
+		    t,
+		    ext);
 		}
-		ext->set_last_modified(ceph::real_clock::now());
-                return ecb->rewrite_extent(
-                  t,
-                  ext);
-              }
-            });
-          }).si_then([this, &t] {
+	      }).si_then([&extents] {
+		extents.pop();
+		if (extents.empty()) {
+		  return seastar::make_ready_future<
+		    seastar::stop_iteration>(seastar::stop_iteration::yes);
+		} else {
+		  return seastar::make_ready_future<
+		    seastar::stop_iteration>(seastar::stop_iteration::no);
+		}
+	      });
+	    });
+	  }).si_then([this, &t] {
             if (scan_cursor->is_complete()) {
               t.mark_segment_to_release(scan_cursor->get_segment_id());
             }

@@ -56,11 +56,12 @@ ExtentReader::read_segment_header(segment_id_t segment)
       header);
   });
 }
-ExtentReader::scan_extents_ret ExtentReader::scan_extents(
+template <bool compare_by_age>
+ExtentReader::scan_extents_ret<compare_by_age> ExtentReader::scan_extents(
   scan_extents_cursor &cursor,
   extent_len_t bytes_to_read)
 {
-  auto ret = std::make_unique<scan_extents_ret_bare>();
+  auto ret = std::make_unique<scan_extents_ret_bare<compare_by_age>>();
   auto* extents = ret.get();
   return read_segment_header(cursor.get_segment_id()
   ).handle_error(
@@ -90,7 +91,10 @@ ExtentReader::scan_extents_ret ExtentReader::scan_extents(
 
 	  paddr_t extent_offset = base.add_offset(header.mdlength);
 	  for (const auto &i : *infos) {
-	    extents->emplace_back(extent_offset, i);
+            if constexpr (compare_by_age)
+              extents->emplace(extent_offset, i);
+            else
+              extents->emplace_back(extent_offset, i);
 	    auto& seg_addr = extent_offset.as_seg_paddr();
 	    seg_addr.set_segment_off(
 	      seg_addr.get_segment_off() + i.len);
@@ -348,5 +352,15 @@ bool ExtentReader::validate_metadata(const bufferlist &bl)
     test_crc);
   return test_crc == recorded_crc;
 }
+
+template ExtentReader::scan_extents_ret<false> ExtentReader::scan_extents<false>(
+  scan_extents_cursor &cursor,
+  extent_len_t bytes_to_read
+);
+
+template ExtentReader::scan_extents_ret<true> ExtentReader::scan_extents<true>(
+  scan_extents_cursor &cursor,
+  extent_len_t bytes_to_read
+);
 
 } // namespace crimson::os::seastore
