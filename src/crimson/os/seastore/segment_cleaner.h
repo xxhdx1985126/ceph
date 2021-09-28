@@ -235,6 +235,16 @@ public:
   device_segment_id_t get_journal_segments() const {
     return journal_segments;
   }
+  device_segment_id_t num_segments() const {
+    device_segment_id_t num = 0;
+    for (auto& sm_info : sm_infos) {
+      if (!sm_info) {
+	continue;
+      }
+      num += sm_info->num_segments;
+    }
+    return num;
+  }
 private:
   std::vector<std::optional<segment_manager_info_t>> sm_infos;
   segment_map_t<segment_info_t> segments;
@@ -297,6 +307,8 @@ public:
 
   virtual void dump_usage(segment_id_t) const = 0;
 
+  virtual double calc_utilization(segment_id_t segment) const = 0;
+
   virtual void reset() = 0;
 
   virtual ~SpaceTrackerI() = default;
@@ -304,13 +316,17 @@ public:
 using SpaceTrackerIRef = std::unique_ptr<SpaceTrackerI>;
 
 class SpaceTrackerSimple : public SpaceTrackerI {
+  struct segment_bytes_t {
+    int64_t live_bytes = 0;
+    int64_t total_bytes = 0;
+  };
   // Tracks live space for each segment
-  segment_map_t<int64_t> live_bytes_by_segment;
+  segment_map_t<segment_bytes_t> live_bytes_by_segment;
 
   int64_t update_usage(segment_id_t segment, int64_t delta) {
-    live_bytes_by_segment[segment] += delta;
-    assert(live_bytes_by_segment[segment] >= 0);
-    return live_bytes_by_segment[segment];
+    live_bytes_by_segment[segment].live_bytes += delta;
+    assert(live_bytes_by_segment[segment].live_bytes >= 0);
+    return live_bytes_by_segment[segment].live_bytes;
   }
 public:
   SpaceTrackerSimple(const SpaceTrackerSimple &) = default;
@@ -325,7 +341,7 @@ public:
       live_bytes_by_segment.add_device(
 	sm->get_device_id(),
 	sm->get_num_segments(),
-	0);
+	{0, 0});
     }
   }
 
@@ -333,6 +349,7 @@ public:
     segment_id_t segment,
     segment_off_t offset,
     extent_len_t len) final {
+    live_bytes_by_segment[segment].total_bytes += len;
     return update_usage(segment, len);
   }
 
@@ -344,14 +361,22 @@ public:
   }
 
   int64_t get_usage(segment_id_t segment) const final {
-    return live_bytes_by_segment[segment];
+    return live_bytes_by_segment[segment].live_bytes;
+  }
+
+  double calc_utilization(segment_id_t segment) const final {
+    auto& seg_bytes = live_bytes_by_segment[segment];
+    if (!seg_bytes.live_bytes && !seg_bytes.total_bytes)
+      return 0;
+    assert(seg_bytes.total_bytes);
+    return (double)seg_bytes.live_bytes / (double)seg_bytes.total_bytes;
   }
 
   void dump_usage(segment_id_t) const final {}
 
   void reset() final {
     for (auto &i : live_bytes_by_segment) {
-      i.second = 0;
+      i.second = {0, 0};
     }
   }
 
@@ -367,6 +392,7 @@ public:
 class SpaceTrackerDetailed : public SpaceTrackerI {
   class SegmentMap {
     int64_t used = 0;
+    int64_t total_occupied = 0;
     std::vector<bool> bitmap;
 
   public:
@@ -394,6 +420,13 @@ class SpaceTrackerDetailed : public SpaceTrackerI {
     }
 
     void dump_usage(extent_len_t block_size) const;
+
+    double calc_utilization() const {
+      if (!used && !total_occupied)
+	return 0;
+      assert(total_occupied);
+      return (double)used / (double)total_occupied;
+    }
 
     void reset() {
       used = 0;
@@ -452,6 +485,10 @@ public:
 
   int64_t get_usage(segment_id_t segment) const final {
     return segment_usage[segment].get_usage();
+  }
+
+  double calc_utilization(segment_id_t segment) const final {
+    return segment_usage[segment].calc_utilization();
   }
 
   void dump_usage(segment_id_t seg) const final;
@@ -634,6 +671,7 @@ private:
     uint64_t empty_segments = 0;
     uint64_t opened_segments = 0;
     int64_t ios_blocking = 0;
+    seastar::metrics::histogram segment_util;
   } stats;
   seastar::metrics::metric_group metrics;
   void register_metrics();
@@ -796,10 +834,21 @@ public:
       return;
 
     stats.used_bytes += len;
+    auto old_usage = space_tracker->calc_utilization(seg_addr.get_segment_id());
     [[maybe_unused]] auto ret = space_tracker->allocate(
       seg_addr.get_segment_id(),
       seg_addr.get_segment_off(),
       len);
+    auto new_usage = space_tracker->calc_utilization(seg_addr.get_segment_id());
+    stats.segment_util.buckets[
+      old_usage > 0.5 ?
+	std::lround(old_usage * 10 - 0.5) :
+	std::lround(old_usage * 10)].count--;
+    stats.segment_util.buckets[
+      new_usage > 0.5 ?
+	std::lround(new_usage * 10 - 0.5) :
+	std::lround(new_usage * 10)].count++;
+
     gc_process.maybe_wake_on_space_used();
     assert(ret > 0);
   }
@@ -813,15 +862,25 @@ public:
     ceph_assert(stats.used_bytes >= len);
     stats.used_bytes -= len;
     auto& seg_addr = addr.as_seg_paddr();
-    assert(addr.get_device_id() ==
+    assert(seg_addr.get_segment_id().device_id() ==
       segments[seg_addr.get_segment_id().device_id()]->device_id);
     assert(seg_addr.get_segment_id().device_segment_id() <
       segments[seg_addr.get_segment_id().device_id()]->num_segments);
 
+    auto old_usage = space_tracker->calc_utilization(seg_addr.get_segment_id());
     [[maybe_unused]] auto ret = space_tracker->release(
       seg_addr.get_segment_id(),
       seg_addr.get_segment_off(),
       len);
+    auto new_usage = space_tracker->calc_utilization(seg_addr.get_segment_id());
+    stats.segment_util.buckets[
+      old_usage > 0.5 ?
+	std::lround(old_usage * 10 - 0.5) :
+	std::lround(old_usage * 10)].count--;
+    stats.segment_util.buckets[
+      new_usage > 0.5 ?
+	std::lround(new_usage * 10 - 0.5) :
+	std::lround(new_usage * 10)].count++;
     maybe_wake_gc_blocked_io();
     assert(ret >= 0);
   }
