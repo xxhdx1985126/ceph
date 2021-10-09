@@ -99,7 +99,23 @@ class CachedExtent : public boost::intrusive_ref_counter<
   // Points at current version while in state MUTATION_PENDING
   CachedExtentRef prior_instance;
 
+  // time of the last modification
+  ceph::real_clock::time_point last_modified;
+
 public:
+
+  void set_last_modified(ceph::real_clock::duration d) {
+    last_modified = ceph::real_clock::time_point(d);
+  }
+
+  void set_last_modified(ceph::real_clock::time_point t) {
+    last_modified = t;
+  }
+
+  ceph::real_clock::time_point get_last_modified() {
+    return last_modified;
+  }
+
   /**
    *  duplicate_for_write
    *
@@ -169,6 +185,7 @@ public:
 	<< ", type=" << get_type()
 	<< ", version=" << version
 	<< ", dirty_from_or_retired_at=" << dirty_from_or_retired_at
+	<< ", last_modified=" << last_modified
 	<< ", paddr=" << get_paddr()
 	<< ", state=" << state
 	<< ", last_committed_crc=" << last_committed_crc

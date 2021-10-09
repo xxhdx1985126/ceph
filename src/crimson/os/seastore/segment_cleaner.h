@@ -63,6 +63,8 @@ class segment_info_set_t {
     void set_empty();
     void set_closed();
 
+    ceph::real_clock::time_point last_modified;
+
     bool is_in_journal(journal_seq_t tail_committed) const {
       return !out_of_line &&
 	journal_segment_seq != NULL_SEG_SEQ &&
@@ -823,6 +825,7 @@ public:
   void mark_space_used(
     paddr_t addr,
     extent_len_t len,
+    ceph::real_clock::time_point last_modified = ceph::real_clock::time_point(),
     bool init_scan = false) {
     auto& seg_addr = addr.as_seg_paddr();
     assert(seg_addr.get_segment_id().device_id() ==
@@ -848,6 +851,12 @@ public:
       new_usage > 0.5 ?
 	std::lround(new_usage * 10 - 0.5) :
 	std::lround(new_usage * 10)].count++;
+
+    if (last_modified > segments[seg_addr.get_segment_id()].last_modified)
+      // use the last extent's last modified time for the calculation of the projected
+      // time the segments' live extents are to stay unmodified; this is an approximation
+      // of the segment "age" in the sprite lfs paper.
+      segments[seg_addr.get_segment_id()].last_modified = last_modified;
 
     gc_process.maybe_wake_on_space_used();
     assert(ret > 0);

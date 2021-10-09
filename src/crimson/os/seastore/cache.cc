@@ -824,6 +824,7 @@ CachedExtentRef Cache::duplicate_for_write(
     return i;
 
   auto ret = i->duplicate_for_write();
+  ret->last_modified = ceph::real_clock::now();
   ret->prior_instance = i;
   t.add_mutated_extent(ret);
   if (ret->get_type() == extent_types_t::ROOT) {
@@ -914,6 +915,7 @@ record_t Cache::prepare_record(Transaction &t)
 	  0,
 	  0,
 	  t.root->get_version() - 1,
+	  i->last_modified.time_since_epoch().count(),
 	  t.root->get_delta()
 	});
     } else {
@@ -928,6 +930,7 @@ record_t Cache::prepare_record(Transaction &t)
 	  final_crc,
 	  (segment_off_t)i->get_length(),
 	  i->get_version() - 1,
+	  i->last_modified.time_since_epoch().count(),
 	  i->get_delta()
 	});
       i->last_committed_crc = final_crc;
@@ -980,6 +983,7 @@ record_t Cache::prepare_record(Transaction &t)
 	i->is_logical()
 	? i->cast<LogicalCachedExtent>()->get_laddr()
 	: L_ADDR_NULL,
+	i->last_modified,
 	std::move(bl)
       });
   }
@@ -1049,7 +1053,8 @@ void Cache::complete_commit(
       if (cleaner) {
 	cleaner->mark_space_used(
 	  i->get_paddr(),
-	  i->get_length());
+	  i->get_length(),
+	  i->last_modified);
       }
     }
   });
@@ -1141,6 +1146,9 @@ Cache::replay_delta(
     root->apply_delta_and_adjust_crc(record_base, delta.bl);
     root->dirty_from_or_retired_at = journal_seq;
     root->state = CachedExtent::extent_state_t::DIRTY;
+    root->set_last_modified(
+      ceph::real_clock::duration(
+	delta.last_modified));
     add_extent(root);
     return replay_delta_ertr::now();
   } else {
@@ -1190,6 +1198,9 @@ Cache::replay_delta(
 
       assert(extent->last_committed_crc == delta.prev_crc);
       extent->apply_delta_and_adjust_crc(record_base, delta.bl);
+      extent->set_last_modified(
+	ceph::real_clock::duration(
+	  delta.last_modified));
       assert(extent->last_committed_crc == delta.final_crc);
 
       if (extent->version == 0) {

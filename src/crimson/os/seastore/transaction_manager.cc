@@ -111,6 +111,7 @@ TransactionManager::mount_ertr::future<> TransactionManager::mount()
 		    segment_cleaner->mark_space_used(
 		      addr,
 		      len ,
+		      ceph::real_clock::time_point(),
 		      /* init_scan = */ true);
 		  }
 		});
@@ -349,6 +350,7 @@ TransactionManager::rewrite_logical_extent(
     nlextent->get_bptr().c_str());
   nlextent->set_laddr(lextent->get_laddr());
   nlextent->set_pin(lextent->get_pin().duplicate());
+  nlextent->last_modified = lextent->last_modified;
 
   DEBUGT(
     "rewriting {} into {}",

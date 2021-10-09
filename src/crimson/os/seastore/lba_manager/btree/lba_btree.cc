@@ -13,6 +13,7 @@ LBABtree::mkfs_ret LBABtree::mkfs(op_context_t c)
   auto root_leaf = c.cache.alloc_new_extent<LBALeafNode>(
     c.trans,
     LBA_BLOCK_SIZE);
+  root_leaf->set_last_modified(ceph::real_clock::now().time_since_epoch());
   root_leaf->set_size(0);
   lba_node_meta_t meta{0, L_ADDR_MAX, 1};
   root_leaf->set_meta(meta);

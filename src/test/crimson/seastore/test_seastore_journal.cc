@@ -233,7 +233,11 @@ struct journal_test_t : seastar_test_suite_t, SegmentProvider {
     char contents = distribution(generator);
     bufferlist bl;
     bl.append(buffer::ptr(buffer::create(blocks * block_size, contents)));
-    return extent_t{extent_types_t::TEST_BLOCK, L_ADDR_NULL, bl};
+    return extent_t{
+      extent_types_t::TEST_BLOCK,
+      L_ADDR_NULL,
+      ceph::real_clock::now(),
+      bl};
   }
 
   delta_info_t generate_delta(size_t bytes) {
@@ -251,6 +255,7 @@ struct journal_test_t : seastar_test_suite_t, SegmentProvider {
       0, 0,
       block_size,
       1,
+      ceph::real_clock::now().time_since_epoch().count(),
       bl
     };
   }

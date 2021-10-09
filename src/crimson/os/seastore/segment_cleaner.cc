@@ -379,7 +379,8 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
           return trans_intr::do_for_each(
               extents,
               [this, &t](auto &extent) {
-            auto &[addr, info] = extent;
+	    auto& addr = extent.first;
+	    auto& info = extent.second;
             logger().debug(
               "SegmentCleaner::gc_reclaim_space: checking extent {}",
               info);
@@ -389,7 +390,7 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
               addr,
               info.addr,
               info.len
-            ).si_then([addr=addr, &t, this](CachedExtentRef ext) {
+            ).si_then([addr=addr, &t, this, &info](CachedExtentRef ext) {
               if (!ext) {
                 logger().debug(
                   "SegmentCleaner::gc_reclaim_space: addr {} dead, skipping",
@@ -400,6 +401,14 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
                   "SegmentCleaner::gc_reclaim_space: addr {} alive, gc'ing {}",
                   addr,
                   *ext);
+		assert(info.last_modified);
+		if (ext->get_last_modified() == ceph::real_clock::time_point()) {
+		  ext->set_last_modified(ceph::real_clock::duration(info.last_modified));
+		} else {
+		  assert(info.last_modified <=
+		    ext->get_last_modified().time_since_epoch().count());
+		}
+		ext->set_last_modified(ceph::real_clock::now());
                 return ecb->rewrite_extent(
                   t,
                   ext);
@@ -433,15 +442,42 @@ SegmentCleaner::init_segments_ret SegmentCleaner::init_segments() {
 	auto segment_id = it.first;
 	return scanner->read_segment_header(
 	  segment_id
-	).safe_then([&segment_set, segment_id, this](auto header) {
+	).safe_then([&segment_set, segment_id, this](auto header)
+	  -> ExtentReader::scan_extents_ertr::future<> {
 	  if (header.out_of_line) {
 	    logger().debug(
 	      "ExtentReader::init_segments: out-of-line segment {}",
 	      segment_id);
-	    init_mark_segment_closed(
-	      segment_id,
-	      header.journal_segment_seq,
-	      true);
+	    //TODO: iterating through all extents of all ool segments to confirm their
+	    //	  last_modified time is very inefficient, should be improved
+	    return seastar::do_with(
+	      scan_valid_records_cursor({
+		segments[segment_id].journal_segment_seq,
+		paddr_t::make_seg_paddr(segment_id, 0)}),
+	      [this, segment_id](auto& cursor) {
+	      return scanner->scan_extents(
+		cursor,
+		segments[segment_id.device_id()]->segment_size
+	      );
+	    }).safe_then([this, segment_id, header](auto extents) {
+	      for (auto& entry : extents) {
+		extent_info_t& extent = entry.second;
+		if (!extent.last_modified) {
+		  logger().debug("Scanner::init_segments: extent {} empty last_modified", entry.first);
+		  ceph_abort("empty last_modified");
+		}
+		ceph::real_clock::time_point tp(
+		  ceph::real_clock::duration(extent.last_modified));
+		if (this->segments[segment_id].last_modified < tp) {
+		  this->segments[segment_id].last_modified = tp;
+		}
+	      }
+	      init_mark_segment_closed(
+		segment_id,
+		header.journal_segment_seq,
+		true);
+	      return seastar::now();
+	    });
 	  } else {
 	    logger().debug(
 	      "ExtentReader::init_segments: journal segment {}",
@@ -456,7 +492,8 @@ SegmentCleaner::init_segments_ret SegmentCleaner::init_segments() {
 	  crimson::ct_error::enodata::handle([](auto) {
 	    return init_segments_ertr::now();
 	  }),
-	  crimson::ct_error::input_output_error::pass_further{}
+	  crimson::ct_error::input_output_error::pass_further{},
+	  crimson::ct_error::assert_all{"unexpected error"}
 	);
       }).safe_then([&segment_set] {
 	return seastar::make_ready_future<

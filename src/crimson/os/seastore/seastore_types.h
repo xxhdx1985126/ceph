@@ -774,6 +774,7 @@ std::ostream &operator<<(std::ostream &out, extent_types_t t);
 struct extent_t {
   extent_types_t type;  ///< type of extent
   laddr_t addr;         ///< laddr of extent (L_ADDR_NULL for non-logical)
+  ceph::real_clock::time_point last_modified; ///< time of the last modification
   ceph::bufferlist bl;  ///< payload, bl.length() == length, aligned
 };
 
@@ -789,6 +790,7 @@ struct delta_info_t {
   uint32_t final_crc = 0;
   segment_off_t length = NULL_SEG_OFF;         ///< extent length
   extent_version_t pversion;                   ///< prior version
+  uint64_t last_modified = 0;
   ceph::bufferlist bl;                         ///< payload
 
   DENC(delta_info_t, v, p) {
@@ -800,6 +802,7 @@ struct delta_info_t {
     denc(v.final_crc, p);
     denc(v.length, p);
     denc(v.pversion, p);
+    denc(v.last_modified, p);
     denc(v.bl, p);
     DENC_FINISH(p);
   }
@@ -1166,16 +1169,21 @@ struct extent_info_t {
   extent_types_t type = extent_types_t::NONE;
   laddr_t addr = L_ADDR_NULL;
   extent_len_t len = 0;
+  uint64_t last_modified = 0;
 
   extent_info_t() = default;
   extent_info_t(const extent_t &et)
-    : type(et.type), addr(et.addr), len(et.bl.length()) {}
+    : type(et.type), addr(et.addr),
+      len(et.bl.length()),
+      last_modified(et.last_modified.time_since_epoch().count())
+  {}
 
   DENC(extent_info_t, v, p) {
     DENC_START(1, 1, p);
     denc(v.type, p);
     denc(v.addr, p);
     denc(v.len, p);
+    denc(v.last_modified, p);
     DENC_FINISH(p);
   }
 };

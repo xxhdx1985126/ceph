@@ -78,6 +78,7 @@ public:
     record.extents.emplace_back(extent_t{
       extent->get_type(),
       extent->get_laddr(),
+      extent->last_modified,
       std::move(bl)});
     extent_buf_len += extent->get_bptr().length();
   }

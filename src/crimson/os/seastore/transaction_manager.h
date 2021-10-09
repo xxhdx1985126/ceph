@@ -297,6 +297,7 @@ public:
       t,
       len,
       placement_hint);
+    ext->last_modified = ceph::real_clock::now();
     return lba_manager->alloc_extent(
       t,
       laddr_hint,
