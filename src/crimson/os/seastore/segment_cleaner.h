@@ -577,19 +577,24 @@ private:
 
   SpaceTrackerIRef space_tracker;
   segment_info_set_t segments;
-  uint64_t used_bytes = 0;
   bool init_complete = false;
 
-  /**
-   * projected_used_bytes
-   *
-   * Sum of projected bytes used by each transaction between throttle
-   * acquisition and commit completion.  See await_throttle()
-   */
-  uint64_t projected_used_bytes = 0;
-
   struct {
+    uint64_t used_bytes = 0;
+    /**
+     * projected_used_bytes
+     *
+     * Sum of projected bytes used by each transaction between throttle
+     * acquisition and commit completion.  See await_throttle()
+     */
+    uint64_t projected_used_bytes = 0;
+    uint64_t avail_bytes = 0;
+    uint64_t total_bytes = 0;
+
     uint64_t segments_released = 0;
+    uint64_t accumulative_blocked_ios = 0;
+    uint64_t empty_segments = 0;
+    int64_t ios_blocking = 0;
   } stats;
   seastar::metrics::metric_group metrics;
   void register_metrics();
@@ -622,7 +627,7 @@ public:
     crimson::get_logger(ceph_subsys_seastore).debug(
       "SegmentCleaner::mount: {} segment managers", sms.size());
     init_complete = false;
-    used_bytes = 0;
+    stats.used_bytes = 0;
     journal_tail_target = journal_seq_t{};
     journal_tail_committed = journal_seq_t{};
     journal_head = journal_seq_t{};
@@ -649,7 +654,11 @@ public:
 	continue;
       }
       segments.add_segment_manager(*sm);
+      stats.empty_segments += sm->get_num_segments();
     }
+    metrics.clear();
+    stats.avail_bytes = stats.total_bytes = segments.get_total_bytes();
+    register_metrics();
   }
 
   using init_segments_ertr = crimson::errorator<
@@ -739,7 +748,7 @@ public:
     if (!init_scan && !init_complete)
       return;
 
-    used_bytes += len;
+    stats.used_bytes += len;
     [[maybe_unused]] auto ret = space_tracker->allocate(
       seg_addr.get_segment_id(),
       seg_addr.get_segment_off(),
@@ -755,8 +764,8 @@ public:
     if (!init_complete)
       return;
 
-    ceph_assert(used_bytes >= len);
-    used_bytes -= len;
+    ceph_assert(stats.used_bytes >= len);
+    stats.used_bytes -= len;
     auto& seg_addr = addr.as_seg_paddr();
     assert(addr.get_device_id() ==
       segments[seg_addr.get_segment_id().device_id()]->device_id);
@@ -996,8 +1005,8 @@ private:
     return segments.get_available_bytes();
   }
   size_t get_projected_available_bytes() const {
-    return (get_available_bytes() > projected_used_bytes) ?
-      get_available_bytes() - projected_used_bytes:
+    return (get_available_bytes() > stats.projected_used_bytes) ?
+      get_available_bytes() - stats.projected_used_bytes:
       0;
   }
 
@@ -1018,10 +1027,10 @@ private:
 
   /// Returns bytes currently occupied by live extents (not journal)
   size_t get_used_bytes() const {
-    return used_bytes;
+    return stats.used_bytes;
   }
   size_t get_projected_used_bytes() const {
-    return used_bytes + projected_used_bytes;
+    return stats.used_bytes + stats.projected_used_bytes;
   }
 
   /// Return bytes contained in segments in journal
@@ -1152,24 +1161,27 @@ public:
     // The pipeline configuration prevents another IO from entering
     // prepare until the prior one exits and clears this.
     ceph_assert(!blocked_io_wake);
+    stats.ios_blocking ++;
     return seastar::do_until(
       [this] {
 	log_gc_state("await_hard_limits");
 	return !should_block_on_gc();
       },
       [this] {
+	stats.accumulative_blocked_ios ++;
 	blocked_io_wake = seastar::promise<>();
 	return blocked_io_wake->get_future();
       }
     ).then([this, projected_usage] {
       ceph_assert(!blocked_io_wake);
-      projected_used_bytes += projected_usage;
+      stats.ios_blocking --;
+      stats.projected_used_bytes += projected_usage;
     });
   }
 
   void release_projected_usage(size_t projected_usage) {
-    ceph_assert(projected_used_bytes >= projected_usage);
-    projected_used_bytes -= projected_usage;
+    ceph_assert(stats.projected_used_bytes >= projected_usage);
+    stats.projected_used_bytes -= projected_usage;
     return maybe_wake_gc_blocked_io();
   }
 private:
@@ -1224,6 +1236,8 @@ private:
       assert(segments[segment].is_empty());
       assert(segments.get_empty_segments(segment.device_id()) > 0);
       segments.segment_used(segment, true);
+      stats.avail_bytes -= segments[segment.device_id()]->segment_size;
+      stats.empty_segments--;
     }
     crimson::get_logger(ceph_subsys_seastore).debug(
       "mark_closed: device: {} empty_segments: {}",
@@ -1240,11 +1254,15 @@ private:
       segments[segment.device_id()]->num_segments);
     assert(segment_info.is_closed());
     segments.segment_emptied(segment);
+    stats.avail_bytes += segments[segment.device_id()]->segment_size;
     if (space_tracker->get_usage(segment) != 0) {
       space_tracker->dump_usage(segment);
       assert(space_tracker->get_usage(segment) == 0);
     }
     segment_info.set_empty();
+    stats.empty_segments++;
+    crimson::get_logger(ceph_subsys_seastore
+      ).info("mark empty: {}, empty_segments {}", segment, stats.empty_segments);
     if (!segment_info.out_of_line) {
       segments.journal_segment_emptied();
     }
@@ -1252,7 +1270,6 @@ private:
   }
 
   void mark_open(segment_id_t segment) {
-    crimson::get_logger(ceph_subsys_seastore).debug("mark open: {}", segment);
     assert(segment.device_id() ==
       segments[segment.device_id()]->device_id);
     assert(segment.device_segment_id() <
@@ -1261,6 +1278,9 @@ private:
     assert(segments.get_empty_segments(segment.device_id()) > 0);
     segments.segment_used(segment);
     segments[segment].set_open();
+    stats.empty_segments--;
+    crimson::get_logger(ceph_subsys_seastore
+      ).info("mark open: {}, empty_segments {}", segment, stats.empty_segments);
   }
 };
 using SegmentCleanerRef = std::unique_ptr<SegmentCleaner>;
