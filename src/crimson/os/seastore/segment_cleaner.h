@@ -48,6 +48,7 @@ class segment_info_set_t {
     size_t empty_segments = 0;
     size_t size = 0;
     size_t avail_bytes = 0;
+    std::map<segment_id_t, segment_off_t> open_segment_avails;
   };
 
   struct segment_info_t {
@@ -156,23 +157,58 @@ public:
 
   // the following methods are used for keeping track of
   // seastore disk space usage
-  void segment_used(segment_id_t segment, bool full_unavail = false) {
+  void segment_used(segment_id_t segment) {
     auto& sm_info = sm_infos[segment.device_id()];
     sm_info->empty_segments--;
-    if (full_unavail)
-      sm_info->avail_bytes -= sm_info->segment_size;
+    ceph_assert(segments[segment].is_empty());
+    // must be opening a new segment
+    auto [iter, inserted] = sm_info->open_segment_avails.emplace(
+      segment, sm_info->segment_size);
+    ceph_assert(inserted);
   }
   void segment_emptied(segment_id_t segment) {
     auto& sm_info = sm_infos[segment.device_id()];
     sm_info->empty_segments++;
     sm_info->avail_bytes += sm_info->segment_size;
   }
-  void space_used(paddr_t addr, extent_len_t len) {
-    auto& sm_info = sm_infos[addr.get_device_id()];
-    sm_info->avail_bytes -= len;
+  void segment_closed(segment_id_t segment) {
+    auto& segment_info = segments[segment];
+    auto& sm_info = sm_infos[segment.device_id()];
+    if (segment_info.is_open()) {
+      auto iter = sm_info->open_segment_avails.find(segment);
+      ceph_assert(iter != sm_info->open_segment_avails.end());
+      sm_info->avail_bytes -= iter->second;
+      sm_info->open_segment_avails.erase(iter);
+    } else {
+      ceph_assert(segment_info.is_empty());
+      sm_info->avail_bytes -= sm_info->segment_size;
+      sm_info->empty_segments--;
+    }
+    segment_info.set_closed();
+  }
+  void update_segment_avail_bytes(paddr_t offset) {
+    auto segment_id = offset.as_seg_paddr().get_segment_id();
+    auto& sm_info = sm_infos[segment_id.device_id()];
+    auto iter = sm_info->open_segment_avails.find(segment_id);
+    if (iter == sm_info->open_segment_avails.end()) {
+      crimson::get_logger(ceph_subsys_seastore).info(
+	"SegmentCleaner::update_segment_avail_bytes: segment closed {}, not updating", offset);
+      return;
+    }
+    auto new_avail_bytes = sm_info->segment_size - offset.as_seg_paddr().get_segment_off();
+    if (iter->second < new_avail_bytes) {
+      crimson::get_logger(ceph_subsys_seastore).info(
+	"SegmentCleaner::update_segment_avail_bytes: avail_bytes increased? , {}, {}", iter->second, new_avail_bytes);
+      ceph_assert(iter->second >= new_avail_bytes);
+    }
+    sm_info->avail_bytes -= iter->second - new_avail_bytes;
+    iter->second = new_avail_bytes;
   }
   size_t get_empty_segments(device_id_t d_id) {
     return sm_infos[d_id]->empty_segments;
+  }
+  size_t get_opened_segments(device_id_t d_id) {
+    return sm_infos[d_id]->open_segment_avails.size();
   }
   size_t get_total_bytes() const {
     return total_bytes;
@@ -234,6 +270,8 @@ public:
     bool out_of_line) {}
 
   virtual segment_seq_t get_seq(segment_id_t id) { return 0; }
+
+  virtual void update_segment_avail_bytes(paddr_t offset) = 0;
 
   virtual ~SegmentProvider() {}
 };
@@ -594,6 +632,7 @@ private:
     uint64_t segments_released = 0;
     uint64_t accumulative_blocked_ios = 0;
     uint64_t empty_segments = 0;
+    uint64_t opened_segments = 0;
     int64_t ios_blocking = 0;
   } stats;
   seastar::metrics::metric_group metrics;
@@ -628,6 +667,7 @@ public:
       "SegmentCleaner::mount: {} segment managers", sms.size());
     init_complete = false;
     stats.used_bytes = 0;
+    stats.empty_segments = 0;
     journal_tail_target = journal_seq_t{};
     journal_tail_committed = journal_seq_t{};
     journal_head = journal_seq_t{};
@@ -701,7 +741,14 @@ public:
   void set_journal_head(journal_seq_t head) {
     assert(journal_head == journal_seq_t() || head >= journal_head);
     journal_head = head;
+    segments.update_segment_avail_bytes(head.offset);
     gc_process.maybe_wake_on_space_used();
+  }
+
+  void update_segment_avail_bytes(paddr_t offset) final {
+    segments.update_segment_avail_bytes(offset);
+    stats.avail_bytes = segments.get_available_bytes(
+      offset.as_seg_paddr().get_segment_id().device_id());
   }
 
   journal_seq_t get_journal_head() const {
@@ -753,7 +800,6 @@ public:
       seg_addr.get_segment_id(),
       seg_addr.get_segment_off(),
       len);
-    segments.space_used(addr, len);
     gc_process.maybe_wake_on_space_used();
     assert(ret > 0);
   }
@@ -1235,15 +1281,21 @@ private:
     } else {
       assert(segments[segment].is_empty());
       assert(segments.get_empty_segments(segment.device_id()) > 0);
-      segments.segment_used(segment, true);
-      stats.avail_bytes -= segments[segment.device_id()]->segment_size;
       stats.empty_segments--;
     }
-    crimson::get_logger(ceph_subsys_seastore).debug(
-      "mark_closed: device: {} empty_segments: {}",
-      segment.device_id(),
-      segments.get_empty_segments(segment.device_id()));
-    segments[segment].set_closed();
+    segments.segment_closed(segment);
+    stats.avail_bytes = segments.get_available_bytes(segment.device_id());
+    stats.opened_segments = segments.get_opened_segments(segment.device_id());
+    crimson::get_logger(ceph_subsys_seastore).info(
+      "mark closed: {} empty_segments: {}"
+      ", opened_segments {}, should_block_on_gc {}"
+      ", projected_avail_ratio {}, projected_reclaim_ratio {}",
+      segment,
+      segments.get_empty_segments(segment.device_id()),
+      stats.opened_segments,
+      should_block_on_gc(),
+      get_projected_available_ratio(),
+      get_projected_reclaim_ratio());
   }
 
   void mark_empty(segment_id_t segment) {
@@ -1254,15 +1306,24 @@ private:
       segments[segment.device_id()]->num_segments);
     assert(segment_info.is_closed());
     segments.segment_emptied(segment);
-    stats.avail_bytes += segments[segment.device_id()]->segment_size;
+    stats.avail_bytes = segments.get_available_bytes(segment.device_id());
     if (space_tracker->get_usage(segment) != 0) {
       space_tracker->dump_usage(segment);
       assert(space_tracker->get_usage(segment) == 0);
     }
     segment_info.set_empty();
     stats.empty_segments++;
+    stats.opened_segments = segments.get_opened_segments(segment.device_id());
     crimson::get_logger(ceph_subsys_seastore
-      ).info("mark empty: {}, empty_segments {}", segment, stats.empty_segments);
+      ).info("mark empty: {}, empty_segments {}"
+	", opened_segments {}, should_block_on_gc {}"
+	", projected_avail_ratio {}, projected_reclaim_ratio {}",
+	segment,
+	stats.empty_segments,
+	stats.opened_segments,
+	should_block_on_gc(),
+	get_projected_available_ratio(),
+	get_projected_reclaim_ratio());
     if (!segment_info.out_of_line) {
       segments.journal_segment_emptied();
     }
@@ -1279,8 +1340,17 @@ private:
     segments.segment_used(segment);
     segments[segment].set_open();
     stats.empty_segments--;
+    stats.opened_segments = segments.get_opened_segments(segment.device_id());
     crimson::get_logger(ceph_subsys_seastore
-      ).info("mark open: {}, empty_segments {}", segment, stats.empty_segments);
+      ).info("mark open: {}, empty_segments {}"
+	", opened_segments {}, should_block_on_gc {}"
+	", projected_avail_ratio {}, projected_reclaim_ratio {}",
+	segment,
+	stats.empty_segments,
+	stats.opened_segments,
+	should_block_on_gc(),
+	get_projected_available_ratio(),
+	get_projected_reclaim_ratio());
   }
 };
 using SegmentCleanerRef = std::unique_ptr<SegmentCleaner>;
