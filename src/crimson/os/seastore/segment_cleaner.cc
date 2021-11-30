@@ -422,7 +422,7 @@ SegmentCleaner::init_segments_ret SegmentCleaner::init_segments() {
 	  segment_id
 	).safe_then([&segment_set, segment_id, this](auto header) {
 	  if (header.out_of_line) {
-	    logger().debug(
+	    logger().info(
 	      "ExtentReader::init_segments: out-of-line segment {}",
 	      segment_id);
 	    init_mark_segment_closed(
@@ -430,7 +430,7 @@ SegmentCleaner::init_segments_ret SegmentCleaner::init_segments() {
 	      header.journal_segment_seq,
 	      true);
 	  } else {
-	    logger().debug(
+	    logger().info(
 	      "ExtentReader::init_segments: journal segment {}",
 	      segment_id);
 	    segment_set.emplace_back(std::make_pair(segment_id, std::move(header)));
