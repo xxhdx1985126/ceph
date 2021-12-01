@@ -197,6 +197,12 @@ void SegmentCleaner::register_metrics()
 		     sm::description("total number of extents released by SegmentCleaner")),
     sm::make_counter("accumulated_blocked_ios", stats.accumulative_blocked_ios,
 		     sm::description("accumulative total number of ios that were blocked by gc")),
+    sm::make_counter("reclaimed_segments", stats.reclaimed_segments,
+		     sm::description("reclaimed segments")),
+    sm::make_counter("reclaim_rewrite_bytes", stats.reclaim_rewrite_bytes,
+		     sm::description("rewritten bytes due to reclaim")),
+    sm::make_derive("reclaiming_rewrite_bytes", stats.reclaiming_rewrite_bytes,
+		    sm::description("current reclaiming segment's rewritten bytes")),
     sm::make_derive("empty_segments", stats.empty_segments,
 		    sm::description("current empty segments")),
     sm::make_derive("ios_blocking", stats.ios_blocking,
@@ -426,6 +432,7 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
 		    assert(info.last_modified <=
 		      ext->get_last_modified().time_since_epoch().count());
 		  }
+		  stats.reclaiming_rewrite_bytes += ext->get_length();
 		  ext->set_last_modified(ceph::real_clock::now());
 		  return ecb->rewrite_extent(
 		    t,
@@ -453,6 +460,9 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
     });
   }).safe_then([this] {
     if (scan_cursor->is_complete()) {
+      stats.reclaim_rewrite_bytes += stats.reclaiming_rewrite_bytes;
+      stats.reclaiming_rewrite_bytes = 0;
+      stats.reclaimed_segments++;
       scan_cursor.reset();
     }
   });
