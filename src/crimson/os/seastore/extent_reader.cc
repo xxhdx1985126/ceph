@@ -106,8 +106,8 @@ ExtentReader::scan_extents_ret ExtentReader::scan_extents(
           cursor,
           segment_nonce,
           bytes_to_read,
-          dhandler
-        ).discard_result();
+          dhandler,
+          true).discard_result();
       }
     );
   }).safe_then([ret=std::move(ret)] {
@@ -119,7 +119,8 @@ ExtentReader::scan_valid_records_ret ExtentReader::scan_valid_records(
   scan_valid_records_cursor &cursor,
   segment_nonce_t nonce,
   size_t budget,
-  found_record_handler_t &handler)
+  found_record_handler_t &handler,
+  bool may_prefetch)
 {
   auto& segment_manager =
     *segment_managers[cursor.get_segment_id().device_id()];
@@ -133,7 +134,8 @@ ExtentReader::scan_valid_records_ret ExtentReader::scan_valid_records(
     -> scan_valid_records_ertr::future<seastar::stop_iteration> {
       return [=, &handler, &cursor, &budget_used] {
 	if (!cursor.last_valid_header_found) {
-	  return read_validate_record_metadata(cursor.seq.offset, nonce
+	  return read_validate_record_metadata(
+            cursor.seq.offset, nonce, may_prefetch
 	  ).safe_then([=, &cursor](auto md) {
 	    logger().debug(
 	      "ExtentReader::scan_valid_records: read complete {}",
@@ -194,7 +196,7 @@ ExtentReader::scan_valid_records_ret ExtentReader::scan_valid_records(
 	} else {
 	  assert(!cursor.pending_record_groups.empty());
 	  auto &next = cursor.pending_record_groups.front();
-	  return read_validate_data(next.offset, next.header
+	  return read_validate_data(next.offset, next.header, may_prefetch
 	  ).safe_then([this, &budget_used, &cursor, &handler](auto valid) {
 	    if (!valid) {
 	      cursor.pending_record_groups.clear();
@@ -217,10 +219,112 @@ ExtentReader::scan_valid_records_ret ExtentReader::scan_valid_records(
     });
 }
 
+bufferptr ExtentReader::_read_from_buffers(
+  paddr_t addr,
+  size_t len)
+{
+  auto& seg_addr = addr.as_seg_paddr();
+  auto iter = prefetched_buffers.begin();
+  assert(iter->offset.as_seg_paddr().get_segment_id()
+    == seg_addr.get_segment_id());
+  assert(iter->offset <= addr &&
+    (size_t)(iter->offset.as_seg_paddr().get_segment_off() + iter->length) >
+      seg_addr.get_segment_off() + len);
+
+  auto bp = ceph::bufferptr(buffer::create_page_aligned(len));
+  bp.zero();
+  size_t left = len;
+  size_t start_off = seg_addr.get_segment_off();
+  size_t off = 0;
+  while (left) {
+    auto& buffer = prefetched_buffers.front();
+    auto buffer_start = buffer.offset.as_seg_paddr().get_segment_off();
+    size_t copy_len =
+      std::min((size_t)(buffer_start + buffer.length) - start_off, left);
+    bp.copy_in(off, copy_len, buffer.ptr.c_str() + start_off - buffer_start);
+    off += copy_len;
+    left -= copy_len;
+    start_off += copy_len;
+    if (start_off >= buffer_start + buffer.length) {
+      prefetched_buffers.pop_front();
+    }
+  }
+  assert(off == len);
+  return bp;
+}
+
+ExtentReader::read_ertr::future<bufferptr>
+ExtentReader::_scan_may_prefetch(
+  paddr_t addr,
+  size_t len)
+{
+  assert(len > 0);
+  auto& seg_addr = addr.as_seg_paddr();
+
+  if (!prefetched_buffers.empty() &&
+      (seg_addr.get_segment_id() !=
+        prefetched_buffers.back().offset.as_seg_paddr().get_segment_id() ||
+       (size_t)(seg_addr.get_segment_off()) >=
+        prefetched_buffers.back().offset.as_seg_paddr().get_segment_off() +
+          prefetched_buffers.back().length)) {
+    // the segment being scanned must have changed, drop all cached buffers
+    prefetched_buffers.clear();
+  }
+
+  if (prefetched_buffers.empty()) {
+    auto& segment_manager = *segment_managers[seg_addr.get_segment_id().device_id()];
+    auto next_buffer_len = std::min(((len + PREFETCH_SIZE) / PREFETCH_SIZE * PREFETCH_SIZE),
+      (size_t)(segment_manager.get_segment_size() -
+                addr.as_seg_paddr().get_segment_off()));
+    return segment_manager.read(
+      addr,
+      next_buffer_len
+    ).safe_then([this, addr, len, next_buffer_len](bufferptr ptr) {
+      prefetched_buffers.emplace_back(
+        prefetched_buffer{std::move(ptr), addr, next_buffer_len});
+      return read_ertr::make_ready_future<bufferptr>(_read_from_buffers(addr, len));
+    });
+  }
+
+  auto& tail = prefetched_buffers.back().offset.as_seg_paddr();
+  auto tail_len = prefetched_buffers.back().length;
+
+  assert(seg_addr.get_segment_id() == tail.get_segment_id());
+
+  if (tail.get_segment_off() + tail_len
+      >= seg_addr.get_segment_off() + len) {
+    return read_ertr::make_ready_future<bufferptr>(_read_from_buffers(addr, len));
+  }
+  auto next_buffer_addr = paddr_t::make_seg_paddr(
+    tail.get_segment_id(),
+    tail.get_segment_off() + tail_len);
+  size_t need = seg_addr.get_segment_off() + len
+    - (tail.get_segment_off() + tail_len);
+  assert(need);
+  auto& segment_manager = *segment_managers[seg_addr.get_segment_id().device_id()];
+  auto next_buffer_len = (!(need % PREFETCH_SIZE))
+    ? need
+    : std::min(((need + PREFETCH_SIZE) / PREFETCH_SIZE * PREFETCH_SIZE),
+        (size_t)(segment_manager.get_segment_size() -
+          next_buffer_addr.as_seg_paddr().get_segment_off()));
+  return segment_manager.read(
+    next_buffer_addr,
+    next_buffer_len
+  ).safe_then([this, addr, len, next_buffer_addr, next_buffer_len](bufferptr ptr) {
+    prefetched_buffers.emplace_back(
+      prefetched_buffer{
+        std::move(ptr),
+        next_buffer_addr,
+        next_buffer_len});
+    return read_ertr::make_ready_future<bufferptr>(_read_from_buffers(addr, len));
+  });
+}
+
 ExtentReader::read_validate_record_metadata_ret
 ExtentReader::read_validate_record_metadata(
   paddr_t start,
-  segment_nonce_t nonce)
+  segment_nonce_t nonce,
+  bool may_prefetch)
 {
   auto& seg_addr = start.as_seg_paddr();
   auto& segment_manager = *segment_managers[seg_addr.get_segment_id().device_id()];
@@ -234,8 +338,12 @@ ExtentReader::read_validate_record_metadata(
   }
   logger().debug("read_validate_record_metadata: reading header block {}...",
                  start);
-  return segment_manager.read(start, block_size
-  ).safe_then([=, &segment_manager](bufferptr bptr) mutable
+  return [this, start, block_size, may_prefetch, &segment_manager] {
+    if (may_prefetch) {
+      return _scan_may_prefetch(start, block_size);
+    }
+    return segment_manager.read(start, block_size);
+  }().safe_then([=, &segment_manager](bufferptr bptr) mutable
               -> read_validate_record_metadata_ret {
     auto block_size = static_cast<extent_len_t>(
         segment_manager.get_block_size());
@@ -295,16 +403,23 @@ ExtentReader::read_validate_record_metadata(
 ExtentReader::read_validate_data_ret
 ExtentReader::read_validate_data(
   paddr_t record_base,
-  const record_group_header_t &header)
+  const record_group_header_t &header,
+  bool may_prefetch)
 {
   auto& segment_manager = *segment_managers[record_base.get_device_id()];
   auto data_addr = record_base.add_offset(header.mdlength);
   logger().debug("read_validate_data: reading data blocks {}+{}...",
                  data_addr, header.dlength);
-  return segment_manager.read(
-    data_addr,
-    header.dlength
-  ).safe_then([=, &header](auto bptr) {
+  return [this, &header, &data_addr, may_prefetch, &segment_manager] {
+    if (may_prefetch) {
+      return _scan_may_prefetch(
+        data_addr,
+        header.dlength);
+    }
+    return segment_manager.read(
+      data_addr,
+      header.dlength);
+  }().safe_then([=, &header](auto bptr) {
     bufferlist bl;
     bl.append(bptr);
     return validate_records_data(header, bl);

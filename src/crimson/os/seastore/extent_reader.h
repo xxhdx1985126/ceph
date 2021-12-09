@@ -7,10 +7,18 @@
 #include "crimson/os/seastore/seastore_types.h"
 #include "crimson/os/seastore/segment_manager.h"
 
+#define PREFETCH_SIZE (4 * 1024 * 1024)
+
 namespace crimson::os::seastore {
 
 class SegmentCleaner;
 class TransactionManager;
+
+struct prefetched_buffer {
+  ceph::bufferptr ptr;
+  paddr_t offset;
+  size_t length;
+};
 
 class ExtentReader {
 public:
@@ -65,7 +73,8 @@ public:
     scan_valid_records_cursor &cursor, ///< [in, out] cursor, updated during call
     segment_nonce_t nonce,             ///< [in] nonce for segment
     size_t budget,                     ///< [in] max budget to use
-    found_record_handler_t &handler    ///< [in] handler for records
+    found_record_handler_t &handler,   ///< [in] handler for records
+    bool may_prefetch = false          ///< [in] whether to prefetch data
   ); ///< @return used budget
 
   void add_segment_manager(SegmentManager* segment_manager) {
@@ -84,6 +93,15 @@ public:
 
 private:
   std::vector<SegmentManager*> segment_managers;
+  std::deque<prefetched_buffer> prefetched_buffers;
+
+  read_ertr::future<bufferptr> _scan_may_prefetch(
+    paddr_t addr,
+    size_t len);
+
+  bufferptr _read_from_buffers(
+    paddr_t addr,
+    size_t len);
 
   std::vector<SegmentManager*>& get_segment_managers() {
     return segment_managers;
@@ -96,15 +114,17 @@ private:
     >;
   read_validate_record_metadata_ret read_validate_record_metadata(
     paddr_t start,
-    segment_nonce_t nonce);
+    segment_nonce_t nonce,
+    bool may_prefetch);
 
   /// read and validate data
   using read_validate_data_ertr = read_ertr;
   using read_validate_data_ret = read_validate_data_ertr::future<bool>;
   read_validate_data_ret read_validate_data(
     paddr_t record_base,
-    const record_group_header_t &header  ///< caller must ensure lifetime through
+    const record_group_header_t &header, ///< caller must ensure lifetime through
                                          ///  future resolution
+    bool may_prefetch
   );
 
   using consume_record_group_ertr = scan_valid_records_ertr;
