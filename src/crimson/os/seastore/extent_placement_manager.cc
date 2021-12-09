@@ -20,6 +20,12 @@ SegmentedAllocator::SegmentedAllocator(
   Cache& cache)
   : segment_provider(sp),
     segment_manager(sm),
+    rewriter(
+      segment_provider,
+      segment_manager,
+      lba_manager,
+      journal,
+      cache),
     lba_manager(lba_manager),
     journal(journal),
     cache(cache)
@@ -27,7 +33,7 @@ SegmentedAllocator::SegmentedAllocator(
   std::generate_n(
     std::back_inserter(writers),
     crimson::common::get_conf<uint64_t>(
-      "seastore_init_rewrite_segments_num_per_device"),
+      "seastore_init_write_segments_num_per_device"),
     [&] {
       return Writer{
 	segment_provider,

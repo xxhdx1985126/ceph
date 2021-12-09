@@ -374,7 +374,7 @@ public:
     return (double)seg_bytes.live_bytes / (double)seg_bytes.total_bytes;
   }
 
-  void dump_usage(segment_id_t) const final {}
+  void dump_usage(segment_id_t) const final;
 
   void reset() final {
     for (auto &i : live_bytes_by_segment) {
