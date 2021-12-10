@@ -1193,7 +1193,7 @@ Cache::replay_delta(
     return replay_delta_ertr::now();
   } else {
     auto _get_extent_if_cached = [this](paddr_t addr)
-      -> get_extent_ertr::future<CachedExtentRef> {
+      -> get_extent_iertr::future<CachedExtentRef> {
       // replay is not included by the cache hit metrics
       auto ret = query_cache(addr, nullptr);
       if (ret) {
@@ -1218,13 +1218,13 @@ Cache::replay_delta(
         [](CachedExtent &) {}) :
       _get_extent_if_cached(
 	delta.paddr)
-    ).handle_error(
+    ).handle_error_interruptible(
       replay_delta_ertr::pass_further{},
       crimson::ct_error::assert_all{
 	"Invalid error in Cache::replay_delta"
       }
     );
-    return extent_fut.safe_then([=, &delta](auto extent) {
+    return extent_fut.si_then([=, &delta](auto extent) {
       if (!extent) {
 	assert(delta.pversion > 0);
 	DEBUG(
@@ -1349,7 +1349,7 @@ Cache::get_root_ret Cache::get_root(Transaction &t)
   }
 }
 
-Cache::get_extent_ertr::future<CachedExtentRef> Cache::_get_extent_by_type(
+Cache::get_extent_iertr::future<CachedExtentRef> Cache::_get_extent_by_type(
   extent_types_t type,
   paddr_t offset,
   laddr_t laddr,
@@ -1357,7 +1357,8 @@ Cache::get_extent_ertr::future<CachedExtentRef> Cache::_get_extent_by_type(
   const Transaction::src_t* p_src,
   extent_init_func_t &&extent_init_func)
 {
-  return [=, extent_init_func=std::move(extent_init_func)]() mutable {
+  return [=, extent_init_func=std::move(extent_init_func)]() mutable 
+    -> get_extent_iertr::future<CachedExtentRef> {
     src_ext_t* p_metric_key = nullptr;
     src_ext_t metric_key;
     if (p_src) {
@@ -1372,43 +1373,43 @@ Cache::get_extent_ertr::future<CachedExtentRef> Cache::_get_extent_by_type(
     case extent_types_t::LADDR_INTERNAL:
       return get_extent<lba_manager::btree::LBAInternalNode>(
 	offset, length, p_metric_key, std::move(extent_init_func)
-      ).safe_then([](auto extent) {
+      ).si_then([](auto extent) {
 	return CachedExtentRef(extent.detach(), false /* add_ref */);
       });
     case extent_types_t::LADDR_LEAF:
       return get_extent<lba_manager::btree::LBALeafNode>(
 	offset, length, p_metric_key, std::move(extent_init_func)
-      ).safe_then([](auto extent) {
+      ).si_then([](auto extent) {
 	return CachedExtentRef(extent.detach(), false /* add_ref */);
       });
     case extent_types_t::OMAP_INNER:
       return get_extent<omap_manager::OMapInnerNode>(
           offset, length, p_metric_key, std::move(extent_init_func)
-      ).safe_then([](auto extent) {
+      ).si_then([](auto extent) {
         return CachedExtentRef(extent.detach(), false /* add_ref */);
       });
     case extent_types_t::OMAP_LEAF:
       return get_extent<omap_manager::OMapLeafNode>(
           offset, length, p_metric_key, std::move(extent_init_func)
-      ).safe_then([](auto extent) {
+      ).si_then([](auto extent) {
         return CachedExtentRef(extent.detach(), false /* add_ref */);
       });
     case extent_types_t::COLL_BLOCK:
       return get_extent<collection_manager::CollectionNode>(
           offset, length, p_metric_key, std::move(extent_init_func)
-      ).safe_then([](auto extent) {
+      ).si_then([](auto extent) {
         return CachedExtentRef(extent.detach(), false /* add_ref */);
       });
     case extent_types_t::ONODE_BLOCK_STAGED:
       return get_extent<onode::SeastoreNodeExtent>(
           offset, length, p_metric_key, std::move(extent_init_func)
-      ).safe_then([](auto extent) {
+      ).si_then([](auto extent) {
 	return CachedExtentRef(extent.detach(), false /* add_ref */);
       });
     case extent_types_t::OBJECT_DATA_BLOCK:
       return get_extent<ObjectDataBlock>(
           offset, length, p_metric_key, std::move(extent_init_func)
-      ).safe_then([](auto extent) {
+      ).si_then([](auto extent) {
 	return CachedExtentRef(extent.detach(), false /* add_ref */);
       });
     case extent_types_t::RETIRED_PLACEHOLDER:
@@ -1417,13 +1418,13 @@ Cache::get_extent_ertr::future<CachedExtentRef> Cache::_get_extent_by_type(
     case extent_types_t::TEST_BLOCK:
       return get_extent<TestBlock>(
           offset, length, p_metric_key, std::move(extent_init_func)
-      ).safe_then([](auto extent) {
+      ).si_then([](auto extent) {
 	return CachedExtentRef(extent.detach(), false /* add_ref */);
       });
     case extent_types_t::TEST_BLOCK_PHYSICAL:
       return get_extent<TestBlockPhysical>(
           offset, length, p_metric_key, std::move(extent_init_func)
-      ).safe_then([](auto extent) {
+      ).si_then([](auto extent) {
 	return CachedExtentRef(extent.detach(), false /* add_ref */);
       });
     case extent_types_t::NONE: {
@@ -1434,7 +1435,7 @@ Cache::get_extent_ertr::future<CachedExtentRef> Cache::_get_extent_by_type(
       ceph_assert(0 == "impossible");
       return get_extent_ertr::make_ready_future<CachedExtentRef>();
     }
-  }().safe_then([laddr](CachedExtentRef e) {
+  }().si_then([laddr](CachedExtentRef e) {
     assert(e->is_logical() == (laddr != L_ADDR_NULL));
     if (e->is_logical()) {
       e->cast<LogicalCachedExtent>()->set_laddr(laddr);

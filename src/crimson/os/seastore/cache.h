@@ -176,8 +176,9 @@ public:
    */
   using src_ext_t = std::pair<Transaction::src_t, extent_types_t>;
   using get_extent_ertr = base_ertr;
+  using get_extent_iertr = base_iertr;
   template <typename T>
-  using get_extent_ret = get_extent_ertr::future<TCachedExtentRef<T>>;
+  using get_extent_ret = get_extent_iertr::future<TCachedExtentRef<T>>;
   template <typename T, typename Func>
   get_extent_ret<T> get_extent(
     paddr_t offset,                ///< [in] starting addr
@@ -295,7 +296,6 @@ public:
    *
    * t *must not* have retired offset
    */
-  using get_extent_iertr = base_iertr;
   template <typename T, typename Func>
   get_extent_iertr::future<TCachedExtentRef<T>> get_extent(
     Transaction &t,
@@ -314,10 +314,9 @@ public:
 	ret->cast<T>());
     } else {
       auto metric_key = std::make_pair(t.get_src(), T::TYPE);
-      return trans_intr::make_interruptible(
-	get_extent<T>(
+      return get_extent<T>(
 	  offset, length, &metric_key,
-	  std::forward<Func>(extent_init_func))
+	  std::forward<Func>(extent_init_func)
       ).si_then([this, FNAME, offset, &t](auto ref) {
 	(void)this; // silence incorrect clang warning about capture
 	if (!ref->is_valid()) {
@@ -378,7 +377,7 @@ private:
       return (*wrapped)(extent);
     }
   };
-  get_extent_ertr::future<CachedExtentRef> _get_extent_by_type(
+  get_extent_iertr::future<CachedExtentRef> _get_extent_by_type(
     extent_types_t type,
     paddr_t offset,
     laddr_t laddr,
@@ -405,10 +404,9 @@ private:
       return seastar::make_ready_future<CachedExtentRef>(ret);
     } else {
       auto src = t.get_src();
-      return trans_intr::make_interruptible(
-	_get_extent_by_type(
+      return _get_extent_by_type(
 	  type, offset, laddr, length, &src,
-	  std::move(extent_init_func))
+	  std::move(extent_init_func)
       ).si_then([=, &t](CachedExtentRef ret) {
         if (!ret->is_valid()) {
           LOG_PREFIX(Cache::get_extent_by_type);
@@ -568,7 +566,7 @@ public:
    * read relevant block from disk or cache (using correct type), and call
    * CachedExtent::apply_delta marking the extent dirty.
    */
-  using replay_delta_ertr = crimson::errorator<
+  using replay_delta_iertr = crimson::errorator<
     crimson::ct_error::input_output_error>;
   using replay_delta_ret = replay_delta_ertr::future<>;
   replay_delta_ret replay_delta(
@@ -887,11 +885,11 @@ private:
   ) {
     assert(extent->state == CachedExtent::extent_state_t::CLEAN_PENDING);
     extent->set_io_wait();
-    return reader.read(
+    return trans_intr::make_interruptible(reader.read(
       extent->get_paddr(),
       extent->get_length(),
       extent->get_bptr()
-    ).safe_then(
+    )).si_then(
       [extent=std::move(extent), func=std::forward<Func>(func)]() mutable {
         extent->state = CachedExtent::extent_state_t::CLEAN;
         /* TODO: crc should be checked against LBA manager */

@@ -4,6 +4,7 @@
 #include "include/denc.h"
 #include "include/intarith.h"
 
+#include "crimson/common/interrupt_condition_placeholder.h"
 #include "crimson/os/seastore/logging.h"
 #include "crimson/os/seastore/transaction_manager.h"
 #include "crimson/os/seastore/segment_manager.h"
@@ -82,10 +83,14 @@ TransactionManager::mount_ertr::future<> TransactionManager::mount()
       auto start_seq = offsets.write_result.start_seq;
       segment_cleaner->update_journal_tail_target(
           cache->get_oldest_dirty_from().value_or(start_seq));
-      return cache->replay_delta(
-          start_seq,
-          offsets.record_block_base,
-          e);
+      return crimson::interruptible::interruptor<
+	crimson::interruptible::InterruptConditionPlaceHolder>::with_interruption(
+	[this, offsets, e, start_seq] {
+	return cache->replay_delta(
+	    start_seq,
+	    offsets.record_block_base,
+	    e);
+      }, [] { return seastar::now(); });
     });
   }).safe_then([this] {
     return journal->open_for_write();
