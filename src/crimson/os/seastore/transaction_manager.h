@@ -155,7 +155,9 @@ public:
       t,
       pref.get_paddr(),
       pref.get_length(),
-      [this, pin=std::move(pin)](T &extent) mutable {
+      [this, pin=std::move(pin), &t](T &extent) mutable {
+	LOG_PREFIX(TransactionManager::pin_to_extent);
+	DEBUGT("initting extent {}, pin {}", t, extent, *pin);
 	if (!extent.has_pin()) {
 	  assert(!(extent.has_been_invalidated() ||
 		   pin->has_been_invalidated()));

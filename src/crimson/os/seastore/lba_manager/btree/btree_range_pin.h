@@ -280,6 +280,8 @@ public:
     return ret;
   }
 
+  std::ostream& print_detail(std::ostream& out) const final;
+
   void take_pin(LBAPin &opin) final {
     pin.take_pin(static_cast<BtreeLBAPin&>(opin).pin);
   }

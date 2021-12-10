@@ -13,6 +13,13 @@ namespace {
 
 namespace crimson::os::seastore::lba_manager::btree {
 
+std::ostream& BtreeLBAPin::print_detail(std::ostream& out) const {
+  if (parent)
+    return out << " " << *parent;
+  else
+    return out << " empty parent";
+}
+
 void btree_range_pin_t::take_pin(btree_range_pin_t &other)
 {
   ceph_assert(other.extent);

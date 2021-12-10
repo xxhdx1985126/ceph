@@ -644,6 +644,7 @@ public:
   virtual laddr_t get_laddr() const = 0;
   virtual LBAPinRef duplicate() const = 0;
   virtual bool has_been_invalidated() const = 0;
+  virtual std::ostream& print_detail(std::ostream&) const = 0;
 
   virtual ~LBAPin() {}
 };
