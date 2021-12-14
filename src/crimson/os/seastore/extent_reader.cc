@@ -220,6 +220,7 @@ ExtentReader::scan_valid_records_ret ExtentReader::scan_valid_records(
 	}
       }().safe_then([=, &budget_used, &cursor] {
 	if (cursor.is_complete() || budget_used >= budget) {
+          prefetched_buffers.clear();
 	  return seastar::stop_iteration::yes;
 	} else {
 	  return seastar::stop_iteration::no;
@@ -238,10 +239,11 @@ bufferptr ExtentReader::_read_from_buffers(
 {
   auto& seg_addr = addr.as_seg_paddr();
   auto iter = prefetched_buffers.begin();
+  auto riter = prefetched_buffers.rbegin();
   assert(iter->offset.as_seg_paddr().get_segment_id()
     == seg_addr.get_segment_id());
   assert(iter->offset <= addr &&
-    (size_t)(iter->offset.as_seg_paddr().get_segment_off() + iter->length) >
+    (size_t)(riter->offset.as_seg_paddr().get_segment_off() + riter->length) >
       seg_addr.get_segment_off() + len);
 
   auto bp = ceph::bufferptr(buffer::create_page_aligned(len));
@@ -258,9 +260,6 @@ bufferptr ExtentReader::_read_from_buffers(
     off += copy_len;
     left -= copy_len;
     start_off += copy_len;
-    if (start_off >= buffer_start + buffer.length) {
-      prefetched_buffers.pop_front();
-    }
   }
   assert(off == len);
   return bp;
@@ -273,16 +272,6 @@ ExtentReader::_scan_may_prefetch(
 {
   assert(len > 0);
   auto& seg_addr = addr.as_seg_paddr();
-
-  if (!prefetched_buffers.empty() &&
-      (seg_addr.get_segment_id() !=
-        prefetched_buffers.back().offset.as_seg_paddr().get_segment_id() ||
-       (size_t)(seg_addr.get_segment_off()) >=
-        prefetched_buffers.back().offset.as_seg_paddr().get_segment_off() +
-          prefetched_buffers.back().length)) {
-    // the segment being scanned must have changed, drop all cached buffers
-    prefetched_buffers.clear();
-  }
 
   if (prefetched_buffers.empty()) {
     auto& segment_manager = *segment_managers[seg_addr.get_segment_id().device_id()];

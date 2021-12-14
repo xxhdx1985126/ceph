@@ -10,7 +10,7 @@
 #define LOGGER crimson::get_logger(ceph_subsys_seastore)
 #define LOG_PREFIX(x) constexpr auto FNAME = #x
 
-#ifdef NDEBUG
+//#ifdef NDEBUG
 
 #define LOG(level_, MSG, ...) LOGGER.log(level_, "{}: " MSG, FNAME , ##__VA_ARGS__)
 #define LOGT(level_, MSG, t, ...) LOGGER.log(level_, "{}({}): " MSG, FNAME, (void*)&t , ##__VA_ARGS__)
@@ -30,6 +30,7 @@
 #define ERROR(...) LOG(seastar::log_level::error, __VA_ARGS__)
 #define ERRORT(...) LOGT(seastar::log_level::error, __VA_ARGS__)
 
+/*
 #else
 // do compile-time format string validation
 using namespace fmt::literals;
@@ -51,4 +52,4 @@ void LOG(std::string_view info) {
 
 #define ERROR(MSG_, ...) LOG<seastar::log_level::error>("{}: " MSG_ ## _format(FNAME , ##__VA_ARGS__))
 #define ERRORT(MSG_, t_, ...) LOG<seastar::log_level::error>("{}({}): " MSG_ ## _format(FNAME, (void*)&t_ , ##__VA_ARGS__))
-#endif
+#endif*/
