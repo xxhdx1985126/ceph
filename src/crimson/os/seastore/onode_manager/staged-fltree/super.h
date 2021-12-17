@@ -97,6 +97,7 @@ class RootNodeTrackerIsolated final : public RootNodeTracker {
     return tracked_supers.empty();
   }
   void do_track_super(Transaction& t, Super& super) override {
+    crimson::get_logger(ceph_subsys_seastore).debug("{}, {}, {}", __func__, (void*)&t, (void*)&super);
     assert(tracked_supers.find(&t) == tracked_supers.end());
     tracked_supers[&t] = &super;
   }

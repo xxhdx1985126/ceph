@@ -15,6 +15,7 @@
 #include "include/uuid.h"
 
 #include "os/Transaction.h"
+#include "crimson/common/log.h"
 #include "crimson/os/futurized_collection.h"
 #include "crimson/os/futurized_store.h"
 
@@ -250,6 +251,7 @@ private:
           tname,
           [&, this](auto& t)
         {
+	  crimson::get_logger(ceph_subsys_seastore).debug("repeat_with_onode, {} repeating for {}", (void*)&t, oid);
           return onode_manager->get_onode(t, oid
           ).si_then([&](auto onode_ret) {
             onode = std::move(onode_ret);
@@ -259,7 +261,8 @@ private:
             ret = _ret;
           });
         });
-      }).safe_then([&ret, op_type, begin_time, this] {
+      }).safe_then([&ret, op_type, &oid, begin_time, this] {
+	crimson::get_logger(ceph_subsys_seastore).debug("repeat_with_onode, returning for {}", oid);
         const_cast<SeaStore*>(this)->add_latency_sample(op_type,
                    std::chrono::steady_clock::now() - begin_time);
         return seastar::make_ready_future<Ret>(ret);

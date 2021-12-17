@@ -364,6 +364,8 @@ class Btree {
   eagain_ifuture<Ref<Node>> get_root(Transaction& t) {
     auto root = root_tracker->get_root(t);
     if (root) {
+      LOG_PREFIX(Btree::get_root);
+      DEBUGT("Got root in root_tracker: {}", t, root);
       return seastar::make_ready_future<Ref<Node>>(root);
     } else {
       return Node::load_root(get_context(t), *root_tracker);
