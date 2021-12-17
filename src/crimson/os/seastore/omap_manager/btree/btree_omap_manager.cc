@@ -3,7 +3,7 @@
 
 #include <string.h>
 
-#include "crimson/common/log.h"
+#include "crimson/os/seastore/logging.h"
 
 #include "crimson/os/seastore/seastore_types.h"
 #include "crimson/os/seastore/omap_manager/btree/btree_omap_manager.h"
@@ -130,7 +130,8 @@ BtreeOMapManager::omap_set_key(
   const std::string &key,
   const ceph::bufferlist &value)
 {
-  logger().debug("{}: {} -> {}", __func__, key, value);
+  LOG_PREFIX(BtreeOMapManager::omap_set_key);
+  DEBUGT("{} -> {}", t, key, value);
   return get_omap_root(
     get_omap_context(t, omap_root.hint),
     omap_root

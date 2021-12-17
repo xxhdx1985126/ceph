@@ -46,6 +46,7 @@ namespace crimson::os::seastore::onode {
 
 class LeafNode;
 class InternalNode;
+class Value;
 
 using layout_version_t = uint32_t;
 struct node_version_t {
@@ -236,6 +237,7 @@ class tree_cursor_t final
 
   friend class LeafNode;
   friend class Node; // get_position(), get_leaf_node()
+  friend class Value;
 };
 
 /**

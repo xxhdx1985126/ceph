@@ -6,6 +6,7 @@
 #include <memory>
 
 #include "crimson/common/type_helpers.h"
+#include "crimson/common/log.h"
 
 #include "fwd.h"
 
@@ -100,6 +101,7 @@ class RootNodeTrackerIsolated final : public RootNodeTracker {
     tracked_supers[&t] = &super;
   }
   void do_untrack_super(Transaction& t, Super& super) override {
+    crimson::get_logger(ceph_subsys_seastore).debug("{}, {}, {}", __func__, (void*)&t, (void*)&super);
     [[maybe_unused]] auto removed = tracked_supers.erase(&t);
     assert(removed);
   }

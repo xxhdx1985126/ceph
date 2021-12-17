@@ -75,6 +75,7 @@ public:
   laddr_t get_data_hint() const {
     return get_hint();
   }
+  virtual std::ostream& print(std::ostream&) const = 0;
 };
 
 

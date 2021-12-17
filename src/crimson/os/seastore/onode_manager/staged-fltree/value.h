@@ -240,6 +240,8 @@ class Value {
     return reinterpret_cast<const PayloadT*>(read_value_header()->get_payload());
   }
 
+  std::ostream& print_val(std::ostream& out) const;
+
  private:
   const value_header_t* read_value_header() const;
   context_t get_context(Transaction& t) {

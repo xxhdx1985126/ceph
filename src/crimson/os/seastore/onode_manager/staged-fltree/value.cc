@@ -69,6 +69,10 @@ eagain_ifuture<> Value::trim(Transaction& t, value_size_t trim_size)
   ;
 }
 
+std::ostream& Value::print_val(std::ostream& out) const {
+  return p_cursor->get_leaf_node()->dump_brief(out);
+}
+
 const value_header_t* Value::read_value_header() const
 {
   auto ret = p_cursor->read_value_header(vb.get_header_magic());

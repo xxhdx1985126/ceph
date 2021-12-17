@@ -101,6 +101,11 @@ struct FLTreeOnode final : Onode, Value {
     status = status_t::DELETED;
   }
 
+  std::ostream& print(std::ostream& out) const final {
+    auto& tout = out << " parent_node: ";
+    return print_val(tout);
+  }
+
   laddr_t get_hint() const final {
     return Value::get_hint();
   }
