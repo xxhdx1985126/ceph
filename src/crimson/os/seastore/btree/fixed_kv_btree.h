@@ -26,6 +26,19 @@ struct op_context_t {
 template <typename T>
 Transaction::tree_stats_t& get_tree_stats(Transaction &t);
 
+template <typename T>
+struct max_key_t {};
+
+template <>
+struct max_key_t<laddr_t> {
+  static constexpr laddr_t max = L_ADDR_MAX;
+};
+
+template <>
+struct max_key_t<paddr_t> {
+  static constexpr paddr_t max = P_ADDR_MAX;
+};
+
 template <
   typename node_key_t,
   typename node_val_t,
@@ -305,7 +318,7 @@ public:
       c.trans,
       node_size);
     root_leaf->set_size(0);
-    fixed_kv_node_meta_t<node_key_t> meta{0, L_ADDR_MAX, 1};
+    fixed_kv_node_meta_t<node_key_t> meta{0, max_key_t<node_key_t>::max, 1};
     root_leaf->set_meta(meta);
     root_leaf->pin.set_range(meta);
     c.trans.get_lba_tree_stats().depth = 1u;
@@ -423,7 +436,7 @@ public:
     return lower_bound(c, 0);
   }
   iterator_fut end(op_context_t<node_key_t> c) const {
-    return upper_bound(c, L_ADDR_MAX);
+    return upper_bound(c, max_key_t<node_key_t>::max);
   }
 
   using iterate_repeat_ret_inner = base_iertr::future<
@@ -496,7 +509,7 @@ public:
       "inserting laddr {} at iter {}",
       c.trans,
       laddr,
-      iter.is_end() ? L_ADDR_MAX : iter.get_key());
+      iter.is_end() ? max_key_t<node_key_t>::max : iter.get_key());
     return seastar::do_with(
       iter,
       [this, c, laddr, val](auto &ret) {
@@ -567,7 +580,7 @@ public:
       seastore_lba_details,
       "update element at {}",
       c.trans,
-      iter.is_end() ? L_ADDR_MAX : iter.get_key());
+      iter.is_end() ? max_key_t<node_key_t>::max : iter.get_key());
     if (!iter.leaf.node->is_pending()) {
       CachedExtentRef mut = c.cache.duplicate_for_write(
         c.trans, iter.leaf.node
@@ -602,7 +615,7 @@ public:
       seastore_lba_details,
       "remove element at {}",
       c.trans,
-      iter.is_end() ? L_ADDR_MAX : iter.get_key());
+      iter.is_end() ? max_key_t<node_key_t>::max : iter.get_key());
     assert(!iter.is_end());
     ++(c.trans.get_lba_tree_stats().num_erases);
     return seastar::do_with(
@@ -1093,7 +1106,7 @@ private:
 	root.get_depth(),
 	root.get_location(),
 	0,
-	L_ADDR_MAX
+	max_key_t<node_key_t>::max
       ).si_then([this, visitor, &iter](InternalNodeRef root_node) {
 	iter.get_internal(root.get_depth()).node = root_node;
 	if (visitor) (*visitor)(root_node->get_paddr(), root_node->get_length());
@@ -1104,7 +1117,7 @@ private:
 	c,
 	root.get_location(),
 	0,
-	L_ADDR_MAX
+	max_key_t<node_key_t>::max
       ).si_then([visitor, &iter](LeafNodeRef root_node) {
 	iter.leaf.node = root_node;
 	if (visitor) (*visitor)(root_node->get_paddr(), root_node->get_length());
@@ -1363,7 +1376,8 @@ private:
     if (split_from == iter.get_depth()) {
       auto nroot = c.cache.template alloc_new_extent<internal_node_t>(
         c.trans, node_size);
-      fixed_kv_node_meta_t<node_key_t> meta{0, L_ADDR_MAX, iter.get_depth() + 1};
+      fixed_kv_node_meta_t<node_key_t> meta{
+        0, max_key_t<node_key_t>::max, iter.get_depth() + 1};
       nroot->set_meta(meta);
       nroot->pin.set_range(meta);
       nroot->journal_insert(
