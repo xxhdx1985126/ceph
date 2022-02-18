@@ -1228,6 +1228,7 @@ public:
 };
 
 using lba_root_t = phy_tree_root_t;
+using backref_root_t = phy_tree_root_t;
 
 /**
  * root_t
@@ -1240,6 +1241,7 @@ struct __attribute__((packed)) root_t {
 
   static constexpr int MAX_META_LENGTH = 1024;
 
+  backref_root_t backref_root;
   lba_root_t lba_root;
   laddr_le_t onode_root;
   coll_root_le_t collection_root;
@@ -1252,6 +1254,7 @@ struct __attribute__((packed)) root_t {
 
   void adjust_addrs_from_base(paddr_t base) {
     lba_root.adjust_addrs_from_base(base);
+    backref_root.adjust_addrs_from_base(base);
   }
 
   meta_t get_meta() {
