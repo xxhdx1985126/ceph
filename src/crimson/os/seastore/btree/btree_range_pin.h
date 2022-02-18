@@ -12,6 +12,19 @@
 
 namespace crimson::os::seastore {
 
+template <typename T>
+struct max_key_t {};
+
+template <>
+struct max_key_t<laddr_t> {
+  static constexpr laddr_t max = L_ADDR_MAX;
+};
+
+template <>
+struct max_key_t<paddr_t> {
+  static constexpr paddr_t max = P_ADDR_MAX;
+};
+
 template <typename bound_t>
 struct fixed_kv_node_meta_t {
   bound_t begin = 0;
@@ -45,7 +58,7 @@ struct fixed_kv_node_meta_t {
   }
 
   bool is_root() const {
-    return begin == 0 && end == L_ADDR_MAX;
+    return begin == 0 && end == max_key_t<bound_t>::max;
   }
 };
 
