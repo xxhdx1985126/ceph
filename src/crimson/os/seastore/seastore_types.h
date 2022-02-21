@@ -446,6 +446,16 @@ enum class addr_types_t : uint8_t {
 };
 struct seg_paddr_t;
 struct blk_paddr_t;
+template <typename>
+struct fixed_kv_node_meta_t;
+template <
+  typename node_key_t,
+  typename node_val_t,
+  typename internal_node_t,
+  typename leaf_node_t,
+  typename pin_t,
+  size_t node_size>
+class FixedKVBtree;
 struct paddr_t {
 protected:
   using common_addr_t = uint64_t;
@@ -560,6 +570,16 @@ public:
   friend bool operator<(const paddr_t &, const paddr_t&);
   friend bool operator>=(const paddr_t &, const paddr_t&);
   friend bool operator>(const paddr_t &, const paddr_t&);
+
+  friend struct crimson::os::seastore::fixed_kv_node_meta_t<paddr_t>;
+  template <
+    typename node_key_t,
+    typename node_val_t,
+    typename internal_node_t,
+    typename leaf_node_t,
+    typename pin_t,
+    size_t node_size>
+  friend class FixedKVBtree;
 };
 WRITE_EQ_OPERATORS_1(paddr_t, dev_addr);
 WRITE_CMP_OPERATORS_1(paddr_t, dev_addr);
