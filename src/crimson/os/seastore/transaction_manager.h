@@ -155,7 +155,7 @@ public:
     auto &pref = *pin;
     return cache->get_extent<T>(
       t,
-      pref.get_paddr(),
+      pref.get_val(),
       pref.get_length(),
       [this, pin=std::move(pin)](T &extent) mutable {
 	assert(!extent.has_pin());
@@ -192,7 +192,7 @@ public:
     return get_pin(
       t, offset
     ).si_then([this, FNAME, &t, offset, length] (auto pin) {
-      if (length != pin->get_length() || !pin->get_paddr().is_real()) {
+      if (length != pin->get_length() || !pin->get_val().is_real()) {
         SUBERRORT(seastore_tm,
             "offset {} len {} got wrong pin {}",
             t, offset, length, *pin);
@@ -216,7 +216,7 @@ public:
     return get_pin(
       t, offset
     ).si_then([this, FNAME, &t, offset] (auto pin) {
-      if (!pin->get_paddr().is_real()) {
+      if (!pin->get_val().is_real()) {
         SUBERRORT(seastore_tm,
             "offset {} got wrong pin {}",
             t, offset, *pin);
