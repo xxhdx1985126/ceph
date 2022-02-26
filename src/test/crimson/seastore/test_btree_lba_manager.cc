@@ -176,7 +176,7 @@ struct lba_btree_test : btree_test_base {
 	  t
 	).si_then([this, f=std::move(f), &t](RootBlockRef croot) {
 	  return seastar::do_with(
-	    LBABtree(croot->root.lba_root),
+	    LBABtree(croot->root.lba_root, LBABtree::FixedKVBtreeListenerRef(nullptr)),
 	    [this, croot, f=std::move(f), &t](auto &btree) mutable {
 	      return std::invoke(
 		std::move(f), btree, t
@@ -202,7 +202,7 @@ struct lba_btree_test : btree_test_base {
 	  t
 	).si_then([f=std::move(f), &t](RootBlockRef croot) mutable {
 	  return seastar::do_with(
-	    LBABtree(croot->root.lba_root),
+	    LBABtree(croot->root.lba_root, LBABtree::FixedKVBtreeListenerRef(nullptr)),
 	    [f=std::move(f), &t](auto &btree) mutable {
 	      return std::invoke(
 		std::move(f), btree, t

@@ -64,6 +64,7 @@ BtreeLBAManager::get_mappings(
   return with_btree_state<LBABtree, lba_pin_list_t>(
     cache,
     c,
+    nullptr,
     [c, offset, length, FNAME](auto &btree, auto &ret) {
       return LBABtree::iterate_repeat(
 	c,
@@ -123,6 +124,7 @@ BtreeLBAManager::get_mapping(
   return with_btree_ret<LBABtree, LBAPinRef>(
     cache,
     c,
+    nullptr,
     [FNAME, c, offset](auto &btree) {
       return btree.lower_bound(
 	c, offset
@@ -167,6 +169,7 @@ BtreeLBAManager::alloc_extent(
   return crimson::os::seastore::with_btree_state<LBABtree, state_t>(
     cache,
     c,
+    nullptr,
     hint,
     [this, FNAME, c, hint, len, addr, lookup_attempts, &t](auto &btree, auto &state) {
       return LBABtree::iterate_repeat(
@@ -343,7 +346,7 @@ BtreeLBAManager::init_cached_extent_ret BtreeLBAManager::init_cached_extent(
   TRACET("{}", t, *e);
   return seastar::do_with(bool(), [this, e, &t](bool &ret) {
     auto c = get_context(t);
-    return with_btree<LBABtree>(cache, c, [c, e, &ret](auto &btree)
+    return with_btree<LBABtree>(cache, c, nullptr, [c, e, &ret](auto &btree)
       -> base_iertr::future<> {
       LOG_PREFIX(BtreeLBAManager::init_cached_extent);
       DEBUGT("extent {}", c.trans, *e);
@@ -365,6 +368,7 @@ BtreeLBAManager::scan_mappings_ret BtreeLBAManager::scan_mappings(
   return with_btree<LBABtree>(
     cache,
     c,
+    nullptr,
     [c, f=std::move(f), begin, end](auto &btree) mutable {
       return LBABtree::iterate_repeat(
 	c,
@@ -397,6 +401,7 @@ BtreeLBAManager::scan_mapped_space_ret BtreeLBAManager::scan_mapped_space(
       return with_btree<LBABtree>(
 	cache,
 	c,
+	nullptr,
 	[c, &visitor](auto &btree) {
 	  return LBABtree::iterate_repeat(
 	    c,
@@ -434,6 +439,7 @@ BtreeLBAManager::rewrite_extent_ret BtreeLBAManager::rewrite_extent(
     return with_btree<LBABtree>(
       cache,
       c,
+      nullptr,
       [c, extent](auto &btree) mutable {
 	return btree.rewrite_extent(c, extent);
       });
@@ -491,6 +497,7 @@ BtreeLBAManager::get_physical_extent_if_live(
   return with_btree_ret<LBABtree, CachedExtentRef>(
     cache,
     c,
+    nullptr,
     [c, type, addr, laddr, len](auto &btree) {
       if (type == extent_types_t::LADDR_INTERNAL) {
 	return btree.get_internal_if_live(c, addr, laddr, len);
@@ -568,6 +575,7 @@ BtreeLBAManager::_update_mapping_ret BtreeLBAManager::_update_mapping(
   return with_btree_ret<LBABtree, lba_map_val_t>(
     cache,
     c,
+    nullptr,
     [f=std::move(f), c, addr](auto &btree) mutable {
       return btree.lower_bound(
 	c, addr

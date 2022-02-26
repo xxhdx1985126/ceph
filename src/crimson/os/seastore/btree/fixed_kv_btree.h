@@ -310,7 +310,35 @@ public:
     }
   };
 
-  FixedKVBtree(phy_tree_root_t root) : root(root) {}
+  class FixedKVBtreeListener {
+  public:
+    virtual void on_split(
+      CachedExtentRef old,
+      CachedExtentRef left,
+      CachedExtentRef right) = 0;
+    virtual void on_merge(
+      CachedExtentRef old_left,
+      CachedExtentRef old_right,
+      CachedExtentRef new_extent) = 0;
+    virtual void on_balanced(
+      CachedExtentRef l,
+      CachedExtentRef replacement_l,
+      CachedExtentRef r,
+      CachedExtentRef replacement_r) = 0;
+    virtual void on_mutate(
+      CachedExtentRef o,
+      CachedExtentRef n) = 0;
+    virtual void on_rewrite(
+      CachedExtentRef o,
+      CachedExtentRef n) = 0;
+
+    virtual ~FixedKVBtreeListener() {}
+  };
+  using FixedKVBtreeListenerRef =
+    std::unique_ptr<FixedKVBtreeListener>;
+
+  FixedKVBtree(phy_tree_root_t root, FixedKVBtreeListenerRef&& flr)
+    : root(root), flr(std::move(flr)) {}
 
   bool is_root_dirty() const {
     return root_dirty;
@@ -534,12 +562,15 @@ public:
             ++(c.trans.get_lba_tree_stats().num_inserts);
             return handle_split(
               c, ret
-            ).si_then([c, laddr, val, &ret] {
+            ).si_then([this, c, laddr, val, &ret]() mutable {
               if (!ret.leaf.node->is_pending()) {
                 CachedExtentRef mut = c.cache.duplicate_for_write(
                   c.trans, ret.leaf.node
                 );
                 ret.leaf.node = mut->cast<leaf_node_t>();
+                if (flr) {
+                  flr->on_mutate(ret.leaf.node, mut);
+                }
               }
               auto iter = typename leaf_node_t::const_iterator(
                   ret.leaf.node.get(), ret.leaf.pos);
@@ -596,6 +627,8 @@ public:
         c.trans, iter.leaf.node
       );
       iter.leaf.node = mut->cast<leaf_node_t>();
+      if (flr)
+        flr->on_mutate(iter.leaf.node, mut);
     }
     iter.leaf.node->update(
       iter.leaf.node->iter_idx(iter.leaf.pos),
@@ -636,6 +669,8 @@ public:
             c.trans, ret.leaf.node
           );
           ret.leaf.node = mut->cast<leaf_node_t>();
+          if (flr)
+            flr->on_mutate(ret.leaf.node, mut);
         }
         ret.leaf.node->remove(
           ret.leaf.node->iter_idx(ret.leaf.pos));
@@ -855,8 +890,11 @@ public:
         n_fixed_kv_extent->get_node_meta().begin,
         e->get_paddr(),
         n_fixed_kv_extent->get_paddr()
-      ).si_then([c, e] {
+      ).si_then([this, c, e, n_fixed_kv_extent] {
         c.cache.retire_extent(c.trans, e);
+        if (flr) {
+          flr->on_rewrite(e, n_fixed_kv_extent);
+        }
       });
     };
     
@@ -972,6 +1010,8 @@ public:
         );
         typename internal_node_t::Ref mparent = mut->cast<internal_node_t>();
         mparent->update(piter, new_addr);
+        if (flr)
+          flr->on_mutate(parent.node, mut);
 
         /* Note, iter is now invalid as we didn't udpate either the parent
          * node reference to the new mutable instance nor did we update the
@@ -983,10 +1023,13 @@ public:
     });
   }
 
-
+  FixedKVBtreeListener* get_btree_listener() {
+    return flr.get();
+  }
 private:
   phy_tree_root_t root;
   bool root_dirty = false;
+  FixedKVBtreeListenerRef flr;
 
   using get_internal_node_iertr = base_iertr;
   using get_internal_node_ret = get_internal_node_iertr::future<InternalNodeRef>;
@@ -1405,7 +1448,7 @@ private:
 
     /* pos may be either node_position_t<leaf_node_t> or
      * node_position_t<internal_node_t> */
-    auto split_level = [&](auto &parent_pos, auto &pos) {
+    auto split_level = [&](auto &parent_pos, auto &pos) mutable {
       LOG_PREFIX(FixedKVBtree::handle_split);
       auto [left, right, pivot] = pos.node->make_split_children(c);
 
@@ -1427,6 +1470,8 @@ private:
         *pos.node,
         *left,
         *right);
+      if (flr)
+        flr->on_split(pos.node, left, right);
       c.cache.retire_extent(c.trans, pos.node);
 
       return std::make_pair(left, right);
@@ -1435,9 +1480,12 @@ private:
     for (; split_from > 0; --split_from) {
       auto &parent_pos = iter.get_internal(split_from + 1);
       if (!parent_pos.node->is_pending()) {
-        parent_pos.node = c.cache.duplicate_for_write(
+        auto mut = c.cache.duplicate_for_write(
           c.trans, parent_pos.node
         )->template cast<internal_node_t>();
+        if (flr)
+          flr->on_mutate(parent_pos.node, mut);
+        parent_pos.node = mut;
       }
 
       if (split_from > 1) {
@@ -1606,9 +1654,12 @@ private:
   {
     LOG_PREFIX(FixedKVBtree::merge_level);
     if (!parent_pos.node->is_pending()) {
-      parent_pos.node = c.cache.duplicate_for_write(
+      auto mut = c.cache.duplicate_for_write(
         c.trans, parent_pos.node
       )->template cast<internal_node_t>();
+      if (flr)
+        flr->on_mutate(parent_pos.node, mut);
+      parent_pos.node = mut;
     }
 
     auto iter = parent_pos.get_iter();
@@ -1628,8 +1679,8 @@ private:
       donor_iter.get_val().maybe_relative_to(parent_pos.node->get_paddr()),
       begin,
       end
-    ).si_then([c, iter, donor_iter, donor_is_left, &parent_pos, &pos](
-                typename NodeType::Ref donor) {
+    ).si_then([this, c, iter, donor_iter, donor_is_left, &parent_pos, &pos](
+                typename NodeType::Ref donor) mutable {
       LOG_PREFIX(FixedKVBtree::merge_level);
       auto [l, r] = donor_is_left ?
         std::make_pair(donor, pos.node) : std::make_pair(pos.node, donor);
@@ -1652,6 +1703,8 @@ private:
         }
 
         SUBDEBUGT(seastore_lba_details, "l: {}, r: {}, replacement: {}", c.trans, *l, *r, *replacement);
+        if (flr)
+          flr->on_merge(l, r, replacement);
         c.cache.retire_extent(c.trans, l);
         c.cache.retire_extent(c.trans, r);
       } else {
@@ -1691,6 +1744,8 @@ private:
           seastore_lba_details,
           "l: {}, r: {}, replacement_l: {}, replacement_r: {}",
           c.trans, *l, *r, *replacement_l, *replacement_r);
+        if (flr)
+          flr->on_balanced(l, replacement_l, r, replacement_r);
         c.cache.retire_extent(c.trans, l);
         c.cache.retire_extent(c.trans, r);
       }
@@ -1730,25 +1785,28 @@ template <
 auto with_btree(
   Cache &cache,
   op_context_t<node_key_t> c,
+  typename tree_type_t::FixedKVBtreeListenerRef flr,
   F &&f) {
   using base_ertr = crimson::errorator<
     crimson::ct_error::input_output_error>;
   using base_iertr = trans_iertr<base_ertr>;
   return cache.get_root(
     c.trans
-  ).si_then([c, f=std::forward<F>(f), &cache](RootBlockRef croot) mutable {
+  ).si_then([c, f=std::forward<F>(f), &cache, flr=std::move(flr)]
+    (RootBlockRef croot) mutable {
     return seastar::do_with(
-      tree_type_t(get_phy_tree_root<tree_type_t>(croot->get_root())),
+      tree_type_t(get_phy_tree_root<tree_type_t>(croot->get_root()), std::move(flr)),
       [c, croot, f=std::move(f), &cache](auto &btree) mutable {
         return f(
           btree
-        ).si_then([c, croot, &btree, &cache] {
+        ).si_then([c, croot, &btree, &cache]() mutable {
           if (btree.is_root_dirty()) {
             auto mut_croot = cache.duplicate_for_write(
               c.trans, croot
             )->template cast<RootBlock>();
             get_phy_tree_root<tree_type_t>(mut_croot->get_root()) =
               btree.get_root_undirty();
+            btree.get_btree_listener()->on_mutate(croot, mut_croot);
           }
           return base_iertr::now();
         });
@@ -1765,14 +1823,16 @@ template <
 auto with_btree_state(
   Cache &cache,
   op_context_t<node_key_t> c,
+  typename tree_type_t::FixedKVBtreeListenerRef flr,
   State &&init,
   F &&f) {
   return seastar::do_with(
     std::forward<State>(init),
-    [&cache, c, f=std::forward<F>(f)](auto &state) mutable {
+    [&cache, c, f=std::forward<F>(f), flr=std::move(flr)](auto &state) mutable {
       return with_btree<tree_type_t>(
         cache,
         c,
+        std::move(flr),
         [&state, f=std::move(f)](auto &btree) mutable {
         return f(btree, state);
       }).si_then([&state] {
@@ -1790,9 +1850,10 @@ template <
 auto with_btree_state(
   Cache &cache,
   op_context_t<node_key_t> c,
+  typename tree_type_t::FixedKVBtreeListenerRef flr,
   F &&f) {
   return crimson::os::seastore::with_btree_state<tree_type_t, State>(
-    cache, c, State{}, std::forward<F>(f));
+    cache, c, std::move(flr), State{}, std::forward<F>(f));
 }
 
 template <
@@ -1803,10 +1864,12 @@ template <
 auto with_btree_ret(
   Cache &cache,
   op_context_t<node_key_t> c,
+  typename tree_type_t::FixedKVBtreeListenerRef flr,
   F &&f) {
   return with_btree_state<tree_type_t, Ret>(
     cache,
     c,
+    std::move(flr),
     [f=std::forward<F>(f)](auto &btree, auto &ret) mutable {
       return f(
         btree

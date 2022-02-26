@@ -51,6 +51,7 @@ BtreeBackrefManager::get_mapping(
   return with_btree_ret<BackrefBtree, BackrefPinRef>(
     cache,
     c,
+    nullptr,
     [c, offset](auto &btree) {
     return btree.lower_bound(
       c, offset
@@ -83,6 +84,7 @@ BtreeBackrefManager::get_mappings(
   return with_btree_state<BackrefBtree, backref_pin_list_t>(
     cache,
     c,
+    nullptr,
     [c, offset, length](auto &btree, auto &ret) {
       return BackrefBtree::iterate_repeat(
 	c,
@@ -137,6 +139,7 @@ BtreeBackrefManager::new_mapping(
   return crimson::os::seastore::with_btree_state<BackrefBtree, state_t>(
     cache,
     c,
+    nullptr,
     key,
     [val, c, key, len, addr, /*lookup_attempts,*/ &t]
     (auto &btree, auto &state) {
@@ -302,6 +305,7 @@ BtreeBackrefManager::remove_mapping(
   return with_btree_ret<BackrefBtree, remove_mapping_result_t>(
     cache,
     c,
+    nullptr,
     [c, addr](auto &btree) mutable {
       return btree.lower_bound(
 	c, addr
