@@ -23,6 +23,100 @@ phy_tree_root_t& get_phy_tree_root<
 
 namespace crimson::os::seastore::backref {
 
+//XXX: iterating through all transactions is very inefficient,
+//     should be improved
+
+void BackrefBtreeListener::on_split(
+  CachedExtentRef old,
+  CachedExtentRef left,
+  CachedExtentRef right)
+{
+  for (auto &i : old->transactions) {
+    auto &read_set = i.t->get_read_set();
+    auto iter = read_set.find(old->get_paddr());
+    assert(iter != read_set.end());
+    assert(iter->ref.get() == old.get());
+    read_set.erase(iter);
+    i.t->add_to_read_set(left);
+    i.t->add_to_read_set(right);
+  }
+}
+
+void BackrefBtreeListener::on_merge(
+  CachedExtentRef old_left,
+  CachedExtentRef old_right,
+  CachedExtentRef new_extent)
+{
+  for (auto &i : old_left->transactions) {
+    auto &read_set = i.t->get_read_set();
+    auto iter = read_set.find(old_left->get_paddr());
+    assert(iter != read_set.end());
+    assert(iter->ref.get() == old_left.get());
+    read_set.erase(iter);
+    i.t->add_to_read_set(new_extent);
+  }
+  for (auto &i : old_right->transactions) {
+    auto &read_set = i.t->get_read_set();
+    auto iter = read_set.find(old_right->get_paddr());
+    assert(iter != read_set.end());
+    assert(iter->ref.get() == old_right.get());
+    read_set.erase(iter);
+    i.t->add_to_read_set(new_extent);
+  }
+}
+
+void BackrefBtreeListener::on_balanced(
+  CachedExtentRef l,
+  CachedExtentRef replacement_l,
+  CachedExtentRef r,
+  CachedExtentRef replacement_r)
+{
+  for (auto &i : l->transactions) {
+    auto &read_set = i.t->get_read_set();
+    auto iter = read_set.find(l->get_paddr());
+    assert(iter != read_set.end());
+    assert(iter->ref.get() == l.get());
+    read_set.erase(iter);
+    i.t->add_to_read_set(replacement_l);
+  }
+  for (auto &i : r->transactions) {
+    auto &read_set = i.t->get_read_set();
+    auto iter = read_set.find(r->get_paddr());
+    assert(iter != read_set.end());
+    assert(iter->ref.get() == r.get());
+    read_set.erase(iter);
+    i.t->add_to_read_set(replacement_r);
+  }
+}
+
+void BackrefBtreeListener::on_mutate(
+  CachedExtentRef o,
+  CachedExtentRef n)
+{
+  for (auto &i : o->transactions) {
+    auto &read_set = i.t->get_read_set();
+    auto iter = read_set.find(o->get_paddr());
+    assert(iter != read_set.end());
+    assert(iter->ref.get() == o.get());
+    read_set.erase(iter);
+    i.t->add_to_read_set(n);
+  }
+}
+
+void BackrefBtreeListener::on_rewrite(
+  CachedExtentRef o,
+  CachedExtentRef n)
+{
+  for (auto &i : o->transactions) {
+    auto &read_set = i.t->get_read_set();
+    auto iter = read_set.find(o->get_paddr());
+    assert(iter != read_set.end());
+    assert(iter->ref.get() == o.get());
+    read_set.erase(iter);
+    i.t->add_to_read_set(n);
+  }
+}
+
 BtreeBackrefManager::mkfs_ret
 BtreeBackrefManager::mkfs(
   Transaction &t)
@@ -51,7 +145,7 @@ BtreeBackrefManager::get_mapping(
   return with_btree_ret<BackrefBtree, BackrefPinRef>(
     cache,
     c,
-    nullptr,
+    std::make_unique<BackrefBtreeListener>(),
     [c, offset](auto &btree) {
     return btree.lower_bound(
       c, offset
@@ -84,7 +178,7 @@ BtreeBackrefManager::get_mappings(
   return with_btree_state<BackrefBtree, backref_pin_list_t>(
     cache,
     c,
-    nullptr,
+    std::make_unique<BackrefBtreeListener>(),
     [c, offset, length](auto &btree, auto &ret) {
       return BackrefBtree::iterate_repeat(
 	c,
@@ -139,7 +233,7 @@ BtreeBackrefManager::new_mapping(
   return crimson::os::seastore::with_btree_state<BackrefBtree, state_t>(
     cache,
     c,
-    nullptr,
+    std::make_unique<BackrefBtreeListener>(),
     key,
     [val, c, key, len, addr, /*lookup_attempts,*/ &t]
     (auto &btree, auto &state) {
@@ -305,7 +399,7 @@ BtreeBackrefManager::remove_mapping(
   return with_btree_ret<BackrefBtree, remove_mapping_result_t>(
     cache,
     c,
-    nullptr,
+    std::make_unique<BackrefBtreeListener>(),
     [c, addr](auto &btree) mutable {
       return btree.lower_bound(
 	c, addr

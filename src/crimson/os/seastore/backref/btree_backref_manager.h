@@ -35,6 +35,29 @@ using BackrefBtree = FixedKVBtree<
   paddr_t, backref_map_val_t, BackrefInternalNode,
   BackrefLeafNode, BtreeBackrefPin, BACKREF_BLOCK_SIZE>;
 
+class BackrefBtreeListener : public BackrefBtree::FixedKVBtreeListener {
+public:
+  void on_split(
+    CachedExtentRef old,
+    CachedExtentRef left,
+    CachedExtentRef right) final;
+  void on_merge(
+    CachedExtentRef old_left,
+    CachedExtentRef old_right,
+    CachedExtentRef new_extent) final;
+  void on_balanced(
+    CachedExtentRef l,
+    CachedExtentRef replacement_l,
+    CachedExtentRef r,
+    CachedExtentRef replacement_r) final;
+  void on_mutate(
+    CachedExtentRef o,
+    CachedExtentRef n) final;
+  void on_rewrite(
+    CachedExtentRef o,
+    CachedExtentRef n) final;
+};
+
 class BtreeBackrefManager : public BackrefManager {
 public:
 

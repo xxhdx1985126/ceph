@@ -212,6 +212,10 @@ public:
     return retired_set;
   }
 
+  auto &get_read_set() {
+    return read_set;
+  }
+
   template <typename F>
   auto for_each_fresh_block(F &&f) const {
     std::for_each(ool_block_list.begin(), ool_block_list.end(), f);

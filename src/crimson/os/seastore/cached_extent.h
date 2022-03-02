@@ -15,6 +15,10 @@
 #include "crimson/common/errorator.h"
 #include "crimson/os/seastore/seastore_types.h"
 
+namespace crimson::os::seastore::backref {
+class BackrefBtreeListener;
+}
+
 namespace crimson::os::seastore {
 
 class ool_record_t;
@@ -520,6 +524,7 @@ protected:
   friend class crimson::os::seastore::SegmentedAllocator;
   friend class crimson::os::seastore::TransactionManager;
   friend class crimson::os::seastore::ExtentPlacementManager;
+  friend class crimson::os::seastore::backref::BackrefBtreeListener;
 };
 
 std::ostream &operator<<(std::ostream &, CachedExtent::extent_state_t);
