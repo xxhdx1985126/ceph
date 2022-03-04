@@ -10,6 +10,8 @@
 #include <vector>
 #include <boost/core/ignore_unused.hpp>
 
+#include <seastar/core/lowres_clock.hh>
+
 #include "include/byteorder.h"
 #include "include/denc.h"
 #include "include/buffer.h"
@@ -882,6 +884,14 @@ constexpr bool is_lba_node(extent_types_t type)
     type == extent_types_t::LADDR_LEAF;
 }
 
+std::ostream &operator<<(std::ostream &out, extent_types_t t);
+
+enum class record_commit_type_t : uint8_t {
+  NONE,
+  MODIFY,
+  REWRITE
+};
+
 /* description of a new physical extent */
 struct extent_t {
   extent_types_t type;  ///< type of extent
@@ -1247,7 +1257,9 @@ struct extent_info_t {
 
   extent_info_t() = default;
   extent_info_t(const extent_t &et)
-    : type(et.type), addr(et.addr), len(et.bl.length()) {}
+    : type(et.type), addr(et.addr),
+      len(et.bl.length())
+  {}
 
   DENC(extent_info_t, v, p) {
     DENC_START(1, 1, p);
@@ -1291,7 +1303,30 @@ struct segment_header_t {
 };
 std::ostream &operator<<(std::ostream &out, const segment_header_t &header);
 
-using segment_tail_t = segment_header_t;
+// type for extent modification time, milliseconds since the epoch
+using mod_time_point_t = int64_t;
+
+struct segment_tail_t {
+  segment_seq_t journal_segment_seq;
+  segment_id_t physical_segment_id; // debugging
+
+  journal_seq_t journal_tail;
+  segment_nonce_t segment_nonce;
+  mod_time_point_t last_modified;
+  mod_time_point_t last_rewritten;
+
+  DENC(segment_tail_t, v, p) {
+    DENC_START(1, 1, p);
+    denc(v.journal_segment_seq, p);
+    denc(v.physical_segment_id, p);
+    denc(v.journal_tail, p);
+    denc(v.segment_nonce, p);
+    denc(v.last_modified, p);
+    denc(v.last_rewritten, p);
+    DENC_FINISH(p);
+  }
+};
+std::ostream &operator<<(std::ostream &out, const segment_tail_t &tail);
 
 struct record_size_t {
   extent_len_t plain_mdlength = 0; // mdlength without the record header
@@ -1319,6 +1354,8 @@ struct record_t {
   std::vector<extent_t> extents;
   std::vector<delta_info_t> deltas;
   record_size_t size;
+  seastar::lowres_system_clock::time_point commit_time;
+  record_commit_type_t commit_type;
 
   record_t() = default;
   record_t(std::vector<extent_t>&& _extents,
@@ -1361,12 +1398,15 @@ std::ostream &operator<<(std::ostream&, const record_t&);
 struct record_header_t {
   uint32_t deltas;              // number of deltas
   uint32_t extents;             // number of extents
-
+  mod_time_point_t commit_time = 0;
+  record_commit_type_t commit_type;
 
   DENC(record_header_t, v, p) {
     DENC_START(1, 1, p);
     denc(v.deltas, p);
     denc(v.extents, p);
+    denc(v.commit_time, p);
+    denc(v.commit_type, p);
     DENC_FINISH(p);
   }
 };
@@ -1504,10 +1544,15 @@ std::optional<std::vector<record_extent_infos_t> >
 try_decode_extent_infos(
     const record_group_header_t& header,
     const ceph::bufferlist& md_bl);
+std::optional<std::vector<record_header_t>>
+try_decode_record_headers(
+    const record_group_header_t& header,
+    const ceph::bufferlist& md_bl);
 
 struct record_deltas_t {
   paddr_t record_block_base;
-  std::vector<delta_info_t> deltas;
+  // the mod time here can only be modification time, not rewritten time
+  std::vector<std::pair<mod_time_point_t, delta_info_t>> deltas;
 };
 std::optional<std::vector<record_deltas_t> >
 try_decode_deltas(
@@ -1660,6 +1705,7 @@ WRITE_CLASS_DENC_BOUNDED(crimson::os::seastore::record_group_header_t)
 WRITE_CLASS_DENC_BOUNDED(crimson::os::seastore::extent_info_t)
 WRITE_CLASS_DENC_BOUNDED(crimson::os::seastore::segment_header_t)
 WRITE_CLASS_DENC_BOUNDED(crimson::os::seastore::rbm_alloc_delta_t)
+WRITE_CLASS_DENC_BOUNDED(crimson::os::seastore::segment_tail_t)
 
 template<>
 struct denc_traits<crimson::os::seastore::device_type_t> {

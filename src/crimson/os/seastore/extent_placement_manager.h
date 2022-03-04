@@ -28,6 +28,7 @@ class ool_record_t {
   public:
     OolExtent(LogicalCachedExtentRef& lextent)
       : lextent(lextent) {}
+
     void set_ool_paddr(paddr_t addr) {
       ool_offset = addr;
     }
@@ -46,7 +47,11 @@ class ool_record_t {
   };
 
 public:
-  ool_record_t(size_t block_size) : block_size(block_size) {}
+  ool_record_t(
+    size_t block_size,
+    record_commit_type_t commit_type)
+    : block_size(block_size),
+      commit_type(commit_type) {}
   record_group_size_t get_encoded_record_length() {
     assert(extents.size() == record.extents.size());
     return record_group_size_t(record.size, block_size);
@@ -60,11 +65,19 @@ public:
                           segment_nonce_t nonce) {
     assert(extents.size() == record.extents.size());
     assert(!record.deltas.size());
+    record.commit_time = seastar::lowres_system_clock::now();
+    record.commit_type = commit_type;
     auto record_group = record_group_t(std::move(record), block_size);
     seastore_off_t extent_offset = base + record_group.size.get_mdlength();
     for (auto& extent : extents) {
       extent.set_ool_paddr(
         paddr_t::make_seg_paddr(segment, extent_offset));
+      if (commit_type == record_commit_type_t::MODIFY) {
+        extent.get_lextent()->set_last_modified(record.commit_time);
+      } else {
+        assert(commit_type == record_commit_type_t::REWRITE);
+        extent.get_lextent()->set_last_rewritten(record.commit_time);
+      }
       extent_offset += extent.get_bptr().length();
     }
     assert(extent_offset ==
@@ -103,6 +116,8 @@ private:
   record_t record;
   size_t block_size;
   seastore_off_t base = MAX_SEG_OFF;
+  record_commit_type_t commit_type =
+    record_commit_type_t::NONE;
 };
 
 /**

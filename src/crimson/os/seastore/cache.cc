@@ -945,6 +945,10 @@ record_t Cache::prepare_record(Transaction &t)
   t.write_set.clear();
 
   record_t record;
+  record.commit_time = seastar::lowres_system_clock::now();
+  record.commit_type = (t.get_src() == Transaction::src_t::MUTATE)
+			? record_commit_type_t::MODIFY
+			: record_commit_type_t::REWRITE;
 
   // Add new copy of mutated blocks, set_io_wait to block until written
   record.deltas.reserve(t.mutated_block_list.size());
@@ -967,6 +971,7 @@ record_t Cache::prepare_record(Transaction &t)
     i->prepare_write();
     i->set_io_wait();
 
+    i->set_last_modified(record.commit_time);
     assert(i->get_version() > 0);
     auto final_crc = i->get_crc32c();
     if (i->get_type() == extent_types_t::ROOT) {
@@ -1051,6 +1056,13 @@ record_t Cache::prepare_record(Transaction &t)
     bl.append(i->get_bptr());
     if (i->get_type() == extent_types_t::ROOT) {
       ceph_assert(0 == "ROOT never gets written as a fresh block");
+    }
+
+    if (t.get_src() == Transaction::src_t::MUTATE) {
+      i->set_last_modified(record.commit_time);
+    } else {
+      assert(t.get_src() >= Transaction::src_t::CLEANER_TRIM);
+      i->set_last_rewritten(record.commit_time);
     }
 
     assert(bl.length() == i->get_length());
@@ -1173,7 +1185,13 @@ void Cache::complete_commit(
       if (cleaner) {
 	cleaner->mark_space_used(
 	  i->get_paddr(),
-	  i->get_length());
+	  i->get_length(),
+	  (t.get_src() == Transaction::src_t::MUTATE)
+	    ? i->last_modified
+	    : seastar::lowres_system_clock::time_point(),
+	  (t.get_src() >= Transaction::src_t::CLEANER_TRIM)
+	    ? i->last_rewritten
+	    : seastar::lowres_system_clock::time_point());
       }
     }
   });
@@ -1274,7 +1292,8 @@ Cache::replay_delta_ret
 Cache::replay_delta(
   journal_seq_t journal_seq,
   paddr_t record_base,
-  const delta_info_t &delta)
+  const delta_info_t &delta,
+  seastar::lowres_system_clock::time_point& last_modified)
 {
   LOG_PREFIX(Cache::replay_delta);
   if (delta.type == extent_types_t::ROOT) {
@@ -1286,6 +1305,7 @@ Cache::replay_delta(
     root->state = CachedExtent::extent_state_t::DIRTY;
     DEBUG("replayed root delta at {} {}, add extent -- {}, root={}",
           journal_seq, record_base, delta, *root);
+    root->set_last_modified(last_modified);
     add_extent(root);
     return replay_delta_ertr::now();
   } else {
@@ -1336,6 +1356,7 @@ Cache::replay_delta(
 
       assert(extent->last_committed_crc == delta.prev_crc);
       extent->apply_delta_and_adjust_crc(record_base, delta.bl);
+      extent->set_last_modified(last_modified);
       assert(extent->last_committed_crc == delta.final_crc);
 
       extent->version++;
