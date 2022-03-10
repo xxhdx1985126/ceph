@@ -809,6 +809,18 @@ public:
       return std::nullopt;
     } else {
       auto oldest = dirty.begin()->get_dirty_from();
+      journal_seq_t backref_oldest;
+      if (backref_bufs_to_flush.empty()) {
+	if (!backref_buffer->backrefs.empty()) {
+	  backref_oldest = backref_buffer->backrefs.begin()->first;
+	}
+      } else {
+	auto &oldest_buf = backref_bufs_to_flush.front();
+	backref_oldest = oldest_buf->backrefs.begin()->first;
+      }
+      if (backref_oldest != journal_seq_t()) {
+	oldest = std::min(backref_oldest, oldest);
+      }
       if (oldest == JOURNAL_SEQ_NULL) {
 	return std::nullopt;
       } else {
