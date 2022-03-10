@@ -22,6 +22,65 @@
 
 namespace crimson::os::seastore {
 
+struct backref_buf_entry_t {
+  backref_buf_entry_t(
+    const paddr_t paddr,
+    const laddr_t laddr,
+    const extent_len_t len,
+    const extent_types_t type)
+    : paddr(paddr), laddr(laddr), len(len), type(type) {}
+  {}
+  const paddr_t paddr = P_ADDR_NULL;
+  const laddr_t laddr = L_ADDR_NULL;
+  const extent_len_t len = 0;
+  const extent_types_t type =
+    extent_types_t::ROOT;
+  friend bool operator< (
+    const backref_buf_entry_t &l,
+    const backref_buf_entry_t &r) {
+    return l.paddr < r.paddr;
+  }
+  friend bool operator> (
+    const backref_buf_entry_t &l,
+    const backref_buf_entry_t &r) {
+    return l.paddr > r.paddr;
+  }
+  friend bool operator== (
+    const backref_buf_entry_t &l,
+    const backref_buf_entry_t &r) {
+    return l.paddr == r.paddr;
+  }
+  using hook_t =
+    boost::intrusive::set_member_hook<
+      boost::intrusive::link_mode<
+	boost::intrusive::auto_unlink>>;
+  hook_t backref_set_hook;
+  using backref_set_member_options = boost::intrusive::member_hook<
+    backref_buf_entry_t,
+    hook_t,
+    &backref_buf_entry_t::backref_set_hook>;
+  using set_t = boost::intrusive::set<
+    backref_buf_entry_t,
+    backref_set_member_options,
+    boost::intrusive::constant_time_size<false>>;
+  struct cmp_t {
+    bool operator()(paddr_t l, const backref_buf_entry_t &r) const {
+      return l < r.paddr;
+    }
+    bool operator()(const backref_buf_entry_t &l, paddr_t r) const {
+      return l.paddr < r;
+    }
+  };
+};
+
+using backref_buf_entry_ref =
+  std::unique_ptr<backref_buf_entry_t>;
+
+struct backref_buffer_t {
+  std::map<journal_seq_t, std::vector<backref_buf_entry_ref>> backrefs;
+};
+using backref_buffer_ref = std::unique_ptr<backref_buffer_t>;
+
 /**
  * Cache
  *
@@ -448,6 +507,10 @@ private:
     }
   }
 
+  backref_buffer_ref backref_buffer;
+  std::list<backref_buffer_ref> backref_bufs_to_flush;
+  backref_buf_entry_t::set_t backref_set;
+
 public:
   /**
    * get_extent_by_type
@@ -483,6 +546,27 @@ public:
       t, type, offset, laddr, length, [](CachedExtent &) {});
   }
 
+  std::set<backref_buf_entry_t> get_backrefs_in_range(
+    paddr_t start,
+    paddr_t end) {
+    auto start_iter = backref_set.lower_bound(
+      start,
+      backref_buf_entry_t::cmp_t());
+    auto end_iter = backref_set.upper_bound(
+      end,
+      backref_buf_entry_t::cmp_t());
+    std::set<backref_buf_entry_t> res;
+    for (auto it = start_iter;
+	 it != end_iter;
+	 it++) {
+      res.emplace(it->paddr, it->laddr, it->len, it->type);
+    }
+    return res;
+  }
+
+  std::list<backref_buffer_ref>& get_backref_bufs_to_flush() {
+    return backref_bufs_to_flush;
+  }
 
   /**
    * alloc_new_extent
@@ -981,6 +1065,22 @@ private:
       lru.move_to_top(ext);
     }
   }
+
+  void may_roll_backref_buffer(const paddr_t &final_block_start) {
+    if (backref_buffer) {
+      auto &last_backref = backref_buffer->backrefs.rbegin()->second.back();
+      auto &last_seg_paddr = last_backref->paddr.as_seg_paddr();
+      if (last_seg_paddr.get_segment_id() !=
+	  final_block_start.as_seg_paddr().get_segment_id()) {
+	// journal segment rolled
+	backref_bufs_to_flush.emplace_back(std::move(backref_buffer));
+      }
+    }
+  }
+
+  void backref_batch_update(
+    std::vector<backref_buf_entry_ref> &&,
+    const journal_seq_t &);
 
   /// Add extent to extents handling dirty and refcounting
   void add_extent(CachedExtentRef ref);

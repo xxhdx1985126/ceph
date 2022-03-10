@@ -26,6 +26,7 @@
 #include "crimson/os/seastore/cache.h"
 #include "crimson/os/seastore/segment_manager.h"
 #include "crimson/os/seastore/lba_manager.h"
+#include "crimson/os/seastore/backref_manager.h"
 #include "crimson/os/seastore/journal.h"
 #include "crimson/os/seastore/extent_placement_manager.h"
 
@@ -70,6 +71,7 @@ public:
     CacheRef cache,
     LBAManagerRef lba_manager,
     ExtentPlacementManagerRef&& epm,
+    backref::BackrefManagerRef&& backref_manager,
     ExtentReader& scanner);
 
   /// Writes initial metadata to disk
@@ -566,6 +568,7 @@ private:
   LBAManagerRef lba_manager;
   JournalRef journal;
   ExtentPlacementManagerRef epm;
+  backref::BackrefManagerRef backref_manager;
   ExtentReader& scanner;
 
   WritePipeline write_pipeline;

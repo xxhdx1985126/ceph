@@ -22,6 +22,7 @@
 
 #include "crimson/os/futurized_collection.h"
 
+#include "crimson/os/seastore/backref_manager.h"
 #include "crimson/os/seastore/segment_cleaner.h"
 #include "crimson/os/seastore/segment_manager.h"
 #include "crimson/os/seastore/segment_manager/block.h"
@@ -1632,6 +1633,7 @@ seastar::future<std::unique_ptr<SeaStore>> make_seastore(
     auto epm = std::make_unique<ExtentPlacementManager>();
     auto cache = std::make_unique<Cache>(scanner_ref, *epm);
     auto lba_manager = lba_manager::create_lba_manager(*sm, *cache);
+    auto backref_manager = backref::create_backref_manager(*sm, *cache);
 
     auto tm = std::make_unique<TransactionManager>(
       *sm,
@@ -1640,6 +1642,7 @@ seastar::future<std::unique_ptr<SeaStore>> make_seastore(
       std::move(cache),
       std::move(lba_manager),
       std::move(epm),
+      std::move(backref_manager),
       scanner_ref);
 
     auto cm = std::make_unique<collection_manager::FlatCollectionManager>(*tm);
