@@ -1165,6 +1165,30 @@ record_t Cache::prepare_record(Transaction &t)
   return record;
 }
 
+void Cache::backref_batch_update(
+  std::vector<backref_buf_entry_ref> &&list,
+  const journal_seq_t &seq)
+{
+  if (!backref_buffer) {
+    backref_buffer = std::make_unique<backref_buffer_t>();
+  }
+  auto [iter, inserted] = backref_buffer->backrefs.emplace(seq, std::move(list));
+  assert(inserted);
+  // first remove, then insert;
+  // backref_buf_entry_t::laddr == L_ADDR_NULL means erase
+  for (auto &ent : iter->second) {
+    if (ent->laddr == L_ADDR_NULL) {
+      backref_set.erase(*ent);
+    }
+  }
+  for (auto &ent : iter->second) {
+    if (ent->laddr != L_ADDR_NULL) {
+      auto [it, insert] = backref_set.insert(*ent);
+      assert(insert);
+    }
+  }
+}
+
 void Cache::complete_commit(
   Transaction &t,
   paddr_t final_block_start,
@@ -1175,7 +1199,10 @@ void Cache::complete_commit(
   SUBTRACET(seastore_t, "final_block_start={}, seq={}",
             t, final_block_start, seq);
 
-  t.for_each_fresh_block([&](auto &i) {
+  may_roll_backref_buffer(final_block_start);
+
+  std::vector<backref_buf_entry_ref> backref_list;
+  t.for_each_fresh_block([&](const CachedExtentRef &i) {
     bool is_inline = false;
     if (i->is_inline()) {
       is_inline = true;
@@ -1199,6 +1226,16 @@ void Cache::complete_commit(
 	  (t.get_src() >= Transaction::src_t::CLEANER_TRIM)
 	    ? i->last_rewritten
 	    : seastar::lowres_system_clock::time_point());
+      }
+      if (i->is_logical() && is_lba_node(i->get_type())) {
+	backref_list.emplace_back(
+	  std::make_unique<backref_buf_entry_t>(
+	    i->get_paddr(),
+	    i->is_logical()
+	    ? i->cast<LogicalCachedExtent>()->get_laddr()
+	    : i->cast<lba_manager::btree::LBANode>()->get_node_meta().begin,
+	    i->get_length(),
+	    i->get_type()));
       }
     }
   });
@@ -1239,7 +1276,16 @@ void Cache::complete_commit(
   last_commit = seq;
   for (auto &i: t.retired_set) {
     i->dirty_from_or_retired_at = last_commit;
+    if (i->is_logical() && is_lba_node(i->get_type())) {
+      backref_list.emplace_back(
+	std::make_unique<backref_buf_entry_t>(
+	  i->get_paddr(),
+	  L_ADDR_NULL,
+	  i->get_length(),
+	  i->get_type()));
+    }
   }
+  backref_batch_update(std::move(backref_list), seq);
 }
 
 void Cache::init()
