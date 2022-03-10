@@ -8,6 +8,7 @@
 #include "crimson/os/seastore/transaction_manager.h"
 #include "crimson/os/seastore/segment_manager.h"
 #include "crimson/os/seastore/journal.h"
+#include "crimson/os/seastore/lba_manager/btree/lba_btree_node.h"
 
 /*
  * TransactionManager logs
@@ -29,6 +30,7 @@ TransactionManager::TransactionManager(
   CacheRef _cache,
   LBAManagerRef _lba_manager,
   ExtentPlacementManagerRef&& epm,
+  backref::BackrefManagerRef&& backref_manager,
   ExtentReader& scanner)
   : segment_manager(_segment_manager),
     segment_cleaner(std::move(_segment_cleaner)),
@@ -36,6 +38,7 @@ TransactionManager::TransactionManager(
     lba_manager(std::move(_lba_manager)),
     journal(std::move(_journal)),
     epm(std::move(epm)),
+    backref_manager(std::move(backref_manager)),
     scanner(scanner)
 {
   segment_cleaner->set_extent_callback(this);
@@ -64,6 +67,8 @@ TransactionManager::mkfs_ertr::future<> TransactionManager::mkfs()
       return cache->mkfs(t
       ).si_then([this, &t] {
         return lba_manager->mkfs(t);
+      }).si_then([this, &t] {
+        return backref_manager->mkfs(t);
       }).si_then([this, FNAME, &t] {
         INFOT("submitting mkfs transaction", t);
         return submit_transaction_direct(t);
@@ -569,6 +574,7 @@ TransactionManagerRef make_transaction_manager(
   auto epm = std::make_unique<ExtentPlacementManager>();
   auto cache = std::make_unique<Cache>(scanner_ref, *epm);
   auto lba_manager = lba_manager::create_lba_manager(sm, *cache);
+  auto backref_manager = backref::create_backref_manager(sm, *cache);
 
   return std::make_unique<TransactionManager>(
     sm,
@@ -577,6 +583,7 @@ TransactionManagerRef make_transaction_manager(
     std::move(cache),
     std::move(lba_manager),
     std::move(epm),
+    std::move(backref_manager),
     scanner_ref);
 }
 

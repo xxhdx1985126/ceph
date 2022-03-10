@@ -22,6 +22,7 @@
 
 #include "crimson/os/futurized_collection.h"
 
+#include "crimson/os/seastore/backref_manager.h"
 #include "crimson/os/seastore/segment_cleaner.h"
 #include "crimson/os/seastore/segment_manager.h"
 #include "crimson/os/seastore/segment_manager/block.h"
