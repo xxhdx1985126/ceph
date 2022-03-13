@@ -1421,6 +1421,7 @@ struct record_t {
   record_size_t size;
   mod_time_point_t commit_time;
   record_commit_type_t commit_type;
+  journal_seq_t wouldbe_journal_tail;
 
   record_t() = default;
   record_t(std::vector<extent_t>&& _extents,
@@ -1483,6 +1484,7 @@ struct record_group_header_t {
   segment_nonce_t segment_nonce;// nonce of containing segment
   journal_seq_t committed_to;   // records prior to committed_to have been
                                 // fully written, maybe in another segment.
+  journal_seq_t journal_tail;
   checksum_t data_crc;          // crc of data payload
 
 
@@ -1493,6 +1495,7 @@ struct record_group_header_t {
     denc(v.dlength, p);
     denc(v.segment_nonce, p);
     denc(v.committed_to, p);
+    denc(v.journal_tail, p);
     denc(v.data_crc, p);
     DENC_FINISH(p);
   }
