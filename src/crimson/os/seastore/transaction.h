@@ -335,16 +335,16 @@ public:
   tree_stats_t& get_backref_tree_stats() {
     return backref_tree_stats;
   }
-  void add_rbm_alloc_info_blocks(rbm_alloc_delta_t &d) {
-    rbm_alloc_info_blocks.push_back(d);
+  void add_alloc_info_blocks(alloc_delta_t &&d) {
+    alloc_info_blocks.push_back(std::move(d));
   }
-  void clear_rbm_alloc_info_blocks() {
-    if (!rbm_alloc_info_blocks.empty()) {
-      rbm_alloc_info_blocks.clear();
+  void clear_alloc_info_blocks() {
+    if (!alloc_info_blocks.empty()) {
+      alloc_info_blocks.clear();
     }
   }
-  const auto &get_rbm_alloc_info_blocks() {
-    return rbm_alloc_info_blocks;
+  const auto &get_alloc_info_blocks() {
+    return alloc_info_blocks;
   }
 
   struct ool_write_stats_t {
@@ -441,7 +441,7 @@ private:
 
   const src_t src;
 
-  std::vector<rbm_alloc_delta_t> rbm_alloc_info_blocks;
+  std::vector<alloc_delta_t> alloc_info_blocks;
 };
 using TransactionRef = Transaction::Ref;
 
