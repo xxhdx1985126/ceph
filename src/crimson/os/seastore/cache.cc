@@ -1181,6 +1181,8 @@ record_t Cache::prepare_record(
   efforts.inline_record_metadata_bytes +=
     (record.size.get_raw_mdlength() - record.get_delta_size());
 
+  record.wouldbe_journal_tail =
+    get_oldest_dirty_from().value_or(JOURNAL_SEQ_NULL);
   return record;
 }
 

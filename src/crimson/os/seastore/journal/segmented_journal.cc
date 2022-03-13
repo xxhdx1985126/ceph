@@ -96,8 +96,9 @@ SegmentedJournal::prep_replay_segments(
     }
   });
 
-  auto journal_tail = segments.rbegin()->second.journal_tail;
-  segment_provider.update_journal_tail_committed(journal_tail);
+  segment_provider.update_journal_tail_committed(
+    segments.rbegin()->second.journal_tail);
+  auto journal_tail = segment_provider.get_journal_tail_target();
   auto replay_from = journal_tail.offset;
   auto from = segments.begin();
   if (replay_from != P_ADDR_NULL) {

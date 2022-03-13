@@ -282,6 +282,7 @@ std::ostream& operator<<(std::ostream& out, const record_group_header_t& h)
              << ", dlength=" << h.dlength
              << ", nonce=" << h.segment_nonce
              << ", committed_to=" << h.committed_to
+	     << ", journal_tail=" << h.journal_tail
              << ", data_crc=" << h.data_crc
              << ")";
 }
@@ -353,6 +354,11 @@ ceph::bufferlist encode_records(
     }
   }
 
+  auto journal_tail =
+    record_group.records.back().wouldbe_journal_tail == JOURNAL_SEQ_NULL
+    ? committed_to
+    : record_group.records.back().wouldbe_journal_tail;
+
   bufferlist bl;
   record_group_header_t header{
     static_cast<extent_len_t>(record_group.records.size()),
@@ -360,6 +366,7 @@ ceph::bufferlist encode_records(
     record_group.size.dlength,
     current_segment_nonce,
     committed_to,
+    journal_tail,
     data_bl.crc32c(-1)
   };
   encode(header, bl);

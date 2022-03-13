@@ -651,6 +651,9 @@ SegmentCleaner::scan_extents_ret SegmentCleaner::scan_nonfull_segment(
 	      this->segments[segment_id].last_rewritten = commit_time;
 	    }
 	  }
+	  if (header.journal_tail != JOURNAL_SEQ_NULL) {
+	    update_journal_tail_target(header.journal_tail);
+	  }
 	  return seastar::now();
 	}),
 	[&cursor, header, segment_id, this](auto& handler) {
