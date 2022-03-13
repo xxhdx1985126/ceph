@@ -1021,28 +1021,30 @@ record_t Cache::prepare_record(Transaction &t)
   // Transaction is now a go, set up in-memory cache state
   // invalidate now invalid blocks
   io_stat_t retire_stat;
+  alloc_delta_t rel_delta;
+  rel_delta.op = alloc_delta_t::op_types_t::CLEAR;
   for (auto &i: t.retired_set) {
     get_by_ext(efforts.retire_by_ext,
                i->get_type()).increment(i->get_length());
     retire_stat.increment(i->get_length());
     DEBUGT("retired and remove extent -- {}", t, *i);
     commit_retire_extent(t, i);
-    // FIXME: whether the extent belongs to RBM should be available through its
-    // device-id from its paddr after RBM is properly integrated.
-    /*
-    if (i belongs to RBM) {
-      paddr_t paddr = i->get_paddr();
-      alloc_delta_t delta;
-      delta.op = alloc_delta_t::op_types_t::CLEAR;
-      delta.alloc_blk_ranges.push_back(std::make_pair(paddr, i->get_length()));
-      t.add_rbm_alloc_info_blocks(delta);
+    if (i->get_type() != extent_types_t::BACKREF_INTERNAL
+	&& i->get_type() != extent_types_t::BACKREF_LEAF) {
+      rel_delta.alloc_blk_ranges.emplace_back(
+	i->get_paddr(),
+	L_ADDR_NULL,
+	i->get_length(),
+	i->get_type());
     }
-    */
   }
+  t.add_alloc_info_blocks(std::move(rel_delta));
 
   record.extents.reserve(t.inline_block_list.size());
   io_stat_t fresh_stat;
   io_stat_t fresh_invalid_stat;
+  alloc_delta_t alloc_delta;
+  alloc_delta.op = alloc_delta_t::op_types_t::SET;
   for (auto &i: t.inline_block_list) {
     if (!i->is_valid()) {
       DEBUGT("invalid fresh inline extent -- {}", t, *i);
@@ -1082,15 +1084,16 @@ record_t Cache::prepare_record(Transaction &t)
 	std::move(bl),
 	i->get_last_modified().time_since_epoch().count()
       });
-  }
-
-  for (auto b : t.rbm_alloc_info_blocks) {
-    bufferlist bl;
-    encode(b, bl);
-    delta_info_t delta;
-    delta.type = extent_types_t::RBM_ALLOC_INFO;
-    delta.bl = bl;
-    record.push_back(std::move(delta));
+    if (i->get_type() != extent_types_t::BACKREF_INTERNAL
+	&& i->get_type() != extent_types_t::BACKREF_LEAF) {
+      alloc_delta.alloc_blk_ranges.emplace_back(
+	i->get_paddr(),
+	i->is_logical()
+	? i->cast<LogicalCachedExtent>()->get_laddr()
+	: i->cast<lba_manager::btree::LBANode>()->get_node_meta().begin,
+	i->get_length(),
+	i->get_type());
+    }
   }
 
   for (auto &i: t.ool_block_list) {
@@ -1099,6 +1102,26 @@ record_t Cache::prepare_record(Transaction &t)
     assert(!i->is_inline());
     get_by_ext(efforts.fresh_ool_by_ext,
                i->get_type()).increment(i->get_length());
+    if (i->get_type() != extent_types_t::BACKREF_INTERNAL
+	&& i->get_type() != extent_types_t::BACKREF_LEAF) {
+      alloc_delta.alloc_blk_ranges.emplace_back(
+	i->get_paddr(),
+	i->is_logical()
+	? i->cast<LogicalCachedExtent>()->get_laddr()
+	: i->cast<lba_manager::btree::LBANode>()->get_node_meta().begin,
+	i->get_length(),
+	i->get_type());
+    }
+  }
+  t.add_alloc_info_blocks(std::move(alloc_delta));
+
+  for (auto b : t.alloc_info_blocks) {
+    bufferlist bl;
+    encode(b, bl);
+    delta_info_t delta;
+    delta.type = extent_types_t::ALLOC_INFO;
+    delta.bl = bl;
+    record.push_back(std::move(delta));
   }
 
   ceph_assert(t.get_fresh_block_stats().num ==
