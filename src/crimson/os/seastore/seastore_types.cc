@@ -367,6 +367,7 @@ ceph::bufferlist encode_records(
     record_group.size.dlength,
     current_segment_nonce,
     committed_to,
+    record_group.records.back().wouldbe_journal_tail,
     data_bl.crc32c(-1)
   };
   encode(header, bl);
