@@ -575,6 +575,9 @@ SegmentCleaner::mount_ret SegmentCleaner::mount(
 	    if (segments[segment_id].last_rewritten < last_rewritten) {
 	      segments[segment_id].last_rewritten = last_rewritten;
 	    }
+	    if (tail.get_type() == segment_type_t::JOURNAL) {
+	      update_journal_tail_committed(tail.journal_tail);
+	    }
 	    init_mark_segment_closed(
 	      segment_id,
 	      header.segment_seq,
@@ -650,9 +653,6 @@ SegmentCleaner::scan_extents_ret SegmentCleaner::scan_nonfull_segment(
 		&& this->segments[segment_id].last_rewritten < commit_time) {
 	      this->segments[segment_id].last_rewritten = commit_time;
 	    }
-	  }
-	  if (header.journal_tail != JOURNAL_SEQ_NULL) {
-	    update_journal_tail_target(header.journal_tail);
 	  }
 	  return seastar::now();
 	}),
