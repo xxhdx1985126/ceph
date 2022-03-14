@@ -1466,8 +1466,9 @@ Cache::get_next_dirty_extents_ret Cache::get_next_dirty_extents(
   }
   std::vector<CachedExtentRef> cand;
   size_t bytes_so_far = 0;
+  journal_seq_t last_dirty_from = dirty.begin()->get_dirty_from();
   for (auto i = dirty.begin();
-       i != dirty.end() && bytes_so_far < max_bytes;
+       i != dirty.end();
        ++i) {
     auto dirty_from = i->get_dirty_from();
     ceph_assert(dirty_from != JOURNAL_SEQ_NULL &&
@@ -1479,6 +1480,13 @@ Cache::get_next_dirty_extents_ret Cache::get_next_dirty_extents(
 	ERRORT("dirty extents are not ordered by dirty_from -- last={}, next={}",
                t, *cand.back(), *i);
         ceph_abort();
+      }
+      if (dirty_from != last_dirty_from) {
+	if (bytes_so_far >= max_bytes) {
+	  break;
+	} else {
+	  last_dirty_from = dirty_from;
+	}
       }
       bytes_so_far += i->get_length();
       cand.push_back(&*i);
