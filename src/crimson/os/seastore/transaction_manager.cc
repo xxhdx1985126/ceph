@@ -566,15 +566,16 @@ TransactionManagerRef make_transaction_manager(
 {
   auto scanner = std::make_unique<ExtentReader>();
   auto& scanner_ref = *scanner.get();
-  auto segment_cleaner = std::make_unique<SegmentCleaner>(
-    SegmentCleaner::config_t::get_default(),
-    std::move(scanner),
-    detailed);
-  auto journal = journal::make_segmented(sm, scanner_ref, *segment_cleaner);
   auto epm = std::make_unique<ExtentPlacementManager>();
   auto cache = std::make_unique<Cache>(scanner_ref, *epm);
   auto lba_manager = lba_manager::create_lba_manager(sm, *cache);
   auto backref_manager = backref::create_backref_manager(sm, *cache);
+  auto segment_cleaner = std::make_unique<SegmentCleaner>(
+    SegmentCleaner::config_t::get_default(),
+    std::move(scanner),
+    *backref_manager,
+    detailed);
+  auto journal = journal::make_segmented(sm, scanner_ref, *segment_cleaner);
 
   return std::make_unique<TransactionManager>(
     sm,

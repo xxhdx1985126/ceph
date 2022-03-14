@@ -179,10 +179,12 @@ void SpaceTrackerSimple::dump_usage(segment_id_t id) const
 SegmentCleaner::SegmentCleaner(
   config_t config,
   ExtentReaderRef&& scr,
+  backref::BackrefManager& backref_manager,
   bool detailed)
   : detailed(detailed),
     config(config),
     scanner(std::move(scr)),
+    backref_manager(backref_manager),
     ool_segment_seq_allocator(
       new SegmentSeqAllocator(segment_type_t::OOL)),
     gc_process(*this)
@@ -316,12 +318,17 @@ SegmentCleaner::rewrite_dirty_ret SegmentCleaner::rewrite_dirty(
     return seastar::do_with(
       std::move(dirty_list),
       [FNAME, this, &t](auto &dirty_list) {
-	return trans_intr::do_for_each(
-	  dirty_list,
-	  [FNAME, this, &t](auto &e) {
-	    DEBUGT("cleaning {}", t, *e);
-	    return ecb->rewrite_extent(t, e);
-	  });
+	return backref_manager.batch_insert_from_cache(
+	  t,
+	  dirty_list.back()->get_dirty_from()
+	).si_then([FNAME, this, &t, &dirty_list] {
+	  return trans_intr::do_for_each(
+	    dirty_list,
+	    [FNAME, this, &t](auto &e) {
+	      DEBUGT("cleaning {}", t, *e);
+	      return ecb->rewrite_extent(t, e);
+	    });
+	});
       });
   });
 }
