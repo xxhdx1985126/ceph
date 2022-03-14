@@ -75,17 +75,19 @@ auto get_transaction_manager(
   auto scanner = std::make_unique<ExtentReader>();
   scanner->add_segment_manager(&segment_manager);
   auto& scanner_ref = *scanner.get();
+  auto epm = std::make_unique<ExtentPlacementManager>();
+  auto cache = std::make_unique<Cache>(scanner_ref, *epm);
+  auto lba_manager = lba_manager::create_lba_manager(segment_manager, *cache);
+  auto backref_manager = backref::create_backref_manager(segment_manager, *cache);
   auto segment_cleaner = std::make_unique<SegmentCleaner>(
     SegmentCleaner::config_t::get_default(),
     std::move(scanner),
+    *backref_manager,
     true);
   auto journal = journal::make_segmented(
     segment_manager,
     scanner_ref,
     *segment_cleaner);
-  auto epm = std::make_unique<ExtentPlacementManager>();
-  auto cache = std::make_unique<Cache>(scanner_ref, *epm);
-  auto lba_manager = lba_manager::create_lba_manager(segment_manager, *cache);
 
   epm->add_allocator(
     device_type_t::SEGMENTED,
@@ -100,6 +102,7 @@ auto get_transaction_manager(
     std::move(cache),
     std::move(lba_manager),
     std::move(epm),
+    std::move(backref_manager),
     scanner_ref);
 }
 

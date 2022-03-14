@@ -1512,16 +1512,17 @@ seastar::future<std::unique_ptr<SeaStore>> make_seastore(
   ).then([&device](auto sm) {
     auto scanner = std::make_unique<ExtentReader>();
     auto& scanner_ref = *scanner.get();
-    auto segment_cleaner = std::make_unique<SegmentCleaner>(
-      SegmentCleaner::config_t::get_default(),
-      std::move(scanner),
-      false /* detailed */);
-
-    auto journal = journal::make_segmented(*sm, scanner_ref, *segment_cleaner);
     auto epm = std::make_unique<ExtentPlacementManager>();
     auto cache = std::make_unique<Cache>(scanner_ref, *epm);
     auto lba_manager = lba_manager::create_lba_manager(*sm, *cache);
     auto backref_manager = backref::create_backref_manager(*sm, *cache);
+    auto segment_cleaner = std::make_unique<SegmentCleaner>(
+      SegmentCleaner::config_t::get_default(),
+      std::move(scanner),
+      *backref_manager,
+      false /* detailed */);
+
+    auto journal = journal::make_segmented(*sm, scanner_ref, *segment_cleaner);
 
     auto tm = std::make_unique<TransactionManager>(
       *sm,
