@@ -674,7 +674,8 @@ private:
   const config_t config;
 
   ExtentReaderRef scanner;
-  backref::BackrefManager& backref_manager;
+  backref::BackrefManager &backref_manager;
+  Cache &cache;
 
   SpaceTrackerIRef space_tracker;
   segment_info_set_t segments;
@@ -722,7 +723,8 @@ public:
   SegmentCleaner(
     config_t config,
     ExtentReaderRef&& scanner,
-    backref::BackrefManager& backref_manager,
+    backref::BackrefManager &backref_manager,
+    Cache &cache,
     bool detailed = false);
 
   using mount_ertr = crimson::errorator<
