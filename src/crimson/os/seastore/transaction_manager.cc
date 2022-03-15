@@ -121,7 +121,7 @@ TransactionManager::mount_ertr::future<> TransactionManager::mount()
 	    }).si_then([this, FNAME, &t] {
 	      assert(segment_cleaner->debug_check_space(
 		       *segment_cleaner->get_empty_space_tracker()));
-	      return lba_manager->scan_mapped_space(
+	      return backref_manager->scan_mapped_space(
 		t,
 		[this, FNAME, &t](paddr_t addr, extent_len_t len, depth_t depth) {
 		  TRACET(
@@ -136,6 +136,15 @@ TransactionManager::mount_ertr::future<> TransactionManager::mount()
 		      seastar::lowres_system_clock::time_point(),
 		      seastar::lowres_system_clock::time_point(),
 		      /* init_scan = */ true);
+		  }
+		  if (depth) {
+		    if (depth > 1) {
+		      cache->add_backref_extent(
+			addr, extent_types_t::BACKREF_INTERNAL);
+		    } else {
+		      cache->add_backref_extent(
+			addr, extent_types_t::BACKREF_LEAF);
+		    }
 		  }
 		});
 	    });
