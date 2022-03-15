@@ -839,6 +839,16 @@ public:
   /// Dump live extents
   void dump_contents();
 
+  void add_backref_extent(paddr_t paddr) {
+    auto [iter, inserted] = backref_extents.insert(paddr);
+    assert(inserted);
+  }
+
+  void remove_backref_extent(paddr_t paddr) {
+    auto r = backref_extents.erase(paddr);
+    assert(r);
+  }
+
 private:
   ExtentReader &reader;	   	   ///< ref to extent reader
   ExtentPlacementManager& epm;
@@ -853,6 +863,8 @@ private:
    * holds refs to dirty extents.  Ordered by CachedExtent::get_dirty_from().
    */
   CachedExtent::list dirty;
+
+  std::set<paddr_t> backref_extents;
 
   /**
    * lru
