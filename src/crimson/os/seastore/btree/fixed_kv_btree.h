@@ -30,19 +30,6 @@ struct op_context_t {
 template <typename T>
 Transaction::tree_stats_t& get_tree_stats(Transaction &t);
 
-template <typename T>
-struct max_key_t {};
-
-template <>
-struct max_key_t<laddr_t> {
-  static constexpr laddr_t max = L_ADDR_MAX;
-};
-
-template <>
-struct max_key_t<paddr_t> {
-  static constexpr paddr_t max = P_ADDR_MAX;
-};
-
 template <
   typename node_key_t,
   typename node_val_t,
