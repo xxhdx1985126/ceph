@@ -669,7 +669,8 @@ public:
     using submit_transaction_direct_ret =
       submit_transaction_direct_iertr::future<>;
     virtual submit_transaction_direct_ret submit_transaction_direct(
-      Transaction &t) = 0;
+      Transaction &t,
+      std::optional<journal_seq_t> seq_to_trim = std::nullopt) = 0;
   };
 
 private:
@@ -677,7 +678,8 @@ private:
   const config_t config;
 
   ExtentReaderRef scanner;
-  backref::BackrefManager& backref_manager;
+  backref::BackrefManager &backref_manager;
+  Cache &cache;
 
   SpaceTrackerIRef space_tracker;
   segment_info_set_t segments;
@@ -727,7 +729,8 @@ public:
   SegmentCleaner(
     config_t config,
     ExtentReaderRef&& scanner,
-    backref::BackrefManager& backref_manager,
+    backref::BackrefManager &backref_manager,
+    Cache &cache,
     bool detailed = false);
 
   SegmentSeqAllocator& get_ool_segment_seq_allocator() {
@@ -955,7 +958,7 @@ private:
    * Writes out dirty blocks dirtied earlier than limit.
    */
   using rewrite_dirty_iertr = work_iertr;
-  using rewrite_dirty_ret = rewrite_dirty_iertr::future<>;
+  using rewrite_dirty_ret = rewrite_dirty_iertr::future<journal_seq_t>;
   rewrite_dirty_ret rewrite_dirty(
     Transaction &t,
     journal_seq_t limit);

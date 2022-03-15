@@ -328,7 +328,8 @@ TransactionManager::submit_transaction(
 
 TransactionManager::submit_transaction_direct_ret
 TransactionManager::submit_transaction_direct(
-  Transaction &tref)
+  Transaction &tref,
+  std::optional<journal_seq_t> seq_to_trim)
 {
   LOG_PREFIX(TransactionManager::submit_transaction_direct);
   SUBTRACET(seastore_t, "start", tref);
@@ -361,7 +362,7 @@ TransactionManager::submit_transaction_direct(
   }).si_then([this, FNAME, &tref] {
     SUBTRACET(seastore_t, "about to prepare", tref);
     return tref.get_handle().enter(write_pipeline.prepare);
-  }).si_then([this, FNAME, &tref]() mutable
+  }).si_then([this, FNAME, &tref, seq_to_trim=std::move(seq_to_trim)]() mutable
 	      -> submit_transaction_iertr::future<> {
     auto record = cache->prepare_record(tref, segment_cleaner.get());
 
@@ -369,11 +370,15 @@ TransactionManager::submit_transaction_direct(
 
     SUBTRACET(seastore_t, "about to submit to journal", tref);
     return journal->submit_record(std::move(record), tref.get_handle()
-    ).safe_then([this, FNAME, &tref](auto submit_result) mutable {
+    ).safe_then([this, FNAME, &tref, seq_to_trim=std::move(seq_to_trim)]
+      (auto submit_result) mutable {
       SUBDEBUGT(seastore_t, "committed with {}", tref, submit_result);
       auto start_seq = submit_result.write_result.start_seq;
       auto end_seq = submit_result.write_result.get_end_seq();
       segment_cleaner->set_journal_head(end_seq);
+      if (seq_to_trim && *seq_to_trim != JOURNAL_SEQ_NULL) {
+	cache->trim_backref_bufs(*seq_to_trim);
+      }
       cache->complete_commit(
           tref,
           submit_result.record_block_base,
@@ -609,6 +614,7 @@ TransactionManagerRef make_transaction_manager(
     SegmentCleaner::config_t::get_default(),
     std::move(scanner),
     *backref_manager,
+    *cache,
     detailed);
   auto journal = journal::make_segmented(sm, scanner_ref, *segment_cleaner);
 

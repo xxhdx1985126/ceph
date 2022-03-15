@@ -34,6 +34,12 @@ public:
     Transaction &t,
     paddr_t offset) = 0;
 
+  using rewrite_extent_iertr = base_iertr;
+  using rewrite_extent_ret = rewrite_extent_iertr::future<>;
+  virtual rewrite_extent_ret rewrite_extent(
+    Transaction &t,
+    CachedExtentRef extent) = 0;
+
   using new_mapping_iertr = base_iertr;
   using new_mapping_ret = new_mapping_iertr::future<BackrefPinRef>;
   virtual new_mapping_ret new_mapping(
