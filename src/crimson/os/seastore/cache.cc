@@ -1387,6 +1387,17 @@ Cache::replay_delta(
     root->set_last_modified(last_modified);
     add_extent(root);
     return replay_delta_ertr::now();
+  } else if (delta.type == extent_types_t::ALLOC_INFO) {
+    may_roll_backref_buffer(journal_seq.offset);
+    alloc_delta_t alloc_delta;
+    decode(alloc_delta, delta.bl);
+    std::vector<backref_buf_entry_ref> backref_list;
+    for (auto &alloc_blk : alloc_delta.alloc_blk_ranges) {
+      backref_list.emplace_back(
+	std::make_unique<backref_buf_entry_t>(std::move(alloc_blk)));
+    }
+    backref_batch_update(std::move(backref_list), journal_seq);
+    return replay_delta_ertr::now();
   } else {
     auto _get_extent_if_cached = [this](paddr_t addr)
       -> get_extent_ertr::future<CachedExtentRef> {
