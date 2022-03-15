@@ -179,12 +179,14 @@ void SpaceTrackerSimple::dump_usage(segment_id_t id) const
 SegmentCleaner::SegmentCleaner(
   config_t config,
   ExtentReaderRef&& scr,
-  backref::BackrefManager& backref_manager,
+  backref::BackrefManager &backref_manager,
+  Cache &cache,
   bool detailed)
   : detailed(detailed),
     config(config),
     scanner(std::move(scr)),
     backref_manager(backref_manager),
+    cache(cache),
     gc_process(*this)
 {}
 
@@ -323,7 +325,11 @@ SegmentCleaner::rewrite_dirty_ret SegmentCleaner::rewrite_dirty(
 	    dirty_list,
 	    [FNAME, this, &t](auto &e) {
 	      DEBUGT("cleaning {}", t, *e);
-	      return ecb->rewrite_extent(t, e);
+	      if (e->get_type() >= extent_types_t::BACKREF_INTERNAL) {
+		return backref_manager.rewrite_extent(t, e);
+	      } else {
+		return ecb->rewrite_extent(t, e);
+	      }
 	    });
 	});
       });
@@ -387,7 +393,99 @@ SegmentCleaner::gc_trim_journal_ret SegmentCleaner::gc_trim_journal()
 
 SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
 {
-  if (!scan_cursor) {
+  journal_seq_t next = get_next_gc_target();
+  auto &seg_paddr = next.offset.as_seg_paddr();
+  auto &sm_info = segments[seg_paddr.get_segment_id().device_id()];
+  auto segment_id = seg_paddr.get_segment_id();
+  segment_id_t next_segment_id{
+    segment_id.device_id(),
+    segment_id.device_segment_id() + 1};
+  auto end_paddr = paddr_t::make_seg_paddr(next_segment_id, 0);
+
+  auto backref_extents = cache.get_backref_extents_in_range(
+    next.offset, end_paddr);
+  auto backrefs = cache.get_backrefs_in_range(next.offset, end_paddr);
+
+  return seastar::do_with(
+    std::move(backref_extents),
+    std::move(backrefs),
+    (size_t)0,
+    [this, &sm_info, next](
+      auto &backref_extents,
+      auto &backrefs,
+      auto &reclaimed) {
+    return repeat_eagain(
+      [this, &backref_extents, &backrefs, &reclaimed, next, &sm_info]() mutable {
+      reclaimed = 0;
+      return ecb->with_transaction_intr(
+	Transaction::src_t::CLEANER_RECLAIM,
+	"reclaim_space",
+	[this, &backref_extents, &backrefs, &reclaimed, next, &sm_info](auto &t) {
+	return backref_manager.get_mappings(
+	  t, next.offset, sm_info->segment_size
+	).si_then(
+	  [this, &backref_extents, &backrefs, &reclaimed, &t](auto pin_list) {
+	  for (auto &pin : pin_list) {
+	    backrefs.emplace(
+	      pin->get_key(),
+	      pin->get_val(),
+	      pin->get_length(),
+	      pin->get_type());
+	  }
+	  return seastar::do_with(
+	    std::vector<CachedExtentRef>(),
+	    [this, &backref_extents, &backrefs, &reclaimed, &t](auto &extents) {
+	    return trans_intr::parallel_for_each(
+	      backref_extents,
+	      [this, &extents, &t](auto &ent) {
+	      // only the gc fiber which is single can rewrite backref extents,
+	      // so it must be alive
+	      return cache.get_extent_by_type(
+		t, ent.type, ent.paddr, L_ADDR_NULL, BACKREF_NODE_SIZE
+	      ).si_then([&extents](auto ext) {
+		extents.emplace_back(std::move(ext));
+	      });
+	    }).si_then([this, &extents, &t, &backrefs] {
+	      return trans_intr::parallel_for_each(
+		backrefs,
+		[this, &extents, &t](auto &ent) {
+		return ecb->get_extent_if_live(
+		  t, ent.type, ent.paddr, ent.laddr, ent.len
+		).si_then([&extents, &ent](auto ext) {
+		  if (!ext) {
+		    logger().debug(
+		      "SegmentCleaner::gc_reclaim_space: addr {} dead, skipping",
+		      ent.paddr);
+		  } else {
+		    extents.emplace_back(std::move(ext));
+		  }
+		  return ExtentCallbackInterface::rewrite_extent_iertr::now();
+		});
+	      });
+	    }).si_then([&extents, this, &t, &reclaimed] {
+	      return trans_intr::do_for_each(
+		extents,
+		[this, &t, &reclaimed](auto &ext) {
+		reclaimed += ext->get_length();
+		if (ext->get_type() >= extent_types_t::BACKREF_INTERNAL) {
+		  return backref_manager.rewrite_extent(t, ext);
+		} else {
+		  return ecb->rewrite_extent(t, ext);
+		}
+	      });
+	    });
+	  }).si_then([this, &t] {
+	    return ecb->submit_transaction_direct(t);
+	  });
+	});
+      });
+    }).safe_then([&reclaimed, this] {
+      stats.reclaim_rewrite_bytes += reclaimed;
+      stats.reclaimed_segments++;
+    });
+  });
+
+/*  if (!scan_cursor) {
     journal_seq_t next = get_next_gc_target();
     if (next == JOURNAL_SEQ_NULL) {
       logger().debug(
@@ -504,6 +602,7 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
       scan_cursor.reset();
     }
   });
+*/
 }
 
 SegmentCleaner::mount_ret SegmentCleaner::mount(

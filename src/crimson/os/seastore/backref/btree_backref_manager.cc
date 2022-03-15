@@ -390,6 +390,21 @@ BtreeBackrefManager::batch_insert(
   });
 }
 
+BtreeBackrefManager::rewrite_extent_ret
+BtreeBackrefManager::rewrite_extent(
+  Transaction &t,
+  CachedExtentRef extent)
+{
+  auto c = get_context(t);
+  return with_btree<BackrefBtree>(
+    cache,
+    c,
+    nullptr,
+    [c, extent](auto &btree) mutable {
+    return btree.rewrite_extent(c, extent);
+  });
+}
+
 BtreeBackrefManager::remove_mapping_ret
 BtreeBackrefManager::remove_mapping(
   Transaction &t,
