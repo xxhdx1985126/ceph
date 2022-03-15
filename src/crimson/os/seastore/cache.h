@@ -818,7 +818,7 @@ public:
       auto oldest = dirty.begin()->get_dirty_from();
       journal_seq_t backref_oldest;
       if (backref_bufs_to_flush.empty()) {
-	if (!backref_buffer->backrefs.empty()) {
+	if (backref_buffer && !backref_buffer->backrefs.empty()) {
 	  backref_oldest = backref_buffer->backrefs.begin()->first;
 	}
       } else {
@@ -1142,8 +1142,11 @@ private:
   }
 
   void may_roll_backref_buffer(const paddr_t &final_block_start) {
-    if (backref_buffer) {
-      auto &last_backref = backref_buffer->backrefs.rbegin()->second.back();
+    if (backref_buffer && !backref_buffer->backrefs.empty()) {
+      auto &[seq, backref_list] = *backref_buffer->backrefs.rbegin();
+      if (backref_list.empty())
+	return;
+      auto &last_backref = backref_list.back();
       auto &last_seg_paddr = last_backref->paddr.as_seg_paddr();
       if (last_seg_paddr.get_segment_id() !=
 	  final_block_start.as_seg_paddr().get_segment_id()) {

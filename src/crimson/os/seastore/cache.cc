@@ -1317,7 +1317,8 @@ void Cache::complete_commit(
 	  i->get_type()));
     }
   }
-  backref_batch_update(std::move(backref_list), seq);
+  if (!backref_list.empty())
+    backref_batch_update(std::move(backref_list), seq);
 }
 
 void Cache::init()
@@ -1402,7 +1403,8 @@ Cache::replay_delta(
       backref_list.emplace_back(
 	std::make_unique<backref_buf_entry_t>(std::move(alloc_blk)));
     }
-    backref_batch_update(std::move(backref_list), journal_seq);
+    if (!backref_list.empty())
+      backref_batch_update(std::move(backref_list), journal_seq);
     return replay_delta_ertr::now();
   } else {
     auto _get_extent_if_cached = [this](paddr_t addr)
