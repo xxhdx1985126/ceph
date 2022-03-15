@@ -71,7 +71,7 @@ public:
   using iterator_fut = base_iertr::future<iterator>;
 
   using mapped_space_visitor_t = std::function<
-    void(paddr_t, extent_len_t)>;
+    void(paddr_t, extent_len_t, depth_t)>;
 
   class iterator {
   public:
@@ -1119,7 +1119,10 @@ private:
 	max_key_t<node_key_t>::max
       ).si_then([this, visitor, &iter](InternalNodeRef root_node) {
 	iter.get_internal(root.get_depth()).node = root_node;
-	if (visitor) (*visitor)(root_node->get_paddr(), root_node->get_length());
+	if (visitor) (*visitor)(
+          root_node->get_paddr(),
+          root_node->get_length(),
+          root.get_depth());
 	return lookup_root_iertr::now();
       });
     } else {
@@ -1128,9 +1131,12 @@ private:
 	root.get_location(),
 	0,
 	max_key_t<node_key_t>::max
-      ).si_then([visitor, &iter](LeafNodeRef root_node) {
+      ).si_then([visitor, &iter, this](LeafNodeRef root_node) {
 	iter.leaf.node = root_node;
-	if (visitor) (*visitor)(root_node->get_paddr(), root_node->get_length());
+	if (visitor) (*visitor)(
+          root_node->get_paddr(),
+          root_node->get_length(),
+          root.get_depth());
 	return lookup_root_iertr::now();
       });
     }
@@ -1167,7 +1173,7 @@ private:
       auto node_iter = f(*node);
       assert(node_iter != node->end());
       entry.pos = node_iter->get_offset();
-      if (visitor) (*visitor)(node->get_paddr(), node->get_length());
+      if (visitor) (*visitor)(node->get_paddr(), node->get_length(), depth);
       return seastar::now();
     });
   }
@@ -1200,7 +1206,7 @@ private:
       iter.leaf.node = node;
       auto node_iter = f(*node);
       iter.leaf.pos = node_iter->get_offset();
-      if (visitor) (*visitor)(node->get_paddr(), node->get_length());
+      if (visitor) (*visitor)(node->get_paddr(), node->get_length(), 1);
       return seastar::now();
     });
   }
