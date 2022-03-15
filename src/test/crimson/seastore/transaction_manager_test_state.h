@@ -83,6 +83,7 @@ auto get_transaction_manager(
     SegmentCleaner::config_t::get_default(),
     std::move(scanner),
     *backref_manager,
+    *cache,
     true);
   auto journal = journal::make_segmented(
     segment_manager,

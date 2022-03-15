@@ -1632,6 +1632,7 @@ seastar::future<std::unique_ptr<SeaStore>> make_seastore(
       SegmentCleaner::config_t::get_default(),
       std::move(scanner),
       *backref_manager,
+      *cache,
       false /* detailed */);
 
     auto journal = journal::make_segmented(*sm, scanner_ref, *segment_cleaner);
