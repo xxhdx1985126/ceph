@@ -1037,6 +1037,8 @@ record_t Cache::prepare_record(Transaction &t)
 	L_ADDR_NULL,
 	i->get_length(),
 	i->get_type());
+    } else {
+      remove_backref_extent(i->get_paddr());
     }
   }
   t.add_alloc_info_blocks(std::move(rel_delta));
@@ -1094,6 +1096,8 @@ record_t Cache::prepare_record(Transaction &t)
 	: i->cast<lba_manager::btree::LBANode>()->get_node_meta().begin,
 	i->get_length(),
 	i->get_type());
+    } else {
+      add_backref_extent(i->get_paddr(), i->get_type());
     }
   }
 
@@ -1112,6 +1116,8 @@ record_t Cache::prepare_record(Transaction &t)
 	: i->cast<lba_manager::btree::LBANode>()->get_node_meta().begin,
 	i->get_length(),
 	i->get_type());
+    } else {
+      add_backref_extent(i->get_paddr(), i->get_type());
     }
   }
   t.add_alloc_info_blocks(std::move(alloc_delta));
