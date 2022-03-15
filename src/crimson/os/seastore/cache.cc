@@ -1292,6 +1292,8 @@ void Cache::complete_commit(
 	    i->get_type(),
 	    seq));
       }
+      if (is_backref_node(i->get_type()))
+	add_backref_extent(i->get_paddr(), i->get_type());
     }
   });
 
@@ -1343,6 +1345,8 @@ void Cache::complete_commit(
 	  i->get_type(),
 	  seq));
     }
+    if (is_backref_node(i->get_type()))
+      remove_backref_extent(i->get_paddr());
   }
   if (!backref_list.empty())
     backref_batch_update(std::move(backref_list), seq);
@@ -1397,6 +1401,7 @@ Cache::close_ertr::future<> Cache::close()
     intrusive_ptr_release(ptr);
   }
   backref_bufs_to_flush.clear();
+  backref_extents.clear();
   backref_buffer.reset();
   assert(stats.dirty_bytes == 0);
   lru.clear();
