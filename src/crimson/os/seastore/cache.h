@@ -839,14 +839,56 @@ public:
   /// Dump live extents
   void dump_contents();
 
-  void add_backref_extent(paddr_t paddr) {
-    auto [iter, inserted] = backref_extents.insert(paddr);
+  struct backref_extent_buf_entry_t {
+    backref_extent_buf_entry_t(
+      paddr_t paddr,
+      extent_types_t type)
+      : paddr(paddr), type(type) {}
+    paddr_t paddr = P_ADDR_NULL;
+    extent_types_t type = extent_types_t::ROOT;
+    struct cmp_t {
+      using is_transparent = paddr_t;
+      bool operator()(
+	const backref_extent_buf_entry_t &l,
+	const backref_extent_buf_entry_t &r) const {
+	return l.paddr < r.paddr;
+      }
+      bool operator()(
+	const paddr_t &l,
+	const backref_extent_buf_entry_t &r) const {
+	return l < r.paddr;
+      }
+      bool operator()(
+	const backref_extent_buf_entry_t &l,
+	const paddr_t &r) const {
+	return l.paddr < r;
+      }
+    };
+  };
+
+  void add_backref_extent(paddr_t paddr, extent_types_t type) {
+    auto [iter, inserted] = backref_extents.emplace(paddr, type);
     assert(inserted);
   }
 
   void remove_backref_extent(paddr_t paddr) {
-    auto r = backref_extents.erase(paddr);
-    assert(r);
+    auto iter = backref_extents.find(paddr);
+    if (iter != backref_extents.end())
+      backref_extents.erase(iter);
+  }
+
+  std::set<
+    backref_extent_buf_entry_t,
+    backref_extent_buf_entry_t::cmp_t> get_backref_extents_in_range(
+    paddr_t start,
+    paddr_t end) {
+    auto start_iter = backref_extents.lower_bound(start);
+    auto end_iter = backref_extents.upper_bound(end);
+    std::set<
+      backref_extent_buf_entry_t,
+      backref_extent_buf_entry_t::cmp_t> res;
+    res.insert(start_iter, end_iter);
+    return res;
   }
 
 private:
@@ -864,7 +906,9 @@ private:
    */
   CachedExtent::list dirty;
 
-  std::set<paddr_t> backref_extents;
+  std::set<
+    backref_extent_buf_entry_t,
+    backref_extent_buf_entry_t::cmp_t> backref_extents;
 
   /**
    * lru
