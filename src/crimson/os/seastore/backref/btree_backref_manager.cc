@@ -129,7 +129,7 @@ BtreeBackrefManager::new_mapping(
   };
 
   LOG_PREFIX(BtreeBackrefManager::alloc_extent);
-  TRACET("{}~{}, paddr={}", t, addr, len, key);
+  DEBUGT("{}~{}, paddr={}", t, addr, len, key);
   backref_map_val_t val{len, addr, type};
   auto c = get_context(t);
   //++stats.num_alloc_extents;
@@ -144,7 +144,7 @@ BtreeBackrefManager::new_mapping(
 	c,
 	btree.upper_bound_right(c, key),
 	[&state, len, addr, &t, key/*, lookup_attempts*/](auto &pos) {
-	  LOG_PREFIX(BtreeBackrefManager::alloc_extent);
+	  LOG_PREFIX(BtreeBackrefManager::new_mapping);
 	  //++stats.num_alloc_extents_iter_nexts;
 	  if (pos.is_end()) {
 	    DEBUGT("{}~{}, paddr={}, state: end, insert at {}",
@@ -168,7 +168,7 @@ BtreeBackrefManager::new_mapping(
 	      interruptible::ready_future_marker{},
 	      seastar::stop_iteration::yes);
 	  } else {
-	    TRACET("{}~{}, paddr={}, state: {}~{}, repeat ... -- {}",
+	    DEBUGT("{}~{}, paddr={}, state: {}~{}, repeat ... -- {}",
                    t, addr, len, key,
                    pos.get_key(), pos.get_val().len,
                    pos.get_val());
@@ -263,11 +263,16 @@ BtreeBackrefManager::batch_insert(
     [this, &t, &limit](auto &p) -> batch_insert_iertr::future<> {
     auto &seq = p.first;
     auto &backref_list = p.second;
+    LOG_PREFIX(BtreeBackrefManager::batch_insert);
+    DEBUGT("seq {}, limit {}", t, seq, limit);
     if (seq < limit) {
       return trans_intr::do_for_each(
 	backref_list,
 	[this, &t](auto &backref) {
+	LOG_PREFIX(BtreeBackrefManager::batch_insert);
 	if (backref->laddr != L_ADDR_NULL) {
+	  DEBUGT("new mapping: {}~{} -> {}",
+	    t, backref->paddr, backref->len, backref->laddr);
 	  return new_mapping(
 	    t,
 	    backref->paddr,
@@ -277,6 +282,7 @@ BtreeBackrefManager::batch_insert(
 	    return seastar::now();
 	  });
 	} else {
+	  DEBUGT("remove mapping: {}", t, backref->paddr);
 	  return remove_mapping(
 	    t,
 	    backref->paddr).si_then([](auto&&) {

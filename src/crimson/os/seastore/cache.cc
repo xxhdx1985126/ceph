@@ -19,6 +19,7 @@
 #include "crimson/os/seastore/object_data_handler.h"
 #include "crimson/os/seastore/collection_manager/collection_flat_node.h"
 #include "crimson/os/seastore/onode_manager/staged-fltree/node_extent_manager/seastore.h"
+#include "crimson/os/seastore/backref/backref_tree_node.h"
 #include "test/crimson/seastore/test_block.h"
 
 using std::string_view;
@@ -1400,6 +1401,12 @@ Cache::replay_delta(
     decode(alloc_delta, delta.bl);
     std::vector<backref_buf_entry_ref> backref_list;
     for (auto &alloc_blk : alloc_delta.alloc_blk_ranges) {
+      if (alloc_blk.paddr.is_relative()) {
+	assert(alloc_blk.paddr.is_record_relative());
+	alloc_blk.paddr = record_base.add_relative(alloc_blk.paddr);
+      }
+      DEBUG("replay alloc_blk {}~{} {}",
+	alloc_blk.paddr, alloc_blk.len, alloc_blk.laddr);
       backref_list.emplace_back(
 	std::make_unique<backref_buf_entry_t>(std::move(alloc_blk)));
     }
@@ -1607,6 +1614,18 @@ Cache::get_extent_ertr::future<CachedExtentRef> Cache::_get_extent_by_type(
     case extent_types_t::ROOT:
       ceph_assert(0 == "ROOT is never directly read");
       return get_extent_ertr::make_ready_future<CachedExtentRef>();
+    case extent_types_t::BACKREF_INTERNAL:
+      return get_extent<backref::BackrefInternalNode>(
+	offset, length, p_metric_key, std::move(extent_init_func)
+      ).safe_then([](auto extent) {
+	return CachedExtentRef(extent.detach(), false /* add_ref */);
+      });
+    case extent_types_t::BACKREF_LEAF:
+      return get_extent<backref::BackrefLeafNode>(
+	offset, length, p_metric_key, std::move(extent_init_func)
+      ).safe_then([](auto extent) {
+	return CachedExtentRef(extent.detach(), false /* add_ref */);
+      });
     case extent_types_t::LADDR_INTERNAL:
       return get_extent<lba_manager::btree::LBAInternalNode>(
 	offset, length, p_metric_key, std::move(extent_init_func)

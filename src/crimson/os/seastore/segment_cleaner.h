@@ -947,7 +947,7 @@ private:
    * Writes out dirty blocks dirtied earlier than limit.
    */
   using rewrite_dirty_iertr = work_iertr;
-  using rewrite_dirty_ret = rewrite_dirty_iertr::future<>;
+  using rewrite_dirty_ret = rewrite_dirty_iertr::future<std::optional<journal_seq_t>>;
   rewrite_dirty_ret rewrite_dirty(
     Transaction &t,
     journal_seq_t limit);
