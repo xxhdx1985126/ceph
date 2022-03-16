@@ -293,6 +293,7 @@ std::ostream& operator<<(std::ostream& out, const record_group_header_t& h)
              << ", dlength=" << h.dlength
              << ", nonce=" << h.segment_nonce
              << ", committed_to=" << h.committed_to
+	     << ", journal_tail=" << h.journal_tail
              << ", data_crc=" << h.data_crc
              << ")";
 }

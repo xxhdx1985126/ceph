@@ -317,10 +317,16 @@ SegmentCleaner::rewrite_dirty_ret SegmentCleaner::rewrite_dirty(
     return seastar::do_with(
       std::move(dirty_list),
       [FNAME, this, &t](auto &dirty_list) {
-	return backref_manager.batch_insert_from_cache(
-	  t,
-	  dirty_list.back()->get_dirty_from()
-	).si_then([FNAME, this, &t, &dirty_list] {
+	auto fut = backref::BackrefManager::batch_insert_iertr::now();
+	std::optional<journal_seq_t> seq_to_rm = std::nullopt;
+	if (!dirty_list.empty()) {
+	  seq_to_rm = dirty_list.back()->get_dirty_from();
+	  fut = backref_manager.batch_insert_from_cache(
+	    t,
+	    dirty_list.back()->get_dirty_from()
+	  );
+	}
+	return fut.si_then([FNAME, this, &t, &dirty_list] {
 	  return trans_intr::do_for_each(
 	    dirty_list,
 	    [FNAME, this, &t](auto &e) {
@@ -331,6 +337,10 @@ SegmentCleaner::rewrite_dirty_ret SegmentCleaner::rewrite_dirty(
 		return ecb->rewrite_extent(t, e);
 	      }
 	    });
+	}).si_then([seq_to_rm]() mutable {
+	  return rewrite_dirty_iertr::make_ready_future<
+	    std::optional<journal_seq_t>>(
+	      std::move(seq_to_rm));
 	});
       });
   });
@@ -384,8 +394,28 @@ SegmentCleaner::gc_trim_journal_ret SegmentCleaner::gc_trim_journal()
       [this](auto& t)
     {
       return rewrite_dirty(t, get_dirty_tail()
-      ).si_then([this, &t] {
-        return ecb->submit_transaction_direct(t);
+      ).si_then([this, &t](auto seq_to_rm) {
+        return ecb->submit_transaction_direct(t).si_then(
+	  [this, seq_to_rm=std::move(seq_to_rm)] {
+	  if (!seq_to_rm)
+	    return seastar::now();
+	  auto &backref_bufs = cache.get_backref_bufs_to_flush();
+	  for (auto iter = backref_bufs.begin();
+	       iter != backref_bufs.end();) {
+	    auto &backref_buf = *iter;
+	    assert(backref_buf);
+	    if (!backref_buf->backrefs.empty()
+		&& backref_buf->backrefs.rbegin()->first > *seq_to_rm) {
+	      auto iter2 = backref_buf->backrefs.lower_bound(*seq_to_rm);
+	      backref_buf->backrefs.erase(
+		backref_buf->backrefs.begin(), iter2);
+	      break;
+	    } else {
+	      iter = backref_bufs.erase(iter);
+	    }
+	  }
+	  return seastar::now();
+	});
       });
     });
   });
@@ -752,9 +782,6 @@ SegmentCleaner::scan_extents_ret SegmentCleaner::scan_nonfull_segment(
 		&& this->segments[segment_id].last_rewritten < commit_time) {
 	      this->segments[segment_id].last_rewritten = commit_time;
 	    }
-	  }
-	  if (header.journal_tail != JOURNAL_SEQ_NULL) {
-	    update_journal_tail_target(header.journal_tail);
 	  }
 	  return seastar::now();
 	}),
