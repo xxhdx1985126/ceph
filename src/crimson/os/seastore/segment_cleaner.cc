@@ -316,17 +316,16 @@ SegmentCleaner::rewrite_dirty_ret SegmentCleaner::rewrite_dirty(
     DEBUGT("rewrite {} dirty extents", t, dirty_list.size());
     return seastar::do_with(
       std::move(dirty_list),
-      [FNAME, this, &t](auto &dirty_list) {
-	auto fut = backref::BackrefManager::batch_insert_iertr::now();
+      [FNAME, this, &t, limit](auto &dirty_list) {
 	std::optional<journal_seq_t> seq_to_rm = std::nullopt;
-	if (!dirty_list.empty()) {
-	  seq_to_rm = dirty_list.back()->get_dirty_from();
-	  fut = backref_manager.batch_insert_from_cache(
-	    t,
-	    dirty_list.back()->get_dirty_from()
-	  );
-	}
-	return fut.si_then([FNAME, this, &t, &dirty_list] {
+	auto fut = backref::BackrefManager::batch_insert_iertr::now();
+	seq_to_rm = dirty_list.empty()
+	  ? limit
+	  : dirty_list.back()->get_dirty_from();
+	return backref_manager.batch_insert_from_cache(
+	  t,
+	  *seq_to_rm
+	).si_then([FNAME, this, &t, &dirty_list] {
 	  return trans_intr::do_for_each(
 	    dirty_list,
 	    [FNAME, this, &t](auto &e) {
@@ -395,27 +394,8 @@ SegmentCleaner::gc_trim_journal_ret SegmentCleaner::gc_trim_journal()
     {
       return rewrite_dirty(t, get_dirty_tail()
       ).si_then([this, &t](auto seq_to_rm) {
-        return ecb->submit_transaction_direct(t).si_then(
-	  [this, seq_to_rm=std::move(seq_to_rm)] {
-	  if (!seq_to_rm)
-	    return seastar::now();
-	  auto &backref_bufs = cache.get_backref_bufs_to_flush();
-	  for (auto iter = backref_bufs.begin();
-	       iter != backref_bufs.end();) {
-	    auto &backref_buf = *iter;
-	    assert(backref_buf);
-	    if (!backref_buf->backrefs.empty()
-		&& backref_buf->backrefs.rbegin()->first > *seq_to_rm) {
-	      auto iter2 = backref_buf->backrefs.lower_bound(*seq_to_rm);
-	      backref_buf->backrefs.erase(
-		backref_buf->backrefs.begin(), iter2);
-	      break;
-	    } else {
-	      iter = backref_bufs.erase(iter);
-	    }
-	  }
-	  return seastar::now();
-	});
+        return ecb->submit_transaction_direct(
+	  t, std::move(seq_to_rm));
       });
     });
   });

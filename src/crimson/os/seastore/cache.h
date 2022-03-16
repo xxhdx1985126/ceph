@@ -575,6 +575,31 @@ public:
     return backref_bufs_to_flush;
   }
 
+  void trim_backref_bufs(journal_seq_t &trim_to) {
+    LOG_PREFIX(Cache::alloc_new_extent);
+    SUBDEBUG(seastore_cache, "trimming to {}", trim_to);
+    auto &backref_bufs = get_backref_bufs_to_flush();
+    for (auto iter = backref_bufs.begin();
+	 iter != backref_bufs.end();) {
+      auto &backref_buf = *iter;
+      assert(backref_buf);
+      if (!backref_buf->backrefs.empty()
+	  && backref_buf->backrefs.rbegin()->first > trim_to) {
+	auto iter2 = backref_buf->backrefs.lower_bound(trim_to);
+	backref_buf->backrefs.erase(
+	  backref_buf->backrefs.begin(), iter2);
+	SUBDEBUG(seastore_cache, "trim backref up to {}", trim_to);
+	break;
+      } else {
+	if (!backref_buf->backrefs.empty()) {
+	  SUBDEBUG(seastore_cache, "trim backref buf {}",
+	    backref_buf->backrefs.rbegin()->first);
+	}
+	iter = backref_bufs.erase(iter);
+      }
+    }
+  }
+
   /**
    * alloc_new_extent
    *
@@ -825,6 +850,9 @@ public:
 	auto &oldest_buf = backref_bufs_to_flush.front();
 	backref_oldest = oldest_buf->backrefs.begin()->first;
       }
+      LOG_PREFIX(Cache::get_next_dirty_extents);
+      SUBDEBUG(seastore_cache, "oldest: {}, backref_oldest: {}",
+	oldest, backref_oldest);
       if (backref_oldest != journal_seq_t()) {
 	oldest = std::min(backref_oldest, oldest);
       }
