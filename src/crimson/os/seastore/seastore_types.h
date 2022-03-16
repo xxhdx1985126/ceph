@@ -1380,6 +1380,10 @@ struct segment_tail_t {
   mod_time_point_t last_modified;
   mod_time_point_t last_rewritten;
 
+  segment_type_t get_type() const {
+    return segment_seq_to_type(journal_segment_seq);
+  }
+
   DENC(segment_tail_t, v, p) {
     DENC_START(1, 1, p);
     denc(v.journal_segment_seq, p);

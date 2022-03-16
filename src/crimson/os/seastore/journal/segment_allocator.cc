@@ -199,12 +199,6 @@ SegmentAllocator::close_segment(bool is_rolling)
   LOG_PREFIX(SegmentAllocator::close_segment);
   assert(can_write());
   auto close_segment_id = current_segment->get_segment_id();
-  INFO("{} {} close segment id={}, seq={}, written_to={}, nonce={}",
-       type, get_device_id(),
-       close_segment_id,
-       segment_seq_printer_t{get_current_segment_seq()},
-       written_to,
-       current_segment_nonce);
   if (is_rolling) {
     segment_provider.close_segment(close_segment_id);
   }
@@ -231,6 +225,13 @@ SegmentAllocator::close_segment(bool is_rolling)
       close_segment_id).time_since_epoch().count()};
   ceph::bufferlist bl;
   encode(tail, bl);
+  INFO("{} {} close segment id={}, seq={}, written_to={}, nonce={}, journal_tail={}",
+       type, get_device_id(),
+       close_segment_id,
+       segment_seq_printer_t{get_current_segment_seq()},
+       written_to,
+       current_segment_nonce,
+       tail.journal_tail);
 
   bufferptr bp(
     ceph::buffer::create_page_aligned(

@@ -571,6 +571,10 @@ public:
     return res;
   }
 
+  const backref_buf_entry_t::set_t& get_backrefs() {
+    return backref_set;
+  }
+
   std::list<backref_buffer_ref>& get_backref_bufs_to_flush() {
     return backref_bufs_to_flush;
   }

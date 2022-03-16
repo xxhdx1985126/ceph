@@ -146,6 +146,17 @@ TransactionManager::mount_ertr::future<> TransactionManager::mount()
 			addr, extent_types_t::BACKREF_LEAF);
 		    }
 		  }
+		}).si_then([this] {
+		  auto &backrefs = cache->get_backrefs();
+		  for (auto &backref : backrefs) {
+		    segment_cleaner->mark_space_used(
+		      backref.paddr,
+		      backref.len,
+		      seastar::lowres_system_clock::time_point(),
+		      seastar::lowres_system_clock::time_point(),
+		      true);
+		  }
+		  return seastar::now();
 		});
 	    });
 	  });

@@ -688,6 +688,9 @@ SegmentCleaner::mount_ret SegmentCleaner::mount(
 	    if (segments[segment_id].last_rewritten < last_rewritten) {
 	      segments[segment_id].last_rewritten = last_rewritten;
 	    }
+	    if (tail.get_type() == segment_type_t::JOURNAL) {
+	      update_journal_tail_committed(tail.journal_tail);
+	    }
 	    init_mark_segment_closed(
 	      segment_id,
 	      header.journal_segment_seq);
