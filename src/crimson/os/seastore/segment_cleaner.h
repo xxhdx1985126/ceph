@@ -666,7 +666,8 @@ public:
     using submit_transaction_direct_ret =
       submit_transaction_direct_iertr::future<>;
     virtual submit_transaction_direct_ret submit_transaction_direct(
-      Transaction &t) = 0;
+      Transaction &t,
+      std::optional<journal_seq_t> seq_to_trim = std::nullopt) = 0;
   };
 
 private:
@@ -815,6 +816,12 @@ public:
 
     gc_process.maybe_wake_on_space_used();
     assert(ret > 0);
+    crimson::get_logger(ceph_subsys_seastore_cleaner).debug(
+      "{} segment {} new len: {}, live_bytes: {}",
+      __func__,
+      seg_addr.get_segment_id(),
+      len,
+      space_tracker->get_usage(seg_addr.get_segment_id()));
   }
 
   seastar::lowres_system_clock::time_point get_last_modified(
@@ -850,6 +857,12 @@ public:
     adjust_segment_util(old_usage, new_usage);
     maybe_wake_gc_blocked_io();
     assert(ret >= 0);
+    crimson::get_logger(ceph_subsys_seastore_cleaner).debug(
+      "{} segment {} free len: {}, live_bytes: {}",
+      __func__,
+      seg_addr.get_segment_id(),
+      len,
+      space_tracker->get_usage(seg_addr.get_segment_id()));
   }
 
   SpaceTrackerIRef get_empty_space_tracker() const {

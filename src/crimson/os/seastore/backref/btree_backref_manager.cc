@@ -202,6 +202,8 @@ BtreeBackrefManager::batch_insert_from_cache(
   Transaction &t,
   const journal_seq_t &limit)
 {
+  LOG_PREFIX(BtreeBackrefManager::batch_insert_from_cache);
+  DEBUGT("insert up to {}", t, limit);
   return trans_intr::do_for_each(
     cache.get_backref_bufs_to_flush(),
     [this, &limit, &t](auto &bbr) -> batch_insert_iertr::future<> {
