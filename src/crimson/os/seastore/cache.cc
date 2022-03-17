@@ -1056,7 +1056,7 @@ record_t Cache::prepare_record(Transaction &t)
       get_by_ext(efforts.fresh_invalid_by_ext,
                  i->get_type()).increment(i->get_length());
     } else {
-      TRACET("fresh inline extent -- {}", t, *i);
+      DEBUGT("fresh inline extent -- {}", t, *i);
     }
     fresh_stat.increment(i->get_length());
     get_by_ext(efforts.fresh_inline_by_ext,
@@ -1229,7 +1229,7 @@ void Cache::complete_commit(
   SegmentCleaner *cleaner)
 {
   LOG_PREFIX(Cache::complete_commit);
-  SUBTRACET(seastore_t, "final_block_start={}, seq={}",
+  SUBDEBUGT(seastore_t, "final_block_start={}, seq={}",
             t, final_block_start, seq);
 
   may_roll_backref_buffer(final_block_start);
@@ -1260,7 +1260,7 @@ void Cache::complete_commit(
 	    ? i->last_rewritten
 	    : seastar::lowres_system_clock::time_point());
       }
-      if (i->is_logical() && is_lba_node(i->get_type())) {
+      if (i->is_logical() || is_lba_node(i->get_type())) {
 	backref_list.emplace_back(
 	  std::make_unique<backref_buf_entry_t>(
 	    i->get_paddr(),
@@ -1309,7 +1309,7 @@ void Cache::complete_commit(
   last_commit = seq;
   for (auto &i: t.retired_set) {
     i->dirty_from_or_retired_at = last_commit;
-    if (i->is_logical() && is_lba_node(i->get_type())) {
+    if (i->is_logical() || is_lba_node(i->get_type())) {
       backref_list.emplace_back(
 	std::make_unique<backref_buf_entry_t>(
 	  i->get_paddr(),
@@ -1405,8 +1405,8 @@ Cache::replay_delta(
 	assert(alloc_blk.paddr.is_record_relative());
 	alloc_blk.paddr = record_base.add_relative(alloc_blk.paddr);
       }
-      DEBUG("replay alloc_blk {}~{} {}",
-	alloc_blk.paddr, alloc_blk.len, alloc_blk.laddr);
+      DEBUG("replay alloc_blk {}~{} {}, journal_seq: {}",
+	alloc_blk.paddr, alloc_blk.len, alloc_blk.laddr, journal_seq);
       backref_list.emplace_back(
 	std::make_unique<backref_buf_entry_t>(std::move(alloc_blk)));
     }
