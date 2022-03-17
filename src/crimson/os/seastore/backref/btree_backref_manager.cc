@@ -207,6 +207,8 @@ BtreeBackrefManager::batch_insert_from_cache(
   return trans_intr::do_for_each(
     cache.get_backref_bufs_to_flush(),
     [this, &limit, &t](auto &bbr) -> batch_insert_iertr::future<> {
+    LOG_PREFIX(BtreeBackrefManager::batch_insert_from_cache);
+    DEBUGT("backref buffer starting seq: {}", t, bbr->backrefs.begin()->first);
     if (bbr->backrefs.begin()->first <= limit) {
       return batch_insert(
 	t,
@@ -267,7 +269,7 @@ BtreeBackrefManager::batch_insert(
     auto &backref_list = p.second;
     LOG_PREFIX(BtreeBackrefManager::batch_insert);
     DEBUGT("seq {}, limit {}", t, seq, limit);
-    if (seq < limit) {
+    if (seq <= limit) {
       return trans_intr::do_for_each(
 	backref_list,
 	[this, &t](auto &backref) {

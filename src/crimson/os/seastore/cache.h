@@ -854,7 +854,7 @@ public:
 	auto &oldest_buf = backref_bufs_to_flush.front();
 	backref_oldest = oldest_buf->backrefs.begin()->first;
       }
-      LOG_PREFIX(Cache::get_next_dirty_extents);
+      LOG_PREFIX(Cache::get_oldest_dirty_from);
       SUBDEBUG(seastore_cache, "oldest: {}, backref_oldest: {}",
 	oldest, backref_oldest);
       if (backref_oldest != journal_seq_t()) {
@@ -921,6 +921,29 @@ public:
       backref_extent_buf_entry_t::cmp_t> res;
     res.insert(start_iter, end_iter);
     return res;
+  }
+
+  void may_roll_backref_buffer(
+    const paddr_t &final_block_start,
+    bool force_roll = false) {
+    if (force_roll) {
+      if (backref_buffer) {
+	backref_bufs_to_flush.emplace_back(std::move(backref_buffer));
+      }
+      return;
+    }
+    if (backref_buffer && !backref_buffer->backrefs.empty()) {
+      auto &[seq, backref_list] = *backref_buffer->backrefs.rbegin();
+      if (backref_list.empty())
+	return;
+      auto &last_backref = backref_list.back();
+      auto &last_seg_paddr = last_backref->paddr.as_seg_paddr();
+      if (last_seg_paddr.get_segment_id() !=
+	  final_block_start.as_seg_paddr().get_segment_id()) {
+	// journal segment rolled
+	backref_bufs_to_flush.emplace_back(std::move(backref_buffer));
+      }
+    }
   }
 
 private:
@@ -1170,21 +1193,6 @@ private:
     assert(!ext.is_pending());
     if (ext.is_clean() && !ext.is_placeholder()) {
       lru.move_to_top(ext);
-    }
-  }
-
-  void may_roll_backref_buffer(const paddr_t &final_block_start) {
-    if (backref_buffer && !backref_buffer->backrefs.empty()) {
-      auto &[seq, backref_list] = *backref_buffer->backrefs.rbegin();
-      if (backref_list.empty())
-	return;
-      auto &last_backref = backref_list.back();
-      auto &last_seg_paddr = last_backref->paddr.as_seg_paddr();
-      if (last_seg_paddr.get_segment_id() !=
-	  final_block_start.as_seg_paddr().get_segment_id()) {
-	// journal segment rolled
-	backref_bufs_to_flush.emplace_back(std::move(backref_buffer));
-      }
     }
   }
 

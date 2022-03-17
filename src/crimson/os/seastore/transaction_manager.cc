@@ -162,6 +162,7 @@ TransactionManager::mount_ertr::future<> TransactionManager::mount()
 	  });
       });
   }).safe_then([this, FNAME] {
+    cache->may_roll_backref_buffer(P_ADDR_NULL, true);
     segment_cleaner->complete_init();
     INFO("completed");
   }).handle_error(
