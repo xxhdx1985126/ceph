@@ -333,8 +333,7 @@ SegmentCleaner::rewrite_dirty_ret SegmentCleaner::rewrite_dirty(
 	  return backref_manager.batch_insert_from_cache(
 	    t,
 	    seq_to_rm
-	  ).si_then([seq_to_rm, this] {
-	    cache.trim_backref_bufs(seq_to_rm);
+	  ).si_then([seq_to_rm] {
 	    return rewrite_dirty_iertr::make_ready_future<
 	      journal_seq_t>(std::move(seq_to_rm));
 	  });
@@ -413,34 +412,44 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
   auto backref_extents = cache.get_backref_extents_in_range(
     next.offset, end_paddr);
   auto backrefs = cache.get_backrefs_in_range(next.offset, end_paddr);
+  auto del_backrefs = cache.get_del_backrefs_in_range(
+    next.offset, end_paddr);
 
   return seastar::do_with(
     std::move(backref_extents),
     std::move(backrefs),
+    std::move(del_backrefs),
     (size_t)0,
     [this, &sm_info, next, segment_id](
       auto &backref_extents,
       auto &backrefs,
+      auto &del_backrefs,
       auto &reclaimed) {
     return repeat_eagain(
-      [this, &backref_extents, &backrefs, &reclaimed, next, &sm_info, segment_id]
-      () mutable {
+      [this, &backref_extents, &backrefs, &reclaimed,
+      &del_backrefs, next, &sm_info, segment_id]() mutable {
       reclaimed = 0;
       return ecb->with_transaction_intr(
 	Transaction::src_t::CLEANER_RECLAIM,
 	"reclaim_space",
-	[segment_id, this, &backref_extents, &backrefs, &reclaimed, next, &sm_info]
-	(auto &t) {
+	[segment_id, this, &backref_extents, &backrefs,
+	&del_backrefs, &reclaimed, next, &sm_info](auto &t) {
 	return backref_manager.get_mappings(
 	  t, next.offset, sm_info->segment_size
 	).si_then(
-	  [segment_id, this, &backref_extents, &backrefs, &reclaimed, &t](auto pin_list) {
+	  [segment_id, this, &backref_extents, &backrefs,
+	  &del_backrefs, &reclaimed, &t](auto pin_list) {
 	  for (auto &pin : pin_list) {
 	    backrefs.emplace(
 	      pin->get_key(),
 	      pin->get_val(),
 	      pin->get_length(),
 	      pin->get_type());
+	  }
+	  for (auto &del_backref : del_backrefs) {
+	    auto it = backrefs.find(del_backref.paddr);
+	    if (it != backrefs.end())
+	      backrefs.erase(it);
 	  }
 	  return seastar::do_with(
 	    std::vector<CachedExtentRef>(),
