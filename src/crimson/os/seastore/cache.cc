@@ -1087,7 +1087,8 @@ record_t Cache::prepare_record(Transaction &t)
 	std::move(bl),
 	i->get_last_modified().time_since_epoch().count()
       });
-    if (i->get_type() != extent_types_t::BACKREF_INTERNAL
+    if (i->is_valid()
+	&& i->get_type() != extent_types_t::BACKREF_INTERNAL
 	&& i->get_type() != extent_types_t::BACKREF_LEAF) {
       alloc_delta.alloc_blk_ranges.emplace_back(
 	i->get_paddr(),
@@ -1195,24 +1196,30 @@ record_t Cache::prepare_record(Transaction &t)
 
 void Cache::backref_batch_update(
   std::vector<backref_buf_entry_ref> &&list,
-  const journal_seq_t &seq)
+  const journal_seq_t &seq,
+  const bool on_startup)
 {
   if (!backref_buffer) {
     backref_buffer = std::make_unique<backref_buffer_t>();
   }
-  auto [iter, inserted] = backref_buffer->backrefs.emplace(seq, std::move(list));
-  assert(inserted);
-  // first remove, then insert;
   // backref_buf_entry_t::laddr == L_ADDR_NULL means erase
-  for (auto &ent : iter->second) {
+  for (auto &ent : list) {
     if (ent->laddr == L_ADDR_NULL) {
-      backref_set.erase(*ent);
-    }
-  }
-  for (auto &ent : iter->second) {
-    if (ent->laddr != L_ADDR_NULL) {
+      backref_set.erase(ent->paddr, backref_buf_entry_t::cmp_t());
+      auto [it, insert] = del_backref_set.insert(*ent);
+      assert(insert);
+    } else {
+      del_backref_set.erase(ent->paddr, backref_buf_entry_t::cmp_t());
       auto [it, insert] = backref_set.insert(*ent);
       assert(insert);
+    }
+  }
+
+  auto [iter, inserted] = backref_buffer->backrefs.emplace(seq, std::move(list));
+  if (unlikely(!inserted)) {
+    ceph_assert(on_startup);
+    for (auto &ref : list) {
+      iter->second.emplace_back(std::move(ref));
     }
   }
 }
@@ -1410,7 +1417,7 @@ Cache::replay_delta(
 	std::make_unique<backref_buf_entry_t>(std::move(alloc_blk)));
     }
     if (!backref_list.empty())
-      backref_batch_update(std::move(backref_list), journal_seq);
+      backref_batch_update(std::move(backref_list), journal_seq, true);
     return replay_delta_ertr::now();
   } else {
     auto _get_extent_if_cached = [this](paddr_t addr)

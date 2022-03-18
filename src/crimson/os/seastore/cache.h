@@ -71,10 +71,16 @@ struct backref_buf_entry_t {
     backref_set_member_options,
     boost::intrusive::constant_time_size<false>>;
   struct cmp_t {
-    bool operator()(paddr_t l, const backref_buf_entry_t &r) const {
+    using is_transparent = paddr_t;
+    bool operator()(
+      const backref_buf_entry_t &l,
+      const backref_buf_entry_t &r) const {
+      return l.paddr < r.paddr;
+    }
+    bool operator()(const paddr_t l, const backref_buf_entry_t &r) const {
       return l < r.paddr;
     }
-    bool operator()(const backref_buf_entry_t &l, paddr_t r) const {
+    bool operator()(const backref_buf_entry_t &l, const paddr_t r) const {
       return l.paddr < r;
     }
   };
@@ -517,6 +523,7 @@ private:
   backref_buffer_ref backref_buffer;
   std::list<backref_buffer_ref> backref_bufs_to_flush;
   backref_buf_entry_t::set_t backref_set;
+  backref_buf_entry_t::set_t del_backref_set;
 
 public:
   /**
@@ -553,7 +560,9 @@ public:
       t, type, offset, laddr, length, [](CachedExtent &) {});
   }
 
-  std::set<backref_buf_entry_t> get_backrefs_in_range(
+  std::set<
+    backref_buf_entry_t,
+    backref_buf_entry_t::cmp_t> get_backrefs_in_range(
     paddr_t start,
     paddr_t end) {
     auto start_iter = backref_set.lower_bound(
@@ -562,7 +571,31 @@ public:
     auto end_iter = backref_set.upper_bound(
       end,
       backref_buf_entry_t::cmp_t());
-    std::set<backref_buf_entry_t> res;
+    std::set<
+      backref_buf_entry_t,
+      backref_buf_entry_t::cmp_t> res;
+    for (auto it = start_iter;
+	 it != end_iter;
+	 it++) {
+      res.emplace(it->paddr, it->laddr, it->len, it->type);
+    }
+    return res;
+  }
+
+  std::set<
+    backref_buf_entry_t,
+    backref_buf_entry_t::cmp_t> get_del_backrefs_in_range(
+    paddr_t start,
+    paddr_t end) {
+    auto start_iter = del_backref_set.lower_bound(
+      start,
+      backref_buf_entry_t::cmp_t());
+    auto end_iter = del_backref_set.upper_bound(
+      end,
+      backref_buf_entry_t::cmp_t());
+    std::set<
+      backref_buf_entry_t,
+      backref_buf_entry_t::cmp_t> res;
     for (auto it = start_iter;
 	 it != end_iter;
 	 it++) {
@@ -573,6 +606,10 @@ public:
 
   const backref_buf_entry_t::set_t& get_backrefs() {
     return backref_set;
+  }
+
+  const backref_buf_entry_t::set_t& get_del_backrefs() {
+    return del_backref_set;
   }
 
   std::list<backref_buffer_ref>& get_backref_bufs_to_flush() {
@@ -1199,7 +1236,8 @@ private:
 
   void backref_batch_update(
     std::vector<backref_buf_entry_ref> &&,
-    const journal_seq_t &);
+    const journal_seq_t &,
+    const bool on_startup = false);
 
   /// Add extent to extents handling dirty and refcounting
   void add_extent(CachedExtentRef ref);
