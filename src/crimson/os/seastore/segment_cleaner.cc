@@ -418,21 +418,23 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
     std::move(backref_extents),
     std::move(backrefs),
     (size_t)0,
-    [this, &sm_info, next](
+    [this, &sm_info, next, segment_id](
       auto &backref_extents,
       auto &backrefs,
       auto &reclaimed) {
     return repeat_eagain(
-      [this, &backref_extents, &backrefs, &reclaimed, next, &sm_info]() mutable {
+      [this, &backref_extents, &backrefs, &reclaimed, next, &sm_info, segment_id]
+      () mutable {
       reclaimed = 0;
       return ecb->with_transaction_intr(
 	Transaction::src_t::CLEANER_RECLAIM,
 	"reclaim_space",
-	[this, &backref_extents, &backrefs, &reclaimed, next, &sm_info](auto &t) {
+	[segment_id, this, &backref_extents, &backrefs, &reclaimed, next, &sm_info]
+	(auto &t) {
 	return backref_manager.get_mappings(
 	  t, next.offset, sm_info->segment_size
 	).si_then(
-	  [this, &backref_extents, &backrefs, &reclaimed, &t](auto pin_list) {
+	  [segment_id, this, &backref_extents, &backrefs, &reclaimed, &t](auto pin_list) {
 	  for (auto &pin : pin_list) {
 	    backrefs.emplace(
 	      pin->get_key(),
@@ -482,7 +484,8 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
 		}
 	      });
 	    });
-	  }).si_then([this, &t] {
+	  }).si_then([this, &t, segment_id] {
+	    t.mark_segment_to_release(segment_id);
 	    return ecb->submit_transaction_direct(t);
 	  });
 	});
