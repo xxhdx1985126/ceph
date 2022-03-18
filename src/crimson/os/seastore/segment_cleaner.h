@@ -817,9 +817,10 @@ public:
     gc_process.maybe_wake_on_space_used();
     assert(ret > 0);
     crimson::get_logger(ceph_subsys_seastore_cleaner).debug(
-      "{} segment {} new len: {}, live_bytes: {}",
+      "{} segment {} new len: {}, at {}, live_bytes: {}",
       __func__,
       seg_addr.get_segment_id(),
+      addr,
       len,
       space_tracker->get_usage(seg_addr.get_segment_id()));
   }
@@ -858,9 +859,10 @@ public:
     maybe_wake_gc_blocked_io();
     assert(ret >= 0);
     crimson::get_logger(ceph_subsys_seastore_cleaner).debug(
-      "{} segment {} free len: {}, live_bytes: {}",
+      "{} segment {} free len: {}, at {}, live_bytes: {}",
       __func__,
       seg_addr.get_segment_id(),
+      addr,
       len,
       space_tracker->get_usage(seg_addr.get_segment_id()));
   }

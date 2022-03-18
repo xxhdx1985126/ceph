@@ -450,15 +450,27 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
 	      [this, &extents, &t](auto &ent) {
 	      // only the gc fiber which is single can rewrite backref extents,
 	      // so it must be alive
+	      assert(is_backref_node(ent.type));
+	      LOG_PREFIX(SegmentCleaner::gc_reclaim_space);
+	      DEBUGT("getting backref extent of type {} at {}",
+		t,
+		ent.type,
+		ent.paddr);
 	      return cache.get_extent_by_type(
 		t, ent.type, ent.paddr, L_ADDR_NULL, BACKREF_NODE_SIZE
 	      ).si_then([&extents](auto ext) {
 		extents.emplace_back(std::move(ext));
 	      });
 	    }).si_then([this, &extents, &t, &backrefs] {
-	      return trans_intr::parallel_for_each(
+	      return trans_intr::do_for_each(
 		backrefs,
 		[this, &extents, &t](auto &ent) {
+		LOG_PREFIX(SegmentCleaner::gc_reclaim_space);
+		DEBUGT("getting extent of type {} at {}~{}",
+		  t,
+		  ent.type,
+		  ent.paddr,
+		  ent.len);
 		return ecb->get_extent_if_live(
 		  t, ent.type, ent.paddr, ent.laddr, ent.len
 		).si_then([&extents, &ent](auto ext) {
