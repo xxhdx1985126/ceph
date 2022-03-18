@@ -7,11 +7,13 @@
 
 namespace crimson::os::seastore::backref {
 
+class BtreeBackrefManager;
+
 using backref_node_meta_t = fixed_kv_node_meta_t<paddr_t>;
 using backref_node_meta_le_t = fixed_kv_node_meta_le_t<paddr_t>;
 
 constexpr size_t INTERNAL_NODE_CAPACITY = 254;
-constexpr size_t LEAF_NODE_CAPACITY = 254;
+constexpr size_t LEAF_NODE_CAPACITY = 169;
 
 struct backref_map_val_t {
   extent_len_t len = 0;	///< length of extents

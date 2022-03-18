@@ -318,28 +318,27 @@ SegmentCleaner::rewrite_dirty_ret SegmentCleaner::rewrite_dirty(
       std::move(dirty_list),
       [FNAME, this, &t, limit](auto &dirty_list) {
 	std::optional<journal_seq_t> seq_to_rm = std::nullopt;
-	auto fut = backref::BackrefManager::batch_insert_iertr::now();
 	seq_to_rm = dirty_list.empty()
 	  ? limit
 	  : dirty_list.back()->get_dirty_from();
-	return backref_manager.batch_insert_from_cache(
-	  t,
-	  *seq_to_rm
-	).si_then([FNAME, this, &t, &dirty_list] {
-	  return trans_intr::do_for_each(
-	    dirty_list,
-	    [FNAME, this, &t](auto &e) {
-	      DEBUGT("cleaning {}", t, *e);
-	      if (e->get_type() >= extent_types_t::BACKREF_INTERNAL) {
-		return backref_manager.rewrite_extent(t, e);
-	      } else {
-		return ecb->rewrite_extent(t, e);
-	      }
-	    });
-	}).si_then([seq_to_rm]() mutable {
-	  return rewrite_dirty_iertr::make_ready_future<
-	    std::optional<journal_seq_t>>(
-	      std::move(seq_to_rm));
+	return trans_intr::do_for_each(
+	  dirty_list,
+	  [FNAME, this, &t](auto &e) {
+	    DEBUGT("cleaning {}", t, *e);
+	    if (e->get_type() >= extent_types_t::BACKREF_INTERNAL) {
+	      return backref_manager.rewrite_extent(t, e);
+	    } else {
+	      return ecb->rewrite_extent(t, e);
+	    }
+	}).si_then([this, seq_to_rm, &t]() mutable {
+	  return backref_manager.batch_insert_from_cache(
+	    t,
+	    *seq_to_rm
+	  ).si_then([seq_to_rm] {
+	    return rewrite_dirty_iertr::make_ready_future<
+	      std::optional<journal_seq_t>>(
+		std::move(seq_to_rm));
+	  });
 	});
       });
   });
