@@ -317,8 +317,7 @@ SegmentCleaner::rewrite_dirty_ret SegmentCleaner::rewrite_dirty(
     return seastar::do_with(
       std::move(dirty_list),
       [FNAME, this, &t, limit](auto &dirty_list) {
-	std::optional<journal_seq_t> seq_to_rm = std::nullopt;
-	seq_to_rm = dirty_list.empty()
+	journal_seq_t seq_to_rm = dirty_list.empty()
 	  ? limit
 	  : dirty_list.back()->get_dirty_from();
 	return trans_intr::do_for_each(
@@ -333,11 +332,11 @@ SegmentCleaner::rewrite_dirty_ret SegmentCleaner::rewrite_dirty(
 	}).si_then([this, seq_to_rm, &t]() mutable {
 	  return backref_manager.batch_insert_from_cache(
 	    t,
-	    *seq_to_rm
-	  ).si_then([seq_to_rm] {
+	    seq_to_rm
+	  ).si_then([seq_to_rm, this] {
+	    cache.trim_backref_bufs(seq_to_rm);
 	    return rewrite_dirty_iertr::make_ready_future<
-	      std::optional<journal_seq_t>>(
-		std::move(seq_to_rm));
+	      journal_seq_t>(std::move(seq_to_rm));
 	  });
 	});
       });
@@ -394,7 +393,7 @@ SegmentCleaner::gc_trim_journal_ret SegmentCleaner::gc_trim_journal()
       return rewrite_dirty(t, get_dirty_tail()
       ).si_then([this, &t](auto seq_to_rm) {
         return ecb->submit_transaction_direct(
-	  t, std::move(seq_to_rm));
+	  t, std::make_optional<journal_seq_t>(std::move(seq_to_rm)));
       });
     });
   });

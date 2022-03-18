@@ -916,6 +916,12 @@ constexpr bool is_lba_node(extent_types_t type)
     type == extent_types_t::LADDR_LEAF;
 }
 
+constexpr bool is_backref_node(extent_types_t type)
+{
+  return type == extent_types_t::BACKREF_INTERNAL ||
+    type == extent_types_t::BACKREF_LEAF;
+}
+
 std::ostream &operator<<(std::ostream &out, extent_types_t t);
 
 enum class record_commit_type_t : uint8_t {
