@@ -111,7 +111,9 @@ public:
     laddr_t addr) = 0;
 
   virtual void complete_transaction(
-    Transaction &t) = 0;
+    Transaction &t,
+    std::vector<CachedExtentRef> &,
+    std::vector<CachedExtentRef> &) = 0;
 
   /**
    * Should be called after replay on each cached extent.

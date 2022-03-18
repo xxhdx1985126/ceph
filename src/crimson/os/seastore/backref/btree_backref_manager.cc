@@ -23,6 +23,12 @@ phy_tree_root_t& get_phy_tree_root<
 
 namespace crimson::os::seastore::backref {
 
+static depth_t get_depth(const CachedExtent &e)
+{
+  assert(e.get_type() >= extent_types_t::BACKREF_INTERNAL);
+  return e.cast<BackrefNode>()->get_node_meta().depth;
+}
+
 BtreeBackrefManager::mkfs_ret
 BtreeBackrefManager::mkfs(
   Transaction &t)
@@ -207,6 +213,7 @@ BtreeBackrefManager::batch_insert_from_cache(
   return seastar::do_with(
     limit,
     [this, &t](auto &limit) {
+    //TODO: no need to do_for_each, move to use repeat
     return trans_intr::do_for_each(
       cache.get_backref_bufs_to_flush(),
       [this, &limit, &t](auto &bbr) -> batch_insert_iertr::future<> {
@@ -267,6 +274,7 @@ BtreeBackrefManager::batch_insert(
   backref_buffer_ref &bbr,
   const journal_seq_t &limit)
 {
+  //TODO: no need to do_for_each, move to use repeat
   return trans_intr::do_for_each(bbr->backrefs,
     [this, &t, &limit](auto &p) -> batch_insert_iertr::future<> {
     auto &seq = p.first;
@@ -352,6 +360,40 @@ BtreeBackrefManager::remove_mapping(
 	});
       });
     });
+}
+
+void BtreeBackrefManager::complete_transaction(
+  Transaction &t,
+  std::vector<CachedExtentRef> &to_clear,
+  std::vector<CachedExtentRef> &to_link)
+{
+  LOG_PREFIX(BtreeBackrefManager::complete_transaction);
+  DEBUGT("start", t);
+  // need to call check_parent from leaf->parent
+  std::sort(
+    to_clear.begin(), to_clear.end(),
+    [](auto &l, auto &r) { return get_depth(*l) < get_depth(*r); });
+
+  for (auto &e: to_clear) {
+    auto &pin = e->cast<BackrefNode>()->pin;
+    DEBUGT("retiring extent {} -- {}", t, pin, *e);
+    pin_set.retire(pin);
+  }
+
+  std::sort(
+    to_link.begin(), to_link.end(),
+    [](auto &l, auto &r) -> bool { return get_depth(*l) > get_depth(*r); });
+
+  for (auto &e : to_link) {
+    DEBUGT("linking extent -- {}", t, *e);
+    pin_set.add_pin(e->cast<BackrefNode>()->pin);
+  }
+
+  for (auto &e: to_clear) {
+    auto &pin = e->cast<BackrefNode>()->pin;
+    TRACET("checking extent {} -- {}", t, pin, *e);
+    pin_set.check_parent(pin);
+  }
 }
 
 } // namespace crimson::os::seastore::backref

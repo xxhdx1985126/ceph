@@ -82,6 +82,11 @@ public:
     Transaction &t,
     scan_mapped_space_func_t &&f) = 0;
 
+  virtual void complete_transaction(
+    Transaction &t,
+    std::vector<CachedExtentRef> &,
+    std::vector<CachedExtentRef> &) = 0;
+
   virtual void add_pin(BackrefPin &pin) = 0;
   virtual void remove_pin(BackrefPin &pin) = 0;
 

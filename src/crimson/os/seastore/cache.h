@@ -579,7 +579,7 @@ public:
     return backref_bufs_to_flush;
   }
 
-  void trim_backref_bufs(journal_seq_t &trim_to) {
+  void trim_backref_bufs(const journal_seq_t &trim_to) {
     LOG_PREFIX(Cache::alloc_new_extent);
     SUBDEBUG(seastore_cache, "trimming to {}", trim_to);
     auto &backref_bufs = get_backref_bufs_to_flush();
@@ -589,7 +589,7 @@ public:
       assert(backref_buf);
       if (!backref_buf->backrefs.empty()
 	  && backref_buf->backrefs.rbegin()->first > trim_to) {
-	auto iter2 = backref_buf->backrefs.lower_bound(trim_to);
+	auto iter2 = backref_buf->backrefs.upper_bound(trim_to);
 	backref_buf->backrefs.erase(
 	  backref_buf->backrefs.begin(), iter2);
 	SUBDEBUG(seastore_cache, "trim backref up to {}", trim_to);
@@ -899,6 +899,7 @@ public:
   };
 
   void add_backref_extent(paddr_t paddr, extent_types_t type) {
+    assert(!paddr.is_relative());
     auto [iter, inserted] = backref_extents.emplace(paddr, type);
     assert(inserted);
   }

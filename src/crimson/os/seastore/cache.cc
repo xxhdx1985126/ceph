@@ -1039,7 +1039,6 @@ record_t Cache::prepare_record(Transaction &t)
 	i->get_length(),
 	i->get_type());
     } else {
-      remove_backref_extent(i->get_paddr());
     }
   }
   t.add_alloc_info_blocks(std::move(rel_delta));
@@ -1097,8 +1096,6 @@ record_t Cache::prepare_record(Transaction &t)
 	: i->cast<lba_manager::btree::LBANode>()->get_node_meta().begin,
 	i->get_length(),
 	i->get_type());
-    } else {
-      add_backref_extent(i->get_paddr(), i->get_type());
     }
   }
 
@@ -1117,8 +1114,6 @@ record_t Cache::prepare_record(Transaction &t)
 	: i->cast<lba_manager::btree::LBANode>()->get_node_meta().begin,
 	i->get_length(),
 	i->get_type());
-    } else {
-      add_backref_extent(i->get_paddr(), i->get_type());
     }
   }
   t.add_alloc_info_blocks(std::move(alloc_delta));
@@ -1270,6 +1265,8 @@ void Cache::complete_commit(
 	    i->get_length(),
 	    i->get_type()));
       }
+      if (is_backref_node(i->get_type()))
+	add_backref_extent(i->get_paddr(), i->get_type());
     }
   });
 
@@ -1317,6 +1314,8 @@ void Cache::complete_commit(
 	  i->get_length(),
 	  i->get_type()));
     }
+    if (is_backref_node(i->get_type()))
+      remove_backref_extent(i->get_paddr());
   }
   if (!backref_list.empty())
     backref_batch_update(std::move(backref_list), seq);
