@@ -62,7 +62,7 @@ public:
   BackrefInternalNode(T&&... t) :
     FixedKVInternalNode(std::forward<T>(t)...) {}
 
-  static constexpr extent_types_t TYPE = extent_types_t::LADDR_INTERNAL;
+  static constexpr extent_types_t TYPE = extent_types_t::BACKREF_INTERNAL;
 
   extent_types_t get_type() const final {
     return TYPE;
