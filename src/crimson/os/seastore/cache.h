@@ -617,7 +617,7 @@ public:
   }
 
   void trim_backref_bufs(const journal_seq_t &trim_to) {
-    LOG_PREFIX(Cache::alloc_new_extent);
+    LOG_PREFIX(Cache::trim_backref_bufs);
     SUBDEBUG(seastore_cache, "trimming to {}", trim_to);
     auto &backref_bufs = get_backref_bufs_to_flush();
     for (auto iter = backref_bufs.begin();
@@ -878,19 +878,27 @@ public:
 
   /// returns std::nullopt if no dirty extents or get_dirty_from() for oldest
   std::optional<journal_seq_t> get_oldest_dirty_from() const {
+    journal_seq_t backref_oldest;
+    if (backref_bufs_to_flush.empty()) {
+      if (backref_buffer && !backref_buffer->backrefs.empty()) {
+	backref_oldest = backref_buffer->backrefs.begin()->first;
+      }
+    } else {
+      auto &oldest_buf = backref_bufs_to_flush.front();
+      backref_oldest = oldest_buf->backrefs.begin()->first;
+    }
+
     if (dirty.empty()) {
-      return std::nullopt;
+      if (backref_oldest == journal_seq_t()) {
+	return std::nullopt;
+      } else {
+	LOG_PREFIX(Cache::get_oldest_dirty_from);
+	SUBDEBUG(seastore_cache, "backref_oldest: {}",
+	  backref_oldest);
+	return backref_oldest;
+      }
     } else {
       auto oldest = dirty.begin()->get_dirty_from();
-      journal_seq_t backref_oldest;
-      if (backref_bufs_to_flush.empty()) {
-	if (backref_buffer && !backref_buffer->backrefs.empty()) {
-	  backref_oldest = backref_buffer->backrefs.begin()->first;
-	}
-      } else {
-	auto &oldest_buf = backref_bufs_to_flush.front();
-	backref_oldest = oldest_buf->backrefs.begin()->first;
-      }
       LOG_PREFIX(Cache::get_oldest_dirty_from);
       SUBDEBUG(seastore_cache, "oldest: {}, backref_oldest: {}",
 	oldest, backref_oldest);

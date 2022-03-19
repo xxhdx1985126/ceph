@@ -1207,9 +1207,13 @@ void Cache::backref_batch_update(
   // backref_buf_entry_t::laddr == L_ADDR_NULL means erase
   for (auto &ent : list) {
     if (ent->laddr == L_ADDR_NULL) {
-      backref_set.erase(ent->paddr, backref_buf_entry_t::cmp_t());
-      auto [it, insert] = del_backref_set.insert(*ent);
-      assert(insert);
+      auto r = backref_set.erase(ent->paddr, backref_buf_entry_t::cmp_t());
+      if (!r) {
+	auto [it, insert] = del_backref_set.insert(*ent);
+	assert(insert);
+      } else {
+	DEBUG("previously inserted {}, no need to keep the erase", ent->paddr);
+      }
     } else {
       del_backref_set.erase(ent->paddr, backref_buf_entry_t::cmp_t());
       auto [it, insert] = backref_set.insert(*ent);

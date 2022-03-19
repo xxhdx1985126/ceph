@@ -368,6 +368,9 @@ TransactionManager::submit_transaction_direct(
       auto start_seq = submit_result.write_result.start_seq;
       auto end_seq = submit_result.write_result.get_end_seq();
       segment_cleaner->set_journal_head(end_seq);
+      if (seq_to_trim) {
+	cache->trim_backref_bufs(*seq_to_trim);
+      }
       cache->complete_commit(
           tref,
           submit_result.record_block_base,
@@ -402,9 +405,6 @@ TransactionManager::submit_transaction_direct(
       lba_manager->complete_transaction(tref, lba_to_clear, lba_to_link);
       backref_manager->complete_transaction(tref, backref_to_clear, backref_to_link);
 
-      if (seq_to_trim) {
-	cache->trim_backref_bufs(*seq_to_trim);
-      }
       segment_cleaner->update_journal_tail_target(
 	cache->get_oldest_dirty_from().value_or(start_seq));
       auto to_release = tref.get_segment_to_release();
