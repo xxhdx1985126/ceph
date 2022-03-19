@@ -1199,6 +1199,8 @@ void Cache::backref_batch_update(
   const journal_seq_t &seq,
   const bool on_startup)
 {
+  LOG_PREFIX(Cache::backref_batch_update);
+  DEBUG("inserting {} entries", list.size());
   if (!backref_buffer) {
     backref_buffer = std::make_unique<backref_buffer_t>();
   }
@@ -1215,11 +1217,18 @@ void Cache::backref_batch_update(
     }
   }
 
-  auto [iter, inserted] = backref_buffer->backrefs.emplace(seq, std::move(list));
-  if (unlikely(!inserted)) {
-    ceph_assert(on_startup);
-    for (auto &ref : list) {
-      iter->second.emplace_back(std::move(ref));
+  if (likely(!on_startup)) {
+    auto [iter, inserted] = backref_buffer->backrefs.emplace(
+      seq, std::move(list));
+    assert(inserted);
+  } else {
+    auto iter = backref_buffer->backrefs.find(seq);
+    if (iter == backref_buffer->backrefs.end()) {
+      backref_buffer->backrefs.emplace(seq, std::move(list));
+    } else {
+      for (auto &ref : list) {
+	iter->second.emplace_back(std::move(ref));
+      }
     }
   }
 }
