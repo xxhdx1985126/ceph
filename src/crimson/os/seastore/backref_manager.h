@@ -49,6 +49,12 @@ public:
     laddr_t val,
     extent_types_t type) = 0;
 
+  using init_cached_extent_iertr = base_iertr;
+  using init_cached_extent_ret = init_cached_extent_iertr::future<bool>;
+  virtual init_cached_extent_ret init_cached_extent(
+    Transaction &t,
+    CachedExtentRef e) = 0;
+
   using batch_insert_iertr = base_iertr;
   using batch_insert_ret = batch_insert_iertr::future<>;
   virtual batch_insert_ret batch_insert(

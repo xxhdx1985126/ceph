@@ -314,6 +314,35 @@ BtreeBackrefManager::batch_insert(
   });
 }
 
+BtreeBackrefManager::base_iertr::future<> _init_cached_extent(
+  op_context_t<paddr_t> c,
+  const CachedExtentRef &e,
+  BackrefBtree &btree,
+  bool &ret)
+{
+  return btree.init_cached_extent(c, e
+  ).si_then([&ret](bool is_alive) {
+    ret = is_alive;
+  });
+}
+
+BtreeBackrefManager::init_cached_extent_ret BtreeBackrefManager::init_cached_extent(
+  Transaction &t,
+  CachedExtentRef e)
+{
+  LOG_PREFIX(BtreeBackrefManager::init_cached_extent);
+  TRACET("{}", t, *e);
+  return seastar::do_with(bool(), [this, e, &t](bool &ret) {
+    auto c = get_context(t);
+    return with_btree<BackrefBtree>(cache, c, [c, e, &ret](auto &btree)
+      -> base_iertr::future<> {
+      LOG_PREFIX(BtreeBackrefManager::init_cached_extent);
+      DEBUGT("extent {}", c.trans, *e);
+      return _init_cached_extent(c, e, btree, ret);
+    }).si_then([&ret] { return ret; });
+  });
+}
+
 BtreeBackrefManager::rewrite_extent_ret
 BtreeBackrefManager::rewrite_extent(
   Transaction &t,

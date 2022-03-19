@@ -117,7 +117,10 @@ TransactionManager::mount_ertr::future<> TransactionManager::mount()
 	  *tref,
 	  [this, FNAME](auto &t) {
 	    return cache->init_cached_extents(t, [this](auto &t, auto &e) {
-	      return lba_manager->init_cached_extent(t, e);
+	      if (is_backref_node(e->get_type()))
+		return backref_manager->init_cached_extent(t, e);
+	      else
+		return lba_manager->init_cached_extent(t, e);
 	    }).si_then([this, FNAME, &t] {
 	      assert(segment_cleaner->debug_check_space(
 		       *segment_cleaner->get_empty_space_tracker()));

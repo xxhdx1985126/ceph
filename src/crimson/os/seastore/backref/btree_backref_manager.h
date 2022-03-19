@@ -84,6 +84,10 @@ public:
     Transaction &t,
     CachedExtentRef extent) final;
 
+  init_cached_extent_ret init_cached_extent(
+    Transaction &t,
+    CachedExtentRef e) final;
+
   void complete_transaction(
     Transaction &t,
     std::vector<CachedExtentRef> &,
