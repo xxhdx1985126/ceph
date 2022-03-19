@@ -134,7 +134,7 @@ BtreeBackrefManager::new_mapping(
     state_t(paddr_t hint) : last_end(hint) {}
   };
 
-  LOG_PREFIX(BtreeBackrefManager::alloc_extent);
+  LOG_PREFIX(BtreeBackrefManager::new_mapping);
   DEBUGT("{}~{}, paddr={}", t, addr, len, key);
   backref_map_val_t val{len, addr, type};
   auto c = get_context(t);
