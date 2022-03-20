@@ -29,8 +29,14 @@ struct backref_buf_entry_t {
     const paddr_t paddr,
     const laddr_t laddr,
     const extent_len_t len,
-    const extent_types_t type)
-    : paddr(paddr), laddr(laddr), len(len), type(type) {}
+    const extent_types_t type,
+    const journal_seq_t seq)
+    : paddr(paddr),
+      laddr(laddr),
+      len(len),
+      type(type),
+      seq(seq)
+  {}
   backref_buf_entry_t(alloc_blk_t alloc_blk)
     : paddr(alloc_blk.paddr),
       laddr(alloc_blk.laddr),
@@ -42,6 +48,7 @@ struct backref_buf_entry_t {
   const extent_len_t len = 0;
   const extent_types_t type =
     extent_types_t::ROOT;
+  const journal_seq_t seq;
   friend bool operator< (
     const backref_buf_entry_t &l,
     const backref_buf_entry_t &r) {
@@ -522,9 +529,10 @@ private:
 
   backref_buffer_ref backref_buffer;
   std::list<backref_buffer_ref> backref_bufs_to_flush;
-  backref_buf_entry_t::set_t backref_set;
-  backref_buf_entry_t::set_t del_backref_set;
-
+  backref_buf_entry_t::set_t backref_set;     // backrefs that needs to be inserted
+					      // into the backref tree
+  backref_buf_entry_t::set_t del_backref_set; // backrefs needs to be removed
+					      // from the backref tree
 public:
   /**
    * get_extent_by_type
@@ -577,7 +585,7 @@ public:
     for (auto it = start_iter;
 	 it != end_iter;
 	 it++) {
-      res.emplace(it->paddr, it->laddr, it->len, it->type);
+      res.emplace(it->paddr, it->laddr, it->len, it->type, it->seq);
     }
     return res;
   }
@@ -599,7 +607,7 @@ public:
     for (auto it = start_iter;
 	 it != end_iter;
 	 it++) {
-      res.emplace(it->paddr, it->laddr, it->len, it->type);
+      res.emplace(it->paddr, it->laddr, it->len, it->type, it->seq);
     }
     return res;
   }

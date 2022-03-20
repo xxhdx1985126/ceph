@@ -1032,7 +1032,8 @@ record_t Cache::prepare_record(Transaction &t)
     DEBUGT("retired and remove extent -- {}", t, *i);
     commit_retire_extent(t, i);
     if (i->get_type() != extent_types_t::BACKREF_INTERNAL
-	&& i->get_type() != extent_types_t::BACKREF_LEAF) {
+	&& i->get_type() != extent_types_t::BACKREF_LEAF
+	&& t.should_record_release(i->get_paddr())) {
       rel_delta.alloc_blk_ranges.emplace_back(
 	i->get_paddr(),
 	L_ADDR_NULL,
@@ -1207,15 +1208,16 @@ void Cache::backref_batch_update(
   // backref_buf_entry_t::laddr == L_ADDR_NULL means erase
   for (auto &ent : list) {
     if (ent->laddr == L_ADDR_NULL) {
-      auto r = backref_set.erase(ent->paddr, backref_buf_entry_t::cmp_t());
-      if (!r) {
-	auto [it, insert] = del_backref_set.insert(*ent);
-	assert(insert);
-      } else {
-	DEBUG("previously inserted {}, no need to keep the erase", ent->paddr);
-      }
+      auto [it, insert] = del_backref_set.insert(*ent);
+      assert(insert);
     } else {
-      del_backref_set.erase(ent->paddr, backref_buf_entry_t::cmp_t());
+#ifndef NDEBUG
+      auto r = del_backref_set.erase(ent->paddr, backref_buf_entry_t::cmp_t());
+      if (r) {
+	ERROR("del_backref_set contains: {}", ent->paddr);
+      }
+      assert(!r);
+#endif
       auto [it, insert] = backref_set.insert(*ent);
       assert(insert);
     }
@@ -1283,7 +1285,8 @@ void Cache::complete_commit(
 	    ? i->cast<LogicalCachedExtent>()->get_laddr()
 	    : i->cast<lba_manager::btree::LBANode>()->get_node_meta().begin,
 	    i->get_length(),
-	    i->get_type()));
+	    i->get_type(),
+	    seq));
       }
       if (is_backref_node(i->get_type()))
 	add_backref_extent(i->get_paddr(), i->get_type());
@@ -1326,13 +1329,15 @@ void Cache::complete_commit(
   last_commit = seq;
   for (auto &i: t.retired_set) {
     i->dirty_from_or_retired_at = last_commit;
-    if (i->is_logical() || is_lba_node(i->get_type())) {
+    if ((i->is_logical() || is_lba_node(i->get_type()))
+	&& t.should_record_release(i->get_paddr())) {
       backref_list.emplace_back(
 	std::make_unique<backref_buf_entry_t>(
 	  i->get_paddr(),
 	  L_ADDR_NULL,
 	  i->get_length(),
-	  i->get_type()));
+	  i->get_type(),
+	  seq));
     }
     if (is_backref_node(i->get_type()))
       remove_backref_extent(i->get_paddr());
@@ -1427,7 +1432,12 @@ Cache::replay_delta(
       DEBUG("replay alloc_blk {}~{} {}, journal_seq: {}",
 	alloc_blk.paddr, alloc_blk.len, alloc_blk.laddr, journal_seq);
       backref_list.emplace_back(
-	std::make_unique<backref_buf_entry_t>(std::move(alloc_blk)));
+	std::make_unique<backref_buf_entry_t>(
+	  alloc_blk.paddr,
+	  alloc_blk.laddr,
+	  alloc_blk.len,
+	  alloc_blk.type,
+	  journal_seq));
     }
     if (!backref_list.empty())
       backref_batch_update(std::move(backref_list), journal_seq, true);

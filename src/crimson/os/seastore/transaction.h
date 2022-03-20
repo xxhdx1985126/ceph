@@ -212,6 +212,19 @@ public:
     return retired_set;
   }
 
+  bool should_record_release(paddr_t addr) {
+    auto count = no_release_delta_retired_set.count(addr);
+#ifndef NDEBUG
+    if (count)
+      assert(retired_set.count(addr));
+#endif
+    return count == 0;
+  }
+
+  void dont_record_release(CachedExtentRef ref) {
+    no_release_delta_retired_set.insert(ref);
+  }
+
   template <typename F>
   auto for_each_fresh_block(F &&f) const {
     std::for_each(ool_block_list.begin(), ool_block_list.end(), f);
@@ -296,6 +309,7 @@ public:
     inline_block_list.clear();
     ool_block_list.clear();
     retired_set.clear();
+    no_release_delta_retired_set.clear();
     onode_tree_stats = {};
     lba_tree_stats = {};
     backref_tree_stats = {};
@@ -417,6 +431,8 @@ private:
    * Set of extents retired by *this.
    */
   pextent_set_t retired_set;
+
+  pextent_set_t no_release_delta_retired_set;
 
   /// stats to collect when commit or invalidate
   tree_stats_t onode_tree_stats;

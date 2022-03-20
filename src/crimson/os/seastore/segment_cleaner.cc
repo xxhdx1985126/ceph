@@ -444,12 +444,17 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
 	      pin->get_key(),
 	      pin->get_val(),
 	      pin->get_length(),
-	      pin->get_type());
+	      pin->get_type(),
+	      journal_seq_t());
 	  }
+	  journal_seq_t seq = JOURNAL_SEQ_NULL;
 	  for (auto &del_backref : del_backrefs) {
 	    auto it = backrefs.find(del_backref.paddr);
 	    if (it != backrefs.end())
 	      backrefs.erase(it);
+	    if (seq == JOURNAL_SEQ_NULL
+		|| it->seq > seq)
+	      seq = it->seq;
 	  }
 	  return seastar::do_with(
 	    std::vector<CachedExtentRef>(),
@@ -501,10 +506,27 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
 		if (ext->get_type() >= extent_types_t::BACKREF_INTERNAL) {
 		  return backref_manager.rewrite_extent(t, ext);
 		} else {
-		  return ecb->rewrite_extent(t, ext);
+		  return ecb->rewrite_extent(
+		    t, ext
+		  ).si_then([ext, this, &t] {
+		    t.dont_record_release(ext);
+		    return backref_manager.remove_mapping(
+		      t, ext->get_paddr()).si_then([](auto) {
+		      return seastar::now();
+		    }).handle_error_interruptible(
+		      crimson::ct_error::input_output_error::pass_further(),
+		      crimson::ct_error::assert_all()
+		    );
+		  });
 		}
 	      });
 	    });
+	  }).si_then([this, seq, &t] {
+	    if (seq != JOURNAL_SEQ_NULL) {
+	      return backref_manager.batch_insert_from_cache(
+		t, seq);
+	    }
+	    return backref::BackrefManager::batch_insert_iertr::now();
 	  }).si_then([this, &t, segment_id] {
 	    t.mark_segment_to_release(segment_id);
 	    return ecb->submit_transaction_direct(t);
