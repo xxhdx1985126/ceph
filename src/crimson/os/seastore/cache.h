@@ -595,6 +595,8 @@ public:
     backref_buf_entry_t::cmp_t> get_del_backrefs_in_range(
     paddr_t start,
     paddr_t end) {
+    LOG_PREFIX(Cache::get_del_backrefs_in_range);
+    SUBDEBUG(seastore_cache, "total {} del_backrefs", del_backref_set.size());
     auto start_iter = del_backref_set.lower_bound(
       start,
       backref_buf_entry_t::cmp_t());
@@ -609,6 +611,7 @@ public:
 	 it++) {
       res.emplace(it->paddr, it->laddr, it->len, it->type, it->seq);
     }
+    SUBDEBUG(seastore_cache, "{} del_backrefs in range", res.size());
     return res;
   }
 

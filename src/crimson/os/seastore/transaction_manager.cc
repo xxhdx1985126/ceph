@@ -368,7 +368,7 @@ TransactionManager::submit_transaction_direct(
       auto start_seq = submit_result.write_result.start_seq;
       auto end_seq = submit_result.write_result.get_end_seq();
       segment_cleaner->set_journal_head(end_seq);
-      if (seq_to_trim) {
+      if (seq_to_trim && *seq_to_trim != JOURNAL_SEQ_NULL) {
 	cache->trim_backref_bufs(*seq_to_trim);
       }
       cache->complete_commit(
