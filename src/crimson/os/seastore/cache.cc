@@ -1481,7 +1481,7 @@ Cache::replay_delta(
 	return;
       }
 
-      TRACE("replay extent delta at {} {} ... -- {}, prv_extent={}",
+      DEBUG("replay extent delta at {} {} ... -- {}, prv_extent={}",
             journal_seq, record_base, delta, *extent);
 
       assert(extent->version == delta.pversion);

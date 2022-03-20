@@ -186,8 +186,8 @@ class SegmentProvider;
 class SegmentedAllocator : public ExtentAllocator {
   class Writer : public ExtentOolWriter {
   public:
-    Writer(SegmentProvider& sp, SegmentManager& sm)
-      : segment_allocator(segment_type_t::OOL, sp, sm) {}
+    Writer(SegmentProvider& sp, SegmentManager& sm, SegmentSeqAllocator &ssa)
+      : segment_allocator(segment_type_t::OOL, sp, sm, ssa) {}
 
     Writer(Writer &&) = default;
 
@@ -217,7 +217,8 @@ class SegmentedAllocator : public ExtentAllocator {
 public:
   SegmentedAllocator(
     SegmentProvider& sp,
-    SegmentManager& sm);
+    SegmentManager& sm,
+    SegmentSeqAllocator &ssa);
 
   Writer &get_writer(placement_hint_t hint) {
     if (hint == placement_hint_t::REWRITE) {

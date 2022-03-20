@@ -31,9 +31,11 @@ SegmentedJournal::SegmentedJournal(
   ExtentReader &scanner,
   SegmentProvider &segment_provider)
   : segment_provider(segment_provider),
+    segment_seq_allocator(new SegmentSeqAllocator),
     journal_segment_allocator(segment_type_t::JOURNAL,
                               segment_provider,
-                              segment_manager),
+                              segment_manager,
+			      *segment_seq_allocator),
     record_submitter(crimson::common::get_conf<uint64_t>(
                        "seastore_journal_iodepth_limit"),
                      crimson::common::get_conf<uint64_t>(
@@ -81,7 +83,7 @@ SegmentedJournal::prep_replay_segments(
 	rt.second.journal_segment_seq;
     });
 
-  journal_segment_allocator.set_next_segment_seq(
+  segment_seq_allocator->set_next_segment_seq(
     segments.rbegin()->second.journal_segment_seq + 1);
   std::for_each(
     segments.begin(),
@@ -211,8 +213,7 @@ SegmentedJournal::replay_segment(
               auto delta_paddr_segment_type = segment_seq_to_type(delta_paddr_segment_seq);
               auto locator_segment_seq = locator.write_result.start_seq.segment_seq;
               if (delta_paddr_segment_type == segment_type_t::NULL_SEG ||
-                  (delta_paddr_segment_type == segment_type_t::JOURNAL &&
-                   delta_paddr_segment_seq > locator_segment_seq)) {
+                  (delta_paddr_segment_seq > locator_segment_seq)) {
                 SUBDEBUG(seastore_cache,
                          "delta is obsolete, delta_paddr_segment_seq={}, locator_segment_seq={} -- {}",
                          segment_seq_printer_t{delta_paddr_segment_seq},

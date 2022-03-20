@@ -7,6 +7,7 @@
 
 #include "crimson/common/errorator.h"
 #include "crimson/os/seastore/segment_manager.h"
+#include "crimson/os/seastore/segment_seq_allocator.h"
 
 namespace crimson::os::seastore {
   class SegmentProvider;
@@ -26,7 +27,8 @@ class SegmentAllocator {
  public:
   SegmentAllocator(segment_type_t type,
                    SegmentProvider &sp,
-                   SegmentManager &sm);
+                   SegmentManager &sm,
+                   SegmentSeqAllocator &ssa);
 
   device_id_t get_device_id() const {
     return segment_manager.get_device_id();
@@ -65,8 +67,6 @@ class SegmentAllocator {
     return written_to;
   }
 
-  void set_next_segment_seq(segment_seq_t);
-
   // returns true iff the current segment has insufficient space
   bool needs_roll(std::size_t length) const {
     assert(can_write());
@@ -98,11 +98,6 @@ class SegmentAllocator {
  private:
   void reset() {
     current_segment.reset();
-    if (type == segment_type_t::JOURNAL) {
-      next_segment_seq = 0;
-    } else { // OOL
-      next_segment_seq = OOL_SEG_SEQ;
-    }
     current_segment_nonce = 0;
     written_to = 0;
   }
@@ -111,23 +106,11 @@ class SegmentAllocator {
   using close_segment_ertr = base_ertr;
   close_segment_ertr::future<> close_segment(bool is_rolling);
 
-  segment_seq_t get_current_segment_seq() const {
-    segment_seq_t ret;
-    if (type == segment_type_t::JOURNAL) {
-      assert(next_segment_seq != 0);
-      ret = next_segment_seq - 1;
-    } else { // OOL
-      ret = next_segment_seq;
-    }
-    assert(segment_seq_to_type(ret) == type);
-    return ret;
-  }
-
   const segment_type_t type; // JOURNAL or OOL
   SegmentProvider &segment_provider;
   SegmentManager &segment_manager;
   SegmentRef current_segment;
-  segment_seq_t next_segment_seq;
+  SegmentSeqAllocator &segment_seq_allocator;
   segment_nonce_t current_segment_nonce;
   seastore_off_t written_to;
 };

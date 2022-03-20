@@ -94,7 +94,8 @@ auto get_transaction_manager(
     device_type_t::SEGMENTED,
     std::make_unique<SegmentedAllocator>(
       *segment_cleaner,
-      segment_manager));
+      segment_manager,
+      journal->get_segment_seq_allocator()));
 
   return std::make_unique<TransactionManager>(
     segment_manager,

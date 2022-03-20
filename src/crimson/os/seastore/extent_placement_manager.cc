@@ -9,15 +9,16 @@ namespace crimson::os::seastore {
 
 SegmentedAllocator::SegmentedAllocator(
   SegmentProvider& sp,
-  SegmentManager& sm)
-  : rewriter(sp, sm)
+  SegmentManager& sm,
+  SegmentSeqAllocator &ssa)
+  : rewriter(sp, sm, ssa)
 {
   std::generate_n(
     std::back_inserter(writers),
     crimson::common::get_conf<uint64_t>(
       "seastore_init_write_segments_num_per_device"),
     [&] {
-      return Writer{sp, sm};
+      return Writer{sp, sm, ssa};
     }
   );
 }

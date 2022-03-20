@@ -783,9 +783,9 @@ struct journal_seq_t {
     return {segment_seq, offset.add_offset(o)};
   }
 
-  segment_type_t get_type() const {
-    return segment_seq_to_type(segment_seq);
-  }
+  //segment_type_t get_type() const {
+  //  return segment_seq_to_type(segment_seq);
+  //}
 
   DENC(journal_seq_t, v, p) {
     DENC_START(1, 1, p);
@@ -1362,8 +1362,10 @@ struct segment_header_t {
   journal_seq_t journal_tail;
   segment_nonce_t segment_nonce;
 
+  segment_type_t type;
+
   segment_type_t get_type() const {
-    return segment_seq_to_type(journal_segment_seq);
+    return type;
   }
 
   DENC(segment_header_t, v, p) {
@@ -1372,6 +1374,7 @@ struct segment_header_t {
     denc(v.physical_segment_id, p);
     denc(v.journal_tail, p);
     denc(v.segment_nonce, p);
+    denc(v.type, p);
     DENC_FINISH(p);
   }
 };
@@ -1383,11 +1386,14 @@ struct segment_tail_t {
 
   journal_seq_t journal_tail;
   segment_nonce_t segment_nonce;
+
+  segment_type_t type;
+
   mod_time_point_t last_modified;
   mod_time_point_t last_rewritten;
 
   segment_type_t get_type() const {
-    return segment_seq_to_type(journal_segment_seq);
+    return type;
   }
 
   DENC(segment_tail_t, v, p) {
@@ -1396,6 +1402,7 @@ struct segment_tail_t {
     denc(v.physical_segment_id, p);
     denc(v.journal_tail, p);
     denc(v.segment_nonce, p);
+    denc(v.type, p);
     denc(v.last_modified, p);
     denc(v.last_rewritten, p);
     DENC_FINISH(p);
@@ -1819,6 +1826,43 @@ struct denc_traits<crimson::os::seastore::device_type_t> {
     crimson::os::seastore::device_type_t& o,
     ceph::buffer::list::const_iterator &p) {
     p.copy(sizeof(crimson::os::seastore::device_type_t),
+           reinterpret_cast<char*>(&o));
+  }
+};
+
+template<>
+struct denc_traits<crimson::os::seastore::segment_type_t> {
+  static constexpr bool supported = true;
+  static constexpr bool featured = false;
+  static constexpr bool bounded = true;
+  static constexpr bool need_contiguous = false;
+
+  static void bound_encode(
+    const crimson::os::seastore::segment_type_t &o,
+    size_t& p,
+    uint64_t f=0) {
+    p += sizeof(crimson::os::seastore::segment_type_t);
+  }
+  template<class It>
+  static std::enable_if_t<!is_const_iterator_v<It>>
+  encode(
+    const crimson::os::seastore::segment_type_t &o,
+    It& p,
+    uint64_t f=0) {
+    get_pos_add<crimson::os::seastore::segment_type_t>(p) = o;
+  }
+  template<class It>
+  static std::enable_if_t<is_const_iterator_v<It>>
+  decode(
+    crimson::os::seastore::segment_type_t& o,
+    It& p,
+    uint64_t f=0) {
+    o = get_pos_add<crimson::os::seastore::segment_type_t>(p);
+  }
+  static void decode(
+    crimson::os::seastore::segment_type_t& o,
+    ceph::buffer::list::const_iterator &p) {
+    p.copy(sizeof(crimson::os::seastore::segment_type_t),
            reinterpret_cast<char*>(&o));
   }
 };

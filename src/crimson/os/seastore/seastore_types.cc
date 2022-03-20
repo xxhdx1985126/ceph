@@ -94,13 +94,14 @@ segment_type_t segment_seq_to_type(segment_seq_t seq)
 
 std::ostream& operator<<(std::ostream& out, segment_seq_printer_t seq)
 {
-  auto type = segment_seq_to_type(seq.seq);
+  return out << seq.seq;
+/*  auto type = segment_seq_to_type(seq.seq);
   switch(type) {
   case segment_type_t::JOURNAL:
     return out << seq.seq;
   default:
     return out << type;
-  }
+  }*/
 }
 
 std::ostream &operator<<(std::ostream &out, const paddr_t &rhs)
