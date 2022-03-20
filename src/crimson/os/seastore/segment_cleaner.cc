@@ -307,36 +307,52 @@ SegmentCleaner::rewrite_dirty_ret SegmentCleaner::rewrite_dirty(
   Transaction &t,
   journal_seq_t limit)
 {
-  LOG_PREFIX(SegmentCleaner::rewrite_dirty);
   return ecb->get_next_dirty_extents(
     t,
     limit,
     config.journal_rewrite_per_cycle
   ).si_then([=, &t](auto dirty_list) {
+    LOG_PREFIX(SegmentCleaner::rewrite_dirty);
     DEBUGT("rewrite {} dirty extents", t, dirty_list.size());
     return seastar::do_with(
       std::move(dirty_list),
-      [FNAME, this, &t, limit](auto &dirty_list) {
+      [this, &t, limit](auto &dirty_list) {
 	journal_seq_t seq_to_rm = dirty_list.empty()
 	  ? limit
 	  : dirty_list.back()->get_dirty_from();
-	return trans_intr::do_for_each(
-	  dirty_list,
-	  [FNAME, this, &t](auto &e) {
+	return backref_manager.batch_insert_from_cache(
+	  t,
+	  seq_to_rm
+	).si_then([this, &t, &dirty_list] {
+	  return trans_intr::do_for_each(
+	    dirty_list,
+	    [this, &t](auto &e) {
+	    LOG_PREFIX(SegmentCleaner::rewrite_dirty);
 	    DEBUGT("cleaning {}", t, *e);
 	    if (e->get_type() >= extent_types_t::BACKREF_INTERNAL) {
 	      return backref_manager.rewrite_extent(t, e);
 	    } else {
-	      return ecb->rewrite_extent(t, e);
+	      return ecb->rewrite_extent(
+		t, e
+	      ).si_then([e, this, &t] {
+		if (e->is_logical() || is_lba_node(e->get_type())) {
+		  t.dont_record_release(e);
+		  return backref_manager.remove_mapping(
+		    t, e->get_paddr()).si_then([](auto) {
+		    return seastar::now();
+		  }).handle_error_interruptible(
+		    crimson::ct_error::input_output_error::pass_further(),
+		    crimson::ct_error::assert_all()
+		  );
+		} else {
+		  return ExtentCallbackInterface::rewrite_extent_iertr::now();
+		}
+	      });
 	    }
-	}).si_then([this, seq_to_rm, &t]() mutable {
-	  return backref_manager.batch_insert_from_cache(
-	    t,
-	    seq_to_rm
-	  ).si_then([seq_to_rm] {
-	    return rewrite_dirty_iertr::make_ready_future<
-	      journal_seq_t>(std::move(seq_to_rm));
 	  });
+	}).si_then([seq_to_rm] {
+	  return rewrite_dirty_iertr::make_ready_future<
+	    journal_seq_t>(std::move(seq_to_rm));
 	});
       });
   });
