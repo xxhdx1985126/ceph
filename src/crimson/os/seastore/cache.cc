@@ -1089,8 +1089,7 @@ record_t Cache::prepare_record(Transaction &t)
 	i->get_last_modified().time_since_epoch().count()
       });
     if (i->is_valid()
-	&& i->get_type() != extent_types_t::BACKREF_INTERNAL
-	&& i->get_type() != extent_types_t::BACKREF_LEAF) {
+	&& (i->is_logical() || is_lba_node(i->get_type()))) {
       alloc_delta.alloc_blk_ranges.emplace_back(
 	i->get_paddr(),
 	i->is_logical()
@@ -1107,8 +1106,7 @@ record_t Cache::prepare_record(Transaction &t)
     assert(!i->is_inline());
     get_by_ext(efforts.fresh_ool_by_ext,
                i->get_type()).increment(i->get_length());
-    if (i->get_type() != extent_types_t::BACKREF_INTERNAL
-	&& i->get_type() != extent_types_t::BACKREF_LEAF) {
+    if (i->is_logical() || is_lba_node(i->get_type())) {
       alloc_delta.alloc_blk_ranges.emplace_back(
 	i->get_paddr(),
 	i->is_logical()
