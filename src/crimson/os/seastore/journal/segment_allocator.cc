@@ -60,12 +60,18 @@ SegmentAllocator::open()
   ).safe_then([this, FNAME, new_segment_seq](auto sref) {
     // initialize new segment
     journal_seq_t new_journal_tail;
+    journal_seq_t new_dirty_replay_from;
+    journal_seq_t new_alloc_replay_from;
     if (type == segment_type_t::JOURNAL) {
       new_journal_tail = segment_provider.get_journal_tail_target();
+      new_dirty_replay_from = segment_provider.get_dirty_extents_replay_from();
+      new_alloc_replay_from = segment_provider.get_alloc_info_replay_from();
       current_segment_nonce = generate_nonce(
           new_segment_seq, segment_manager.get_meta());
     } else { // OOL
       new_journal_tail = NO_DELTAS;
+      new_dirty_replay_from = NO_DELTAS;
+      new_alloc_replay_from = NO_DELTAS;
       assert(current_segment_nonce == 0);
     }
     segment_id_t segment_id = sref->get_segment_id();
@@ -73,6 +79,8 @@ SegmentAllocator::open()
       new_segment_seq,
       segment_id,
       new_journal_tail,
+      new_dirty_replay_from,
+      new_alloc_replay_from,
       current_segment_nonce,
       type};
     INFO("{} {} writing header to new segment ... -- {}",
@@ -202,15 +210,23 @@ SegmentAllocator::close_segment(bool is_rolling)
   segment_seq_t cur_segment_seq =
     segment_seq_allocator.get_current_segment_seq();
   journal_seq_t cur_journal_tail;
+  journal_seq_t new_dirty_replay_from;
+  journal_seq_t new_alloc_replay_from;
   if (type == segment_type_t::JOURNAL) {
     cur_journal_tail = segment_provider.get_journal_tail_target();
+    new_dirty_replay_from = segment_provider.get_dirty_extents_replay_from();
+    new_alloc_replay_from = segment_provider.get_alloc_info_replay_from();
   } else { // OOL
     cur_journal_tail = NO_DELTAS;
+    new_dirty_replay_from = NO_DELTAS;
+    new_alloc_replay_from = NO_DELTAS;
   }
   auto tail = segment_tail_t{
     cur_segment_seq,
     close_segment_id,
     cur_journal_tail,
+    new_dirty_replay_from,
+    new_alloc_replay_from,
     current_segment_nonce,
     type,
     segment_provider.get_last_modified(

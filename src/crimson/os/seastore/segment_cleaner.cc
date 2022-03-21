@@ -261,14 +261,36 @@ segment_id_t SegmentCleaner::get_segment(
   return NULL_SEG_ID;
 }
 
-void SegmentCleaner::update_journal_tail_target(journal_seq_t target)
+void SegmentCleaner::update_journal_tail_target(
+  journal_seq_t dirty_replay_from,
+  journal_seq_t alloc_replay_from)
 {
+  logger().debug(
+    "{}: {}, current dirty_extents_replay_from {}",
+    __func__,
+    dirty_replay_from,
+    dirty_extents_replay_from);
+  if (dirty_extents_replay_from == JOURNAL_SEQ_NULL
+      || dirty_replay_from > dirty_extents_replay_from) {
+    dirty_extents_replay_from = dirty_replay_from;
+  }
+
+  logger().debug(
+    "{}: {}, current alloc_info_replay_from {}",
+    __func__,
+    alloc_replay_from,
+    alloc_info_replay_from);
+  if (alloc_info_replay_from == JOURNAL_SEQ_NULL
+      || alloc_replay_from > alloc_info_replay_from) {
+    alloc_info_replay_from = alloc_replay_from;
+  }
+
+  journal_seq_t target = std::min(dirty_replay_from, alloc_replay_from);
   logger().debug(
     "{}: {}, current tail target {}",
     __func__,
     target,
     journal_tail_target);
-  assert(journal_tail_target == JOURNAL_SEQ_NULL || target >= journal_tail_target);
   if (journal_tail_target == JOURNAL_SEQ_NULL || target > journal_tail_target) {
     journal_tail_target = target;
   }
@@ -694,6 +716,8 @@ SegmentCleaner::mount_ret SegmentCleaner::mount(
   journal_tail_target = JOURNAL_SEQ_NULL;
   journal_tail_committed = JOURNAL_SEQ_NULL;
   journal_head = JOURNAL_SEQ_NULL;
+  dirty_extents_replay_from = JOURNAL_SEQ_NULL;
+  alloc_info_replay_from = JOURNAL_SEQ_NULL;
   journal_device_id = pdevice_id;
   
   space_tracker.reset(
@@ -758,6 +782,9 @@ SegmentCleaner::mount_ret SegmentCleaner::mount(
 	    }
 	    if (tail.get_type() == segment_type_t::JOURNAL) {
 	      update_journal_tail_committed(tail.journal_tail);
+	      update_journal_tail_target(
+		tail.dirty_replay_from,
+		tail.alloc_replay_from);
 	    }
 	    init_mark_segment_closed(
 	      segment_id,

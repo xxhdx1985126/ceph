@@ -225,6 +225,8 @@ SegmentedJournal::replay_segment(
 	    return handler(
 	      locator,
 	      delta,
+	      segment_provider.get_dirty_extents_replay_from(),
+	      segment_provider.get_alloc_info_replay_from(),
 	      seastar::lowres_system_clock::time_point(
 		seastar::lowres_system_clock::duration(commit_time)));
           });

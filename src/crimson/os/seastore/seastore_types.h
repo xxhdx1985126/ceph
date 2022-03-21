@@ -1360,6 +1360,8 @@ struct segment_header_t {
   segment_id_t physical_segment_id; // debugging
 
   journal_seq_t journal_tail;
+  journal_seq_t dirty_replay_from;
+  journal_seq_t alloc_replay_from;
   segment_nonce_t segment_nonce;
 
   segment_type_t type;
@@ -1373,6 +1375,8 @@ struct segment_header_t {
     denc(v.journal_segment_seq, p);
     denc(v.physical_segment_id, p);
     denc(v.journal_tail, p);
+    denc(v.dirty_replay_from, p);
+    denc(v.alloc_replay_from, p);
     denc(v.segment_nonce, p);
     denc(v.type, p);
     DENC_FINISH(p);
@@ -1385,6 +1389,8 @@ struct segment_tail_t {
   segment_id_t physical_segment_id; // debugging
 
   journal_seq_t journal_tail;
+  journal_seq_t dirty_replay_from;
+  journal_seq_t alloc_replay_from;
   segment_nonce_t segment_nonce;
 
   segment_type_t type;
@@ -1401,6 +1407,8 @@ struct segment_tail_t {
     denc(v.journal_segment_seq, p);
     denc(v.physical_segment_id, p);
     denc(v.journal_tail, p);
+    denc(v.dirty_replay_from, p);
+    denc(v.alloc_replay_from, p);
     denc(v.segment_nonce, p);
     denc(v.type, p);
     denc(v.last_modified, p);
@@ -1439,6 +1447,8 @@ struct record_t {
   mod_time_point_t commit_time;
   record_commit_type_t commit_type;
   journal_seq_t wouldbe_journal_tail;
+  journal_seq_t wouldbe_dirty_replay_from;
+  journal_seq_t wouldbe_alloc_replay_from;
 
   record_t() = default;
   record_t(std::vector<extent_t>&& _extents,
@@ -1502,6 +1512,8 @@ struct record_group_header_t {
   journal_seq_t committed_to;   // records prior to committed_to have been
                                 // fully written, maybe in another segment.
   journal_seq_t journal_tail;
+  journal_seq_t dirty_replay_from;
+  journal_seq_t alloc_replay_from;
   checksum_t data_crc;          // crc of data payload
 
 
@@ -1513,6 +1525,8 @@ struct record_group_header_t {
     denc(v.segment_nonce, p);
     denc(v.committed_to, p);
     denc(v.journal_tail, p);
+    denc(v.dirty_replay_from, p);
+    denc(v.alloc_replay_from, p);
     denc(v.data_crc, p);
     DENC_FINISH(p);
   }

@@ -60,6 +60,14 @@ struct btree_test_base :
     return ret;
   }
 
+  journal_seq_t get_dirty_extents_replay_from() const final {
+    return JOURNAL_SEQ_NULL;
+  }
+
+  journal_seq_t get_alloc_info_replay_from() const final {
+    return JOURNAL_SEQ_NULL;
+  }
+
   journal_seq_t get_journal_tail_target() const final { return journal_seq_t{}; }
   void update_journal_tail_committed(journal_seq_t committed) final {}
 
