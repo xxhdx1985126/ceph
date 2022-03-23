@@ -1211,6 +1211,11 @@ void Cache::backref_batch_update(
   for (auto &ent : list) {
     if (ent->laddr == L_ADDR_NULL) {
       auto [it, insert] = del_backref_set.insert(*ent);
+#ifndef NDEBUG
+      if (!insert) {
+	ERROR("del_backref_set already contains {}", ent->paddr);
+      }
+#endif
       assert(insert);
     } else {
 #ifndef NDEBUG
@@ -1226,9 +1231,16 @@ void Cache::backref_batch_update(
   }
 
   if (likely(!on_startup)) {
-    auto [iter, inserted] = backref_buffer->backrefs.emplace(
-      seq, std::move(list));
-    assert(inserted);
+    auto iter = backref_buffer->backrefs.find(seq);
+    if (iter == backref_buffer->backrefs.end()) {
+      backref_buffer->backrefs.emplace(
+	seq, std::move(list));
+    } else {
+      iter->second.insert(
+	iter->second.end(),
+	std::make_move_iterator(list.begin()),
+	std::make_move_iterator(list.end()));
+    }
   } else {
     auto iter = backref_buffer->backrefs.find(seq);
     if (iter == backref_buffer->backrefs.end()) {
@@ -1396,6 +1408,9 @@ Cache::close_ertr::future<> Cache::close()
     dirty.erase(i++);
     intrusive_ptr_release(ptr);
   }
+  backref_bufs_to_flush.clear();
+  backref_extents.clear();
+  backref_buffer.reset();
   assert(stats.dirty_bytes == 0);
   lru.clear();
   return close_ertr::now();
