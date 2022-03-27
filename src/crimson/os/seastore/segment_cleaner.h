@@ -299,6 +299,10 @@ public:
 
   virtual void update_journal_tail_committed(journal_seq_t tail_committed) = 0;
 
+  virtual journal_seq_t get_dirty_extents_replay_from() const = 0;
+
+  virtual journal_seq_t get_alloc_info_replay_from() const = 0;
+
   virtual segment_seq_t get_seq(segment_id_t id) { return 0; }
 
   virtual seastar::lowres_system_clock::time_point get_last_modified(
@@ -710,6 +714,12 @@ private:
   /// target journal_tail for next fresh segment
   journal_seq_t journal_tail_target;
 
+  /// target replay_from for dirty extents
+  journal_seq_t dirty_extents_replay_from;
+
+  /// target replay_from for alloc infos
+  journal_seq_t alloc_info_replay_from;
+
   /// most recently committed journal_tail
   journal_seq_t journal_tail_committed;
 
@@ -751,9 +761,19 @@ public:
     return journal_tail_target;
   }
 
+  journal_seq_t get_dirty_extents_replay_from() const final {
+    return dirty_extents_replay_from;
+  }
+
+  journal_seq_t get_alloc_info_replay_from() const final {
+    return alloc_info_replay_from;
+  }
+
   void update_journal_tail_committed(journal_seq_t committed) final;
 
-  void update_journal_tail_target(journal_seq_t target);
+  void update_journal_tail_target(
+    journal_seq_t dirty_replay_from,
+    journal_seq_t alloc_replay_from);
 
   void init_mkfs(journal_seq_t head) {
     journal_tail_target = head;
