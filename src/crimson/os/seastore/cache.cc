@@ -1028,7 +1028,11 @@ record_t Cache::prepare_record(
     get_by_ext(efforts.retire_by_ext,
                i->get_type()).increment(i->get_length());
     retire_stat.increment(i->get_length());
-    DEBUGT("retired and remove extent -- {}", t, *i);
+    if (is_backref_node(i->get_type())) {
+      INFOT("retired and remove extent -- {}", t, *i);
+    } else {
+      DEBUGT("retired and remove extent -- {}", t, *i);
+    }
     commit_retire_extent(t, i);
     if (i->get_type() != extent_types_t::BACKREF_INTERNAL
 	&& i->get_type() != extent_types_t::BACKREF_LEAF
@@ -1054,7 +1058,7 @@ record_t Cache::prepare_record(
       get_by_ext(efforts.fresh_invalid_by_ext,
                  i->get_type()).increment(i->get_length());
     } else {
-      TRACET("fresh inline extent -- {}", t, *i);
+      DEBUGT("fresh inline extent -- {}", t, *i);
     }
     fresh_stat.increment(i->get_length());
     get_by_ext(efforts.fresh_inline_by_ext,
@@ -1254,7 +1258,7 @@ void Cache::complete_commit(
   SegmentCleaner *cleaner)
 {
   LOG_PREFIX(Cache::complete_commit);
-  SUBTRACET(seastore_t, "final_block_start={}, seq={}",
+  SUBDEBUGT(seastore_t, "final_block_start={}, seq={}",
             t, final_block_start, seq);
 
   may_roll_backref_buffer(final_block_start);

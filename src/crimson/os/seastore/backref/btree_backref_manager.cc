@@ -52,7 +52,7 @@ BtreeBackrefManager::get_mapping(
   paddr_t offset)
 {
   LOG_PREFIX(BtreeBackrefManager::get_mapping);
-  TRACET("{}", t, offset);
+  DEBUGT("{}", t, offset);
   auto c = get_context(t);
   return with_btree_ret<BackrefBtree, BackrefPinRef>(
     cache,
@@ -66,7 +66,7 @@ BtreeBackrefManager::get_mapping(
 	DEBUGT("{} doesn't exist", c.trans, offset);
 	return crimson::ct_error::enoent::make();
       } else {
-	TRACET("{} got {}, {}",
+	DEBUGT("{} got {}, {}",
 	       c.trans, offset, iter.get_key(), iter.get_val());
 	auto e = iter.get_pin();
 	return get_mapping_ret(
@@ -84,7 +84,7 @@ BtreeBackrefManager::get_mappings(
   extent_len_t length)
 {
   LOG_PREFIX(BtreeBackrefManager::get_mappings);
-  TRACET("{}~{}", t, offset, length);
+  DEBUGT("{}~{}", t, offset, length);
   auto c = get_context(t);
   return with_btree_state<BackrefBtree, backref_pin_list_t>(
     cache,
@@ -174,7 +174,7 @@ BtreeBackrefManager::new_mapping(
 	      interruptible::ready_future_marker{},
 	      seastar::stop_iteration::yes);
 	  } else {
-	    TRACET("{}~{}, paddr={}, state: {}~{}, repeat ... -- {}",
+	    DEBUGT("{}~{}, paddr={}, state: {}~{}, repeat ... -- {}",
                    t, addr, len, key,
                    pos.get_key(), pos.get_val().len,
                    pos.get_val());
@@ -451,7 +451,7 @@ void BtreeBackrefManager::complete_transaction(
   std::vector<CachedExtentRef> &to_link)
 {
   LOG_PREFIX(BtreeBackrefManager::complete_transaction);
-  DEBUGT("start", t);
+  TRACET("start", t);
   // need to call check_parent from leaf->parent
   std::sort(
     to_clear.begin(), to_clear.end(),
@@ -459,7 +459,7 @@ void BtreeBackrefManager::complete_transaction(
 
   for (auto &e: to_clear) {
     auto &pin = e->cast<BackrefNode>()->pin;
-    DEBUGT("retiring extent {} -- {}", t, pin, *e);
+    INFOT("retiring extent {} -- {}", t, pin, *e);
     pin_set.retire(pin);
   }
 
@@ -468,7 +468,7 @@ void BtreeBackrefManager::complete_transaction(
     [](auto &l, auto &r) -> bool { return get_depth(*l) > get_depth(*r); });
 
   for (auto &e : to_link) {
-    DEBUGT("linking extent -- {}", t, *e);
+    INFOT("linking extent -- {}", t, *e);
     pin_set.add_pin(e->cast<BackrefNode>()->pin);
   }
 
