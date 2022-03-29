@@ -825,6 +825,13 @@ public:
 
     gc_process.maybe_wake_on_space_used();
     assert(ret > 0);
+    crimson::get_logger(ceph_subsys_seastore_cleaner).debug(
+      "{} segment {} new len: {}~{}, live_bytes: {}",
+      __func__,
+      seg_addr.get_segment_id(),
+      addr,
+      len,
+      space_tracker->get_usage(seg_addr.get_segment_id()));
   }
 
   seastar::lowres_system_clock::time_point get_last_modified(
@@ -852,6 +859,12 @@ public:
     assert(seg_addr.get_segment_id().device_segment_id() <
       segments[seg_addr.get_segment_id().device_id()]->num_segments);
 
+    crimson::get_logger(ceph_subsys_seastore_cleaner).debug(
+      "{} segment {} free len: {}~{}",
+      __func__,
+      seg_addr.get_segment_id(),
+      addr,
+      len);
     auto old_usage = space_tracker->calc_utilization(seg_addr.get_segment_id());
     [[maybe_unused]] auto ret = space_tracker->release(
       seg_addr.get_segment_id(),
@@ -861,6 +874,13 @@ public:
     adjust_segment_util(old_usage, new_usage);
     maybe_wake_gc_blocked_io();
     assert(ret >= 0);
+    crimson::get_logger(ceph_subsys_seastore_cleaner).debug(
+      "{} segment {} free len: {}~{}, live_bytes: {}",
+      __func__,
+      seg_addr.get_segment_id(),
+      addr,
+      len,
+      space_tracker->get_usage(seg_addr.get_segment_id()));
   }
 
   SpaceTrackerIRef get_empty_space_tracker() const {
