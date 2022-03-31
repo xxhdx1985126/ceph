@@ -553,7 +553,7 @@ TransactionManager::get_extent_if_live_ret TransactionManager::get_extent_if_liv
   seastore_off_t len)
 {
   LOG_PREFIX(TransactionManager::get_extent_if_live);
-  DEBUGT("{} {}~{} {}", t, type, laddr, len, addr);
+  TRACET("{} {}~{} {}", t, type, laddr, len, addr);
 
   return cache->get_extent_if_cached(t, addr, type
   ).si_then([this, FNAME, &t, type, addr, laddr, len](auto extent)

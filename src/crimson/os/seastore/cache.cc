@@ -1029,7 +1029,7 @@ record_t Cache::prepare_record(
                i->get_type()).increment(i->get_length());
     retire_stat.increment(i->get_length());
     if (is_backref_node(i->get_type())) {
-      INFOT("retired and remove extent -- {}", t, *i);
+      DEBUGT("retired and remove extent -- {}", t, *i);
     } else {
       DEBUGT("retired and remove extent -- {}", t, *i);
     }
@@ -1058,7 +1058,7 @@ record_t Cache::prepare_record(
       get_by_ext(efforts.fresh_invalid_by_ext,
                  i->get_type()).increment(i->get_length());
     } else {
-      DEBUGT("fresh inline extent -- {}", t, *i);
+      TRACET("fresh inline extent -- {}", t, *i);
     }
     fresh_stat.increment(i->get_length());
     get_by_ext(efforts.fresh_inline_by_ext,
@@ -1562,8 +1562,8 @@ Cache::get_next_dirty_extents_ret Cache::get_next_dirty_extents(
     auto dirty_from = i->get_dirty_from();
 #ifndef NDEBUG
     if (!(dirty_from != JOURNAL_SEQ_NULL &&
-                dirty_from != JOURNAL_SEQ_MAX &&
-                dirty_from != NO_DELTAS))
+	  dirty_from != JOURNAL_SEQ_MAX &&
+	  dirty_from != NO_DELTAS))
       ERRORT("{}", t, *i);
 #endif
     ceph_assert(dirty_from != JOURNAL_SEQ_NULL &&

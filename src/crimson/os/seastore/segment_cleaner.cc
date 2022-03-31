@@ -332,13 +332,20 @@ SegmentCleaner::rewrite_dirty_ret SegmentCleaner::rewrite_dirty(
   Transaction &t,
   journal_seq_t limit)
 {
+  LOG_PREFIX(SegmentCleaner::rewrite_dirty);
+  DEBUGT("rewrite to {}, journal_head {}", t, limit, journal_head);
+
   return ecb->get_next_dirty_extents(
     t,
     limit,
     config.journal_rewrite_per_cycle
   ).si_then([=, &t](auto dirty_list) {
     LOG_PREFIX(SegmentCleaner::rewrite_dirty);
-    DEBUGT("rewrite {} dirty extents", t, dirty_list.size());
+    if (dirty_list.empty()) {
+      INFOT("rewrite {} dirty extents", t, dirty_list.size());
+    } else {
+      DEBUGT("rewrite {} dirty extents", t, dirty_list.size());
+    }
     return seastar::do_with(
       std::move(dirty_list),
       [this, &t, limit](auto &dirty_list) {
@@ -429,6 +436,8 @@ SegmentCleaner::gc_cycle_ret SegmentCleaner::do_gc_cycle()
 
 SegmentCleaner::gc_trim_journal_ret SegmentCleaner::gc_trim_journal()
 {
+  LOG_PREFIX(SegmentCleaner::gc_trim_journal);
+  INFO("triming journal");
   return repeat_eagain([this] {
     return ecb->with_transaction_intr(
       Transaction::src_t::CLEANER_TRIM,
@@ -448,7 +457,7 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
 {
   journal_seq_t next = get_next_gc_target();
   LOG_PREFIX(SegmentCleaner::gc_reclaim_space);
-  DEBUG("cleaning {}", next);
+  INFO("cleaning {}", next);
   auto &seg_paddr = next.offset.as_seg_paddr();
   auto &sm_info = segments[seg_paddr.get_segment_id().device_id()];
   auto segment_id = seg_paddr.get_segment_id();

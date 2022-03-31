@@ -564,8 +564,8 @@ public:
 	  .8,   // reclaim_ratio_hard_limit
 	  .6,   // reclaim_ratio_gc_threshhold
 	  .2,   // available_ratio_hard_limit
-	  1<<25,// reclaim 32MB per gc cycle
-	  1<<25 // rewrite 32MB of journal entries per gc cycle
+	  1<<24,// reclaim 32MB per gc cycle
+	  1<<24 // rewrite 32MB of journal entries per gc cycle
 	};
     }
   };

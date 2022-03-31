@@ -174,7 +174,7 @@ BtreeBackrefManager::new_mapping(
 	      interruptible::ready_future_marker{},
 	      seastar::stop_iteration::yes);
 	  } else {
-	    DEBUGT("{}~{}, paddr={}, state: {}~{}, repeat ... -- {}",
+	    ERRORT("{}~{}, paddr={}, state: {}~{}, repeat ... -- {}",
                    t, addr, len, key,
                    pos.get_key(), pos.get_val().len,
                    pos.get_val());
@@ -459,7 +459,7 @@ void BtreeBackrefManager::complete_transaction(
 
   for (auto &e: to_clear) {
     auto &pin = e->cast<BackrefNode>()->pin;
-    INFOT("retiring extent {} -- {}", t, pin, *e);
+    DEBUGT("retiring extent {} -- {}", t, pin, *e);
     pin_set.retire(pin);
   }
 
@@ -468,7 +468,7 @@ void BtreeBackrefManager::complete_transaction(
     [](auto &l, auto &r) -> bool { return get_depth(*l) > get_depth(*r); });
 
   for (auto &e : to_link) {
-    INFOT("linking extent -- {}", t, *e);
+    DEBUGT("linking extent -- {}", t, *e);
     pin_set.add_pin(e->cast<BackrefNode>()->pin);
   }
 
