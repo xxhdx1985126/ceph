@@ -6,6 +6,13 @@
 #include "crimson/os/seastore/logging.h"
 #include "crimson/os/seastore/seastore_types.h"
 
+#define INIT_JOURNAL_SEGMENT_SEQ 0x00000000
+#define INIT_OOL_SEGMENT_SEQ 0x80000000
+
+namespace crimson::os::seastore {
+class SegmentCleaner;
+}
+
 namespace crimson::os::seastore::journal {
 class SegmentedJournal;
 }
@@ -14,17 +21,38 @@ namespace crimson::os::seastore {
 
 class SegmentSeqAllocator {
 public:
+  SegmentSeqAllocator(segment_type_t type)
+    : type(type)
+  {
+    if (type == segment_type_t::JOURNAL) {
+      next_segment_seq = INIT_JOURNAL_SEGMENT_SEQ;
+    } else {
+      assert(type == segment_type_t::OOL);
+      next_segment_seq = INIT_OOL_SEGMENT_SEQ;
+    }
+  }
   segment_seq_t get_and_inc_next_segment_seq() {
     return next_segment_seq++;
   }
 private:
   void set_next_segment_seq(segment_seq_t seq) {
     LOG_PREFIX(SegmentSeqAllocator::set_next_segment_seq);
-    SUBINFO(seastore_journal, "next_segment_seq={}", segment_seq_printer_t{seq});
-    next_segment_seq = seq;
+    SUBINFO(
+      seastore_journal,
+      "type {}, next_segment_seq={}, cur_segment_seq={}",
+      type,
+      segment_seq_printer_t{seq},
+      segment_seq_printer_t{next_segment_seq});
+    assert(type == segment_type_t::OOL
+      ? seq >= INIT_OOL_SEGMENT_SEQ
+      : seq >= next_segment_seq);
+    if (seq > next_segment_seq)
+      next_segment_seq = seq;
   }
   segment_seq_t next_segment_seq = 0;
+  segment_type_t type = segment_type_t::NULL_SEG;
   friend class journal::SegmentedJournal;
+  friend class SegmentCleaner;
 };
 
 using SegmentSeqAllocatorRef =

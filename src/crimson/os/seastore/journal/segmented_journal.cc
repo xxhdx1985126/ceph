@@ -31,7 +31,8 @@ SegmentedJournal::SegmentedJournal(
   ExtentReader &scanner,
   SegmentProvider &segment_provider)
   : segment_provider(segment_provider),
-    segment_seq_allocator(new SegmentSeqAllocator),
+    segment_seq_allocator(
+      new SegmentSeqAllocator(segment_type_t::JOURNAL)),
     journal_segment_allocator("JOURNAL",
                               segment_type_t::JOURNAL,
                               segment_provider,
@@ -215,7 +216,6 @@ SegmentedJournal::replay_segment(
                          "delta is obsolete, delta_paddr_segment_seq={}, -- {}",
                          segment_seq_printer_t{delta_paddr_segment_seq},
                          delta);
-		assert(delta_paddr_segment_seq > delta.ext_seq);
                 return replay_ertr::now();
               }
             }

@@ -16,6 +16,7 @@
 #include "crimson/os/seastore/seastore_types.h"
 #include "crimson/os/seastore/segment_manager.h"
 #include "crimson/os/seastore/transaction.h"
+#include "crimson/os/seastore/segment_seq_allocator.h"
 
 namespace crimson::os::seastore {
 
@@ -718,11 +719,17 @@ private:
   /// populated if there is an IO blocked on hard limits
   std::optional<seastar::promise<>> blocked_io_wake;
 
+  SegmentSeqAllocatorRef ool_segment_seq_allocator;
+
 public:
   SegmentCleaner(
     config_t config,
     ExtentReaderRef&& scanner,
     bool detailed = false);
+
+  SegmentSeqAllocator& get_ool_segment_seq_allocator() {
+    return *ool_segment_seq_allocator;
+  }
 
   using mount_ertr = crimson::errorator<
     crimson::ct_error::input_output_error>;
@@ -1331,6 +1338,9 @@ private:
     if (s_type == segment_type_t::JOURNAL) {
       assert(journal_device_id == segment.device_id());
       segments.new_journal_segment();
+    } else {
+      assert(s_type == segment_type_t::OOL);
+      ool_segment_seq_allocator->set_next_segment_seq(seq);
     }
   }
 
