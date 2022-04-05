@@ -472,20 +472,26 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
   auto del_backrefs = cache.get_del_backrefs_in_range(
     next.offset, end_paddr);
 
+  double pavail_ratio = get_projected_available_ratio();
+  seastar::lowres_system_clock::time_point start = seastar::lowres_system_clock::now();
+
   return seastar::do_with(
     std::move(backref_extents),
     std::move(backrefs),
     std::move(del_backrefs),
     (size_t)0,
-    [this, &sm_info, next, segment_id](
+    (size_t)0,
+    [this, &sm_info, next, segment_id, pavail_ratio, start](
       auto &backref_extents,
       auto &backrefs,
       auto &del_backrefs,
-      auto &reclaimed) {
+      auto &reclaimed,
+      auto &runs) {
     return repeat_eagain(
       [this, &backref_extents, &backrefs, &reclaimed,
-      &del_backrefs, next, &sm_info, segment_id]() mutable {
+      &del_backrefs, next, &sm_info, segment_id, &runs]() mutable {
       reclaimed = 0;
+      runs++;
       return ecb->with_transaction_intr(
 	Transaction::src_t::CLEANER_RECLAIM,
 	"reclaim_space",
@@ -600,7 +606,10 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
 	  });
 	});
       });
-    }).safe_then([&reclaimed, this] {
+    }).safe_then([&reclaimed, this, pavail_ratio, start, &runs] {
+      LOG_PREFIX(SegmentCleaner::gc_reclaim_space);
+      auto d = seastar::lowres_system_clock::now() - start;
+      INFO("duration: {}, pavail_ratio before: {}, repeats: {}", d, pavail_ratio, runs);
       stats.reclaim_rewrite_bytes += reclaimed;
       stats.reclaimed_segments++;
     });

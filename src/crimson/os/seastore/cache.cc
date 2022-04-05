@@ -930,6 +930,10 @@ record_t Cache::prepare_record(
 
   auto& efforts = get_by_src(stats.committed_efforts_by_src,
                              trans_src);
+  if (trans_src == Transaction::src_t::CLEANER_TRIM
+      || trans_src == Transaction::src_t::CLEANER_RECLAIM) {
+    INFOT("fresh backref extents: {}", t, t.get_num_fresh_backref());
+  }
 
   // Should be valid due to interruptible future
   io_stat_t read_stat;
