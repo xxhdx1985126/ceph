@@ -1020,9 +1020,12 @@ private:
   }
 
   // GC status helpers
-  std::unique_ptr<
-    ExtentReader::scan_extents_cursor
-    > scan_cursor;
+  std::unique_ptr<paddr_t> next_reclaim_pos;
+
+  bool final_reclaim(segment_info_set_t::segment_manager_info_t &sm_info) {
+    return next_reclaim_pos->as_seg_paddr().get_segment_off()
+      + config.reclaim_bytes_stride >= (size_t)sm_info.segment_size;
+  }
 
   /**
    * GCProcess
@@ -1122,18 +1125,6 @@ private:
     auto segment_size =
       segments[seg_addr.get_segment_id().device_id()]->segment_size;
     return segment_size - get_bytes_used_current_segment();
-  }
-
-  /**
-   * get_bytes_scanned_current_segment
-   *
-   * Returns the number of bytes from the current gc segment that
-   * have been scanned.
-   */
-  size_t get_bytes_scanned_current_segment() const {
-    if (!scan_cursor)
-      return 0;
-    return scan_cursor->get_segment_offset();
   }
 
   /// Returns free space available for writes

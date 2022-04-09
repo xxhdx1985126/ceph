@@ -340,12 +340,6 @@ SegmentCleaner::rewrite_dirty_ret SegmentCleaner::rewrite_dirty(
     limit,
     config.journal_rewrite_per_cycle
   ).si_then([=, &t](auto dirty_list) {
-    LOG_PREFIX(SegmentCleaner::rewrite_dirty);
-    if (dirty_list.empty()) {
-      INFOT("rewrite {} dirty extents", t, dirty_list.size());
-    } else {
-      DEBUGT("rewrite {} dirty extents", t, dirty_list.size());
-    }
     return seastar::do_with(
       std::move(dirty_list),
       [this, &t, limit](auto &dirty_list) {
@@ -455,22 +449,30 @@ SegmentCleaner::gc_trim_journal_ret SegmentCleaner::gc_trim_journal()
 
 SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
 {
-  journal_seq_t next = get_next_gc_target();
+  if (!next_reclaim_pos) {
+    journal_seq_t next = get_next_gc_target();
+    next_reclaim_pos = std::make_unique<paddr_t>(next.offset);
+  }
   LOG_PREFIX(SegmentCleaner::gc_reclaim_space);
-  INFO("cleaning {}", next);
-  auto &seg_paddr = next.offset.as_seg_paddr();
+  INFO("cleaning {}", *next_reclaim_pos);
+  auto &seg_paddr = next_reclaim_pos->as_seg_paddr();
   auto &sm_info = segments[seg_paddr.get_segment_id().device_id()];
+  paddr_t end_paddr;
   auto segment_id = seg_paddr.get_segment_id();
-  segment_id_t next_segment_id{
-    segment_id.device_id(),
-    segment_id.device_segment_id() + 1};
-  auto end_paddr = paddr_t::make_seg_paddr(next_segment_id, 0);
+  if (final_reclaim(*sm_info)) {
+    segment_id_t next_segment_id{
+      segment_id.device_id(),
+      segment_id.device_segment_id() + 1};
+    end_paddr = paddr_t::make_seg_paddr(next_segment_id, 0);
+  } else {
+    end_paddr = seg_paddr + config.reclaim_bytes_stride;
+  }
 
   auto backref_extents = cache.get_backref_extents_in_range(
-    next.offset, end_paddr);
-  auto backrefs = cache.get_backrefs_in_range(next.offset, end_paddr);
+    *next_reclaim_pos, end_paddr);
+  auto backrefs = cache.get_backrefs_in_range(*next_reclaim_pos, end_paddr);
   auto del_backrefs = cache.get_del_backrefs_in_range(
-    next.offset, end_paddr);
+    *next_reclaim_pos, end_paddr);
 
   double pavail_ratio = get_projected_available_ratio();
   seastar::lowres_system_clock::time_point start = seastar::lowres_system_clock::now();
@@ -481,7 +483,7 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
     std::move(del_backrefs),
     (size_t)0,
     (size_t)0,
-    [this, &sm_info, next, segment_id, pavail_ratio, start](
+    [this, &sm_info, segment_id, pavail_ratio, start](
       auto &backref_extents,
       auto &backrefs,
       auto &del_backrefs,
@@ -489,19 +491,19 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
       auto &runs) {
     return repeat_eagain(
       [this, &backref_extents, &backrefs, &reclaimed,
-      &del_backrefs, next, &sm_info, segment_id, &runs]() mutable {
+      &sm_info, &del_backrefs, segment_id, &runs]() mutable {
       reclaimed = 0;
       runs++;
       return ecb->with_transaction_intr(
 	Transaction::src_t::CLEANER_RECLAIM,
 	"reclaim_space",
 	[segment_id, this, &backref_extents, &backrefs,
-	&del_backrefs, &reclaimed, next, &sm_info](auto &t) {
+	&sm_info, &del_backrefs, &reclaimed](auto &t) {
 	return backref_manager.get_mappings(
-	  t, next.offset, sm_info->segment_size
+	  t, *next_reclaim_pos, config.reclaim_bytes_stride
 	).si_then(
 	  [segment_id, this, &backref_extents, &backrefs,
-	  &del_backrefs, &reclaimed, &t](auto pin_list) {
+	  &sm_info, &del_backrefs, &reclaimed, &t](auto pin_list) {
 	  LOG_PREFIX(SegmentCleaner::gc_reclaim_space);
 	  DEBUG("{} backrefs, {} del_backrefs, {} pins",
 	    backrefs.size(), del_backrefs.size(), pin_list.size());
@@ -599,19 +601,28 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
 		});
 	      });
 	    });
-	  }).si_then([this, &t, segment_id, seq] {
-	    t.mark_segment_to_release(segment_id);
+	  }).si_then([this, &t, segment_id, seq, &sm_info] {
+	    if (final_reclaim(*sm_info))
+	      t.mark_segment_to_release(segment_id);
 	    return ecb->submit_transaction_direct(
 	      t, std::make_optional<journal_seq_t>(std::move(seq)));
 	  });
 	});
       });
-    }).safe_then([&reclaimed, this, pavail_ratio, start, &runs] {
+    }).safe_then([&reclaimed, this, pavail_ratio, start, &runs, &sm_info] {
+      stats.reclaiming_bytes += reclaimed;
       LOG_PREFIX(SegmentCleaner::gc_reclaim_space);
       auto d = seastar::lowres_system_clock::now() - start;
       INFO("duration: {}, pavail_ratio before: {}, repeats: {}", d, pavail_ratio, runs);
-      stats.reclaim_rewrite_bytes += reclaimed;
-      stats.reclaimed_segments++;
+      if (final_reclaim(*sm_info)) {
+	stats.reclaim_rewrite_bytes += stats.reclaiming_bytes;
+	stats.reclaiming_bytes = 0;
+	stats.reclaimed_segments++;
+	next_reclaim_pos.reset();
+      } else {
+	next_reclaim_pos.reset(
+	  new paddr_t(*next_reclaim_pos + config.reclaim_bytes_stride));
+      }
     });
   });
 

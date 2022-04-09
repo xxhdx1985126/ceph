@@ -63,10 +63,10 @@ BtreeBackrefManager::get_mapping(
     ).si_then([offset, c](auto iter) -> get_mapping_ret {
       LOG_PREFIX(BtreeBackrefManager::get_mapping);
       if (iter.is_end() || iter.get_key() != offset) {
-	DEBUGT("{} doesn't exist", c.trans, offset);
+	TRACET("{} doesn't exist", c.trans, offset);
 	return crimson::ct_error::enoent::make();
       } else {
-	DEBUGT("{} got {}, {}",
+	TRACET("{} got {}, {}",
 	       c.trans, offset, iter.get_key(), iter.get_val());
 	auto e = iter.get_pin();
 	return get_mapping_ret(
@@ -135,7 +135,7 @@ BtreeBackrefManager::new_mapping(
   };
 
   LOG_PREFIX(BtreeBackrefManager::new_mapping);
-  DEBUGT("{}~{}, paddr={}", t, addr, len, key);
+  TRACET("{}~{}, paddr={}", t, addr, len, key);
   backref_map_val_t val{len, addr, type};
   auto c = get_context(t);
   //++stats.num_alloc_extents;
@@ -153,7 +153,7 @@ BtreeBackrefManager::new_mapping(
 	  LOG_PREFIX(BtreeBackrefManager::new_mapping);
 	  //++stats.num_alloc_extents_iter_nexts;
 	  if (pos.is_end()) {
-	    DEBUGT("{}~{}, paddr={}, state: end, insert at {}",
+	    TRACET("{}~{}, paddr={}, state: end, insert at {}",
                    t, addr, len, key,
                    //stats.num_alloc_extents_iter_nexts - lookup_attempts,
                    state.last_end);
@@ -162,7 +162,7 @@ BtreeBackrefManager::new_mapping(
 	      interruptible::ready_future_marker{},
 	      seastar::stop_iteration::yes);
 	  } else if (pos.get_key() >= (state.last_end.add_offset(len))) {
-	    DEBUGT("{}~{}, paddr={}, state: {}~{}, "
+	    TRACET("{}~{}, paddr={}, state: {}~{}, "
 		   "insert at {} -- {}",
                    t, addr, len, key,
                    pos.get_key(), pos.get_val().len,
@@ -324,7 +324,7 @@ BtreeBackrefManager::batch_insert(
 	  [this, &t](auto &backref) {
 	  LOG_PREFIX(BtreeBackrefManager::batch_insert);
 	  if (backref->laddr != L_ADDR_NULL) {
-	    DEBUGT("new mapping: {}~{} -> {}",
+	    TRACET("new mapping: {}~{} -> {}",
 	      t, backref->paddr, backref->len, backref->laddr);
 	    return new_mapping(
 	      t,
@@ -335,7 +335,7 @@ BtreeBackrefManager::batch_insert(
 	      return seastar::now();
 	    });
 	  } else {
-	    DEBUGT("remove mapping: {}", t, backref->paddr);
+	    TRACET("remove mapping: {}", t, backref->paddr);
 	    return remove_mapping(
 	      t,
 	      backref->paddr).si_then([](auto&&) {
@@ -397,7 +397,7 @@ BtreeBackrefManager::rewrite_extent(
   LOG_PREFIX(BtreeBackrefManager::rewrite_extent);
   auto updated = cache.update_extent_from_transaction(t, extent);
   if (!updated) {
-    DEBUGT("extent is already retired, skipping -- {}", t, *extent);
+    TRACET("extent is already retired, skipping -- {}", t, *extent);
     return rewrite_extent_iertr::now();
   }
   extent = updated;
@@ -427,7 +427,7 @@ BtreeBackrefManager::remove_mapping(
 		-> remove_mapping_ret {
 	if (iter.is_end() || iter.get_key() != addr) {
 	  LOG_PREFIX(BtreeBackrefManager::_update_mapping);
-	  DEBUGT("paddr={} doesn't exist", c.trans, addr);
+	  TRACET("paddr={} doesn't exist", c.trans, addr);
 	  return crimson::ct_error::enoent::make();
 	}
 
@@ -459,7 +459,7 @@ void BtreeBackrefManager::complete_transaction(
 
   for (auto &e: to_clear) {
     auto &pin = e->cast<BackrefNode>()->pin;
-    DEBUGT("retiring extent {} -- {}", t, pin, *e);
+    TRACET("retiring extent {} -- {}", t, pin, *e);
     pin_set.retire(pin);
   }
 
@@ -468,7 +468,7 @@ void BtreeBackrefManager::complete_transaction(
     [](auto &l, auto &r) -> bool { return get_depth(*l) > get_depth(*r); });
 
   for (auto &e : to_link) {
-    DEBUGT("linking extent -- {}", t, *e);
+    TRACET("linking extent -- {}", t, *e);
     pin_set.add_pin(e->cast<BackrefNode>()->pin);
   }
 
