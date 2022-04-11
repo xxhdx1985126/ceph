@@ -427,6 +427,10 @@ public:
 	  mark_transaction_conflicted(t, *ref);
 	  return get_extent_iertr::make_ready_future<TCachedExtentRef<T>>();
 	} else {
+	  /*if (is_backref_node(ref->get_type())) {
+	    SUBINFOT(seastore_cache, "trans src: {}, backref extent: {}",
+	      t, t.get_src(), *ref);
+	  }*/
 	  touch_extent(*ref);
 	  t.add_to_read_set(ref);
 	  return get_extent_iertr::make_ready_future<TCachedExtentRef<T>>(
@@ -517,6 +521,9 @@ private:
           mark_transaction_conflicted(t, *ret.get());
           return get_extent_ertr::make_ready_future<CachedExtentRef>();
         } else {
+	  /*if (is_backref_node(ret->get_type())) {
+	    SUBINFOT(seastore_cache, "backref extent: {}", t, *ret);
+	  }*/
 	  touch_extent(*ret);
           t.add_to_read_set(ret);
           return get_extent_ertr::make_ready_future<CachedExtentRef>(

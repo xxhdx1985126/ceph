@@ -1035,7 +1035,6 @@ record_t Cache::prepare_record(
     get_by_ext(efforts.retire_by_ext,
                i->get_type()).increment(i->get_length());
     retire_stat.increment(i->get_length());
-    DEBUGT("retired and remove extent -- {}", t, *i);
     commit_retire_extent(t, i);
     if ((is_backref_mapped_extent_node(i)
 	  || is_retired_placeholder(i->get_type()))
@@ -1254,7 +1253,7 @@ void Cache::complete_commit(
   SegmentCleaner *cleaner)
 {
   LOG_PREFIX(Cache::complete_commit);
-  SUBTRACET(seastore_t, "final_block_start={}, seq={}",
+  SUBDEBUGT(seastore_t, "final_block_start={}, seq={}",
             t, final_block_start, seq);
 
   may_roll_backref_buffer(final_block_start);

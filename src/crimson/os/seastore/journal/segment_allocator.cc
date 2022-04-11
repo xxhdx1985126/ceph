@@ -751,8 +751,14 @@ void RecordSubmitter::flush_current_batch()
   account_submission(num, sizes);
   std::ignore = segment_allocator.write(to_write
   ).safe_then([this, p_batch, FNAME, num, sizes=sizes](auto write_result) {
-    TRACE("{} {} records, {}, write done with {}",
-          get_name(), num, sizes, write_result);
+    if (sizes.get_encoded_length() > 33554432) {
+      
+      INFO("{} {} records, {}, write done with {}",
+            get_name(), num, sizes, write_result);
+    } else {
+      TRACE("{} {} records, {}, write done with {}",
+            get_name(), num, sizes, write_result);
+    }
     finish_submit_batch(p_batch, write_result);
   }).handle_error(
     crimson::ct_error::all_same_way([this, p_batch, FNAME, num, sizes=sizes](auto e) {
