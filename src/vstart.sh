@@ -755,6 +755,10 @@ EOF
         bdev ioring = true"
         fi
     fi
+    if [ "$objectstore" == "seastore" ]; then
+        SEASTORE_OPTS="
+            seastore_cache_lru_size = 107374182400"
+    fi
     wconf <<EOF
 [client]
         keyring = $keyring_fn
@@ -806,6 +810,7 @@ $DAEMONOPTS
         bluestore fsck on mount = true
         bluestore block create = true
 $BLUESTORE_OPTS
+$SEASTORE_OPTS
 
         ; kstore
         kstore fsck on mount = true
