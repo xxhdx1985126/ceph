@@ -1072,8 +1072,8 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
 	      DEBUGT("{} backrefs, {} del_backrefs, {} pins", t,
 		backrefs.size(), del_backrefs.size(), pin_list.size());
 	      for (auto &br : backrefs) {
-		if (seq == JOURNAL_SEQ_NULL
-		    || (br.seq != JOURNAL_SEQ_NULL && br.seq > seq))
+		ceph_assert(br.seq != JOURNAL_SEQ_NULL);
+		if (seq == JOURNAL_SEQ_NULL || br.seq > seq)
 		  seq = br.seq;
 	      }
 	      for (auto &pin : pin_list) {
@@ -1082,7 +1082,7 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
 		  pin->get_val(),
 		  pin->get_length(),
 		  pin->get_type(),
-		  journal_seq_t());
+		  JOURNAL_SEQ_NULL);
 	      }
 	      accum_stats.accumulated_backrefs_to_be_rewritten += backrefs.size();
 	      for (auto &del_backref : del_backrefs) {
@@ -1091,8 +1091,8 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
 		auto it = backrefs.find(del_backref.paddr);
 		if (it != backrefs.end())
 		  backrefs.erase(it);
-		if (seq == JOURNAL_SEQ_NULL
-		    || (del_backref.seq != JOURNAL_SEQ_NULL && del_backref.seq > seq))
+		ceph_assert(del_backref.seq != JOURNAL_SEQ_NULL);
+		if (seq == JOURNAL_SEQ_NULL || del_backref.seq > seq)
 		  seq = del_backref.seq;
 	      }
 	      auto backrefs_calculated = std::chrono::steady_clock::now();
@@ -1155,6 +1155,11 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
 		}).si_then([this, &t, &seq, &accum_stats](auto extents_rewritten) {
 		  if (reclaim_state->is_complete())
 		    t.mark_segment_to_release(reclaim_state->get_segment_id());
+		  if (t.get_num_fresh_backref() * BACKREF_NODE_SIZE > 16777216) {
+		    LOG_PREFIX(SegmentCleaner::gc_reclaim_space);
+		    ERRORT("backref bytes exceeded 16MB: {}",
+		      t, t.get_num_fresh_backref() * BACKREF_NODE_SIZE);
+		  }
 		  return ecb->submit_transaction_direct(
 		    t, std::make_optional<journal_seq_t>(std::move(seq))
 		  ).si_then([&accum_stats, extents_rewritten=std::move(extents_rewritten)] {

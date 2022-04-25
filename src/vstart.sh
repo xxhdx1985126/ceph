@@ -766,7 +766,7 @@ EOF
     fi
     if [ "$objectstore" == "seastore" ]; then
         SEASTORE_OPTS="
-            seastore_cache_lru_size = 107374182400"
+            seastore_cache_lru_size = 1073741824"
     fi
     wconf <<EOF
 [client]
