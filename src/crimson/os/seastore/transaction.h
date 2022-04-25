@@ -18,6 +18,7 @@ namespace crimson::os::seastore {
 
 class SeaStore;
 class Transaction;
+class SegmentCleaner;
 
 struct io_stat_t {
   uint64_t num = 0;
@@ -484,6 +485,7 @@ private:
   on_destruct_func_t on_destruct;
 
   const src_t src;
+  friend class SegmentCleaner;
 };
 using TransactionRef = Transaction::Ref;
 
