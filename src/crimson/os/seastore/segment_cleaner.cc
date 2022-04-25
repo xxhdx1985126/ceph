@@ -521,6 +521,97 @@ void SegmentCleaner::register_metrics()
                    [this] { return get_reclaim_ratio(); },
                    sm::description("ratio of reclaimable space to unavailable space")),
 
+    sm::make_counter("accumulated_blocked_ios", stats.accumulated_blocked_ios,
+		     sm::description("accumulated total number of ios that were blocked by gc")),
+    sm::make_counter("reclaim_rewrite_bytes", stats.sr_stats.reclaim_rewrite_bytes,
+		     sm::description("rewritten bytes due to reclaim")),
+    sm::make_counter("reclaiming_bytes", stats.sr_stats.reclaiming_bytes,
+		     sm::description("bytes being reclaimed")),
+    sm::make_counter("ios_blocking", stats.ios_blocking,
+		     sm::description("IOs that are blocking on space usage")),
+    sm::make_counter("projected_used_bytes", stats.projected_used_bytes,
+		     sm::description("the size of the space going to be occupied by new extents")),
+    sm::make_gauge("accumulated_get_backref_mappings_time",
+		   stats.sr_stats.accum_stats.accumulated_get_backref_mappings_time,
+		   sm::description("accumulated time spent getting backref"
+				   " mappings for space reclamation")),
+    sm::make_gauge("accumulated_get_backref_extents_time",
+		   stats.sr_stats.accum_stats.accumulated_get_backref_extents_time,
+		   sm::description("accumulated time spent getting backref extents"
+				   " during space reclamation")),
+    sm::make_gauge("accumulated_rewrite_extents_time",
+		   stats.sr_stats.accum_stats.accumulated_rewrite_extents_time,
+		   sm::description("accumulated time spent rewriting extents"
+				   " during space reclamation")),
+    sm::make_gauge("accumulated_backref_batch_insert_time",
+		   stats.sr_stats.accum_stats.accumulated_backref_batch_insert_time,
+		   sm::description("accumulated time spent inserting backrefs to"
+				   " the backref tree during space reclamation")),
+    sm::make_gauge("accumulated_get_live_extents_time",
+		   stats.sr_stats.accum_stats.accumulated_get_live_extents_time,
+		   sm::description("accumulated time spent getting live extents"
+				   " during space reclamation")),
+    sm::make_gauge("accumulated_backrefs_calc_time",
+		   stats.sr_stats.accum_stats.accumulated_backrefs_calc_time,
+		   sm::description("accumulated time spent calculating backrefs")),
+    sm::make_gauge("accumulated_transaction_submit_time",
+		   stats.sr_stats.accum_stats.accumulated_transaction_submit_time,
+		   sm::description("accumulated time spent committing space reclamation trans")),
+    sm::make_gauge("accumulated_reclaim_space_duration",
+		   stats.sr_stats.accum_stats.accumulated_reclaim_space_duration,
+		   sm::description("accumulated time spent for space reclamation")),
+    sm::make_gauge("accumulated_reclaim_space_repeats",
+		   stats.sr_stats.accum_stats.accumulated_reclaim_space_repeats,
+		   sm::description("accumulated repeats of space reclamation runs")),
+    sm::make_gauge("accumulated_time_wasted_on_repeat",
+		   stats.sr_stats.accum_stats.accumulated_time_wasted_on_repeat,
+		   sm::description("accumulated time wasted on invalidated space reclamation runs")),
+    sm::make_gauge("accumulated_gc_backref_trimming_duration",
+		   stats.accumulated_gc_backref_trimming_duration,
+		   sm::description("accumulated time spent trimming backrefs for gc, journal trimming not included")),
+    sm::make_gauge("accumulated_gc_duration",
+		   stats.accumulated_gc_duration,
+		   sm::description("accumulated time gc takes")),
+    sm::make_gauge("accumulated_rewrite_dirty_trans_commit_time",
+		   stats.jt_stats.accum_stats.accumulated_rewrite_dirty_trans_commit_time,
+		   sm::description("accumulated rewrite dirty transaction commit time")),
+    sm::make_gauge("accumulated_prepare_rewrite_dirty_time",
+		   stats.jt_stats.accum_stats.accumulated_prepare_rewrite_dirty_time,
+		   sm::description("accumulated preparing rewrite dirty trans time")),
+    sm::make_gauge("accumulated_io_blocked_rewrite_dirty_trans_commit_time",
+		   stats.jt_stats.accum_stats.accumulated_io_blocked_rewrite_dirty_trans_commit_time,
+		   sm::description("accumulated rewrite dirty transaction commit time")),
+    sm::make_gauge("accumulated_io_blocked_prepare_rewrite_dirty_time",
+		   stats.jt_stats.accum_stats.accumulated_io_blocked_prepare_rewrite_dirty_time,
+		   sm::description("accumulated preparing rewrite dirty trans time")),
+    sm::make_gauge("accumulated_io_blocked_committed_extents",
+		   stats.jt_stats.accum_stats.accumulated_io_blocked_committed_extents,
+		   sm::description("accumulated committed extents of journal trim trans")),
+    sm::make_gauge("gc_backref_trimming_cycles",
+		   stats.gc_backref_trimming_cycles,
+		   sm::description("cycles of gc_trim_backref runs")),
+    sm::make_gauge("accumulated_io_block_time",
+		   stats.accumulated_io_block_time,
+		   sm::description("accumulated time during which io is blocked")),
+    sm::make_counter("reclaim_space_cycles", stats.sr_stats.reclaim_space_cycles,
+		     sm::description("cycles for space reclamation")),
+    sm::make_counter("accumulated_trim_backrefs_time",
+		     stats.jt_stats.accum_stats.accumulated_trim_backrefs_time,
+		     sm::description("accumulated time spent trimming backrefs")),
+    sm::make_counter("accumulated_rewrite_dirty_time",
+		     stats.jt_stats.accum_stats.accumulated_rewrite_dirty_time,
+		     sm::description("accumulated time spent rewriting dirty extents")),
+    sm::make_counter("accumulated_backrefs_to_be_rewritten",
+		     stats.sr_stats.accum_stats.accumulated_backrefs_to_be_rewritten,
+		     sm::description("accumulated backref entries corresponding to rewritten extents")),
+    sm::make_counter("journal_trim_cycles", stats.jt_stats.cycles,
+		     sm::description("cycls of journal trims")),
+    sm::make_counter("journal_trim_io_blocked_cycles", stats.jt_stats.cycles_io_blocked,
+		     sm::description("cycls of journal trims with io blocked")),
+    sm::make_counter("journal_trim_repeats", stats.jt_stats.repeats,
+		     sm::description("repeated runs of journal trims")),
+    sm::make_counter("journal_trim_duration", stats.jt_stats.duration,
+		     sm::description("accumulated duration of journal trims")),
     sm::make_histogram("segment_utilization_distribution",
 		       [this]() -> seastar::metrics::histogram& {
 		         return stats.segment_util;
@@ -700,7 +791,11 @@ SegmentCleaner::gc_cycle_ret SegmentCleaner::GCProcess::run()
 	if (is_stopping()) {
 	  return seastar::now();
 	} else {
-	  return cleaner.do_gc_cycle();
+	  auto start = std::chrono::steady_clock::now();
+	  return cleaner.do_gc_cycle().then([this, start=std::move(start)] {
+	    auto d = std::chrono::steady_clock::now() - start;
+	    cleaner.stats.accumulated_gc_duration += d.count();
+	  });
 	}
       });
     });
@@ -716,8 +811,12 @@ SegmentCleaner::gc_cycle_ret SegmentCleaner::do_gc_cycle()
       }
     );
   } else if (gc_should_trim_backref()) {
+    auto start = std::chrono::steady_clock::now();
     return gc_trim_backref(get_backref_tail()
-    ).safe_then([](auto) {
+    ).safe_then([this, start=std::move(start)](auto) {
+      auto interval = std::chrono::steady_clock::now() - start;
+      stats.accumulated_gc_backref_trimming_duration += interval.count();
+      stats.gc_backref_trimming_cycles ++;
       return seastar::now();
     }).handle_error(
       crimson::ct_error::assert_all{
@@ -774,19 +873,59 @@ SegmentCleaner::gc_trim_backref(journal_seq_t limit) {
 
 SegmentCleaner::gc_trim_journal_ret SegmentCleaner::gc_trim_journal()
 {
-  return gc_trim_backref(get_dirty_tail()
-  ).safe_then([this](auto seq) {
-    return repeat_eagain([this, seq=std::move(seq)]() mutable {
-      return ecb->with_transaction_intr(
-	Transaction::src_t::CLEANER_TRIM,
-	"trim_journal",
-	[this, seq=std::move(seq)](auto& t)
-      {
-	return rewrite_dirty(t, seq
-	).si_then([this, &t] {
-	  return ecb->submit_transaction_direct(t);
+  return seastar::do_with(
+    (size_t)0,
+    std::chrono::steady_clock::now(),
+    journal_trim_accumulated_stats_t(),
+    should_block_on_gc(),
+    [this](auto &repeats, auto &start, auto &accum_stats, auto &blocked) {
+    return gc_trim_backref(get_dirty_tail()
+    ).safe_then([this, &repeats, &start, &accum_stats, &blocked](auto seq) {
+      auto backrefs_trimmed = std::chrono::steady_clock::now();
+      auto d = backrefs_trimmed - start;
+      accum_stats.accumulated_trim_backrefs_time += d.count();
+      return repeat_eagain([this, seq=std::move(seq), &repeats, &accum_stats, &blocked,
+			    backrefs_trimmed=std::move(backrefs_trimmed)]() mutable {
+	auto repeated_start = std::chrono::steady_clock::now();
+	repeats++;
+	return ecb->with_transaction_intr(
+	  Transaction::src_t::CLEANER_TRIM,
+	  "trim_journal",
+	  [this, seq=std::move(seq), &accum_stats, &blocked,
+	  repeated_start=std::move(repeated_start)](auto& t) {
+	  return rewrite_dirty(t, seq
+	  ).si_then([this, &t, repeated_start, &accum_stats, &blocked] {
+	    auto prepare_rewrite_dirty_time = std::chrono::steady_clock::now();
+	    auto d = prepare_rewrite_dirty_time - repeated_start;
+	    accum_stats.accumulated_prepare_rewrite_dirty_time += d.count();
+	    if (blocked)
+	      accum_stats.accumulated_io_blocked_prepare_rewrite_dirty_time += d.count();
+	    return ecb->submit_transaction_direct(t
+	    ).si_then([&accum_stats, &blocked, &t,
+		      prepare_rewrite_dirty_time=std::move(prepare_rewrite_dirty_time)] {
+	      auto d = std::chrono::steady_clock::now() - prepare_rewrite_dirty_time;
+	      accum_stats.accumulated_rewrite_dirty_trans_commit_time += d.count();
+	      if (blocked) {
+		accum_stats.accumulated_io_blocked_rewrite_dirty_trans_commit_time +=
+		  d.count();
+		accum_stats.accumulated_io_blocked_committed_extents +=
+		  t.inline_block_list.size() + t.ool_block_list.size();
+	      }
+	    });
+	  }).si_then([&accum_stats, repeated_start=std::move(repeated_start)] {
+	    auto d = std::chrono::steady_clock::now() - repeated_start;
+	    accum_stats.accumulated_rewrite_dirty_time += d.count();
+	  });
 	});
       });
+    }).safe_then([&start, this, &repeats, &accum_stats, &blocked] {
+      stats.jt_stats.repeats += repeats;
+      stats.jt_stats.cycles++;
+      if (blocked)
+	stats.jt_stats.cycles_io_blocked++;
+      auto d = std::chrono::steady_clock::now() - start;
+      stats.jt_stats.duration += d.count();
+      stats.jt_stats.accum_stats.add(accum_stats);
     });
   });
 }
@@ -875,25 +1014,42 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
         reclaim_state->start_pos,
         reclaim_state->end_pos);
   double pavail_ratio = get_projected_available_ratio();
-  seastar::lowres_system_clock::time_point start = seastar::lowres_system_clock::now();
 
   return seastar::do_with(
     (size_t)0,
     (size_t)0,
-    [this, pavail_ratio, start](
+    space_reclaim_accumulated_stats_t(),
+    std::chrono::steady_clock::now(),
+    std::chrono::steady_clock::time_point(),
+    [this, pavail_ratio](
       auto &reclaimed,
-      auto &runs) {
+      auto &runs,
+      auto &accum_stats,
+      auto &start,
+      auto &repeated_start) {
     return retrieve_backref_mappings(
       reclaim_state->start_pos,
       reclaim_state->end_pos
-    ).safe_then([this, &reclaimed, &runs](auto pin_list) {
+    ).safe_then([this, &reclaimed, &runs, &start,
+		&accum_stats, &repeated_start](auto pin_list) {
+      auto got_mappings = std::chrono::steady_clock::now();
+      auto d = got_mappings - start;
+      accum_stats.accumulated_get_backref_mappings_time += d.count();
       return seastar::do_with(
 	std::move(pin_list),
-	[this, &reclaimed, &runs](auto &pin_list) {
+	[this, &reclaimed, &runs, &accum_stats, &start,
+	&repeated_start](auto &pin_list) {
 	return repeat_eagain(
-	  [this, &reclaimed, &runs, &pin_list]() mutable {
+	  [this, &reclaimed, &runs, &repeated_start,
+	  &start, &accum_stats, &pin_list]() mutable {
 	  reclaimed = 0;
 	  runs++;
+	  auto new_repeated_start = std::chrono::steady_clock::now();
+	  if (repeated_start.time_since_epoch().count() != 0) {
+	    auto d = new_repeated_start - repeated_start;
+	    accum_stats.accumulated_time_wasted_on_repeat += d.count();
+	  }
+	  repeated_start = std::move(new_repeated_start);
 	  return seastar::do_with(
 	    backref_manager.get_cached_backref_extents_in_range(
 	      reclaim_state->start_pos, reclaim_state->end_pos),
@@ -902,7 +1058,7 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
 	    backref_manager.get_cached_backref_removals_in_range(
 	      reclaim_state->start_pos, reclaim_state->end_pos),
 	    JOURNAL_SEQ_NULL,
-	    [this, &reclaimed, &pin_list](
+	    [this, &reclaimed, &pin_list, &accum_stats, &repeated_start](
 	      auto &backref_extents,
 	      auto &backrefs,
 	      auto &del_backrefs,
@@ -911,7 +1067,7 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
 	      Transaction::src_t::CLEANER_RECLAIM,
 	      "reclaim_space",
 	      [this, &backref_extents, &backrefs, &seq,
-	      &del_backrefs, &reclaimed, &pin_list](auto &t) {
+	      &del_backrefs, &reclaimed, &pin_list, &accum_stats, &repeated_start](auto &t) {
 	      LOG_PREFIX(SegmentCleaner::gc_reclaim_space);
 	      DEBUGT("{} backrefs, {} del_backrefs, {} pins", t,
 		backrefs.size(), del_backrefs.size(), pin_list.size());
@@ -928,6 +1084,7 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
 		  pin->get_type(),
 		  journal_seq_t());
 	      }
+	      accum_stats.accumulated_backrefs_to_be_rewritten += backrefs.size();
 	      for (auto &del_backref : del_backrefs) {
 		DEBUGT("del_backref {}~{} {} {}", t,
 		  del_backref.paddr, del_backref.len, del_backref.type, del_backref.seq);
@@ -938,50 +1095,82 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
 		    || (del_backref.seq != JOURNAL_SEQ_NULL && del_backref.seq > seq))
 		  seq = del_backref.seq;
 	      }
+	      auto backrefs_calculated = std::chrono::steady_clock::now();
+	      auto d = backrefs_calculated - repeated_start;
+	      accum_stats.accumulated_backrefs_calc_time += d.count();
 	      return seastar::do_with(
 		std::vector<CachedExtentRef>(),
-		[this, &backref_extents, &backrefs, &reclaimed, &t, &seq]
+		[this, &backref_extents, &backrefs, &reclaimed, &t, &seq,
+		&accum_stats, backrefs_calculated=std::move(backrefs_calculated)]
 		(auto &extents) {
 		return backref_manager.retrieve_backref_extents(
 		  t, std::move(backref_extents), extents
-		).si_then([this, &extents, &t, &backrefs] {
+		).si_then([this, &extents, &t, &backrefs, &accum_stats,
+			  backrefs_calculated=std::move(backrefs_calculated), &seq] {
+		  auto got_backref_extents = std::chrono::steady_clock::now();
+		  auto d = got_backref_extents - backrefs_calculated;
+		  accum_stats.accumulated_get_backref_extents_time += d.count();
 		  return _retrieve_live_extents(
-		    t, std::move(backrefs), extents);
-		}).si_then([this, &seq, &t](auto nseq) {
-		  if (nseq != JOURNAL_SEQ_NULL &&
-		      (nseq > seq || seq == JOURNAL_SEQ_NULL))
-		    seq = nseq;
-		  auto fut = BackrefManager::merge_cached_backrefs_iertr::now();
-		  if (seq != JOURNAL_SEQ_NULL) {
-		    fut = backref_manager.merge_cached_backrefs(
-		      t, seq, std::numeric_limits<uint64_t>::max()
-		    ).si_then([](auto) {
-		      return BackrefManager::merge_cached_backrefs_iertr::now();
-		    });
-		  }
-		  return fut;
-		}).si_then([&extents, this, &t, &reclaimed] {
+		    t, std::move(backrefs), extents
+		  ).si_then([this, &seq, &t, &accum_stats,
+			    got_backref_extents=std::move(got_backref_extents)](auto nseq) {
+		    auto got_live_extents = std::chrono::steady_clock::now();
+		    auto d = got_live_extents - got_backref_extents;
+		    accum_stats.accumulated_get_live_extents_time += d.count();
+		    if (nseq != JOURNAL_SEQ_NULL &&
+			(nseq > seq || seq == JOURNAL_SEQ_NULL))
+		      seq = nseq;
+		    auto fut = BackrefManager::merge_cached_backrefs_iertr::make_ready_future<
+		      std::chrono::steady_clock::time_point>(got_live_extents);
+		    if (seq != JOURNAL_SEQ_NULL) {
+		      fut = backref_manager.merge_cached_backrefs(
+			t, seq, std::numeric_limits<uint64_t>::max()
+		      ).si_then([&accum_stats, got_live_extents=std::move(got_live_extents)](auto) {
+			auto backref_inserted = std::chrono::steady_clock::now();
+			auto d = backref_inserted - got_live_extents;
+			accum_stats.accumulated_backref_batch_insert_time += d.count();
+			return BackrefManager::merge_cached_backrefs_iertr::make_ready_future<
+			  std::chrono::steady_clock::time_point>(
+			    std::move(backref_inserted));
+		      });
+		    }
+		    return fut;
+		  });
+		}).si_then([&extents, this, &t, &reclaimed, &accum_stats](
+			    auto backref_inserted) {
 		  return trans_intr::do_for_each(
 		    extents,
 		    [this, &t, &reclaimed](auto &ext) {
 		    reclaimed += ext->get_length();
 		    return ecb->rewrite_extent(t, ext);
+		  }).si_then([&accum_stats,
+			      backref_inserted=std::move(backref_inserted)] {
+		    auto extents_rewritten = std::chrono::steady_clock::now();
+		    auto d = extents_rewritten - backref_inserted;
+		    accum_stats.accumulated_rewrite_extents_time += d.count();
+		    return ExtentCallbackInterface::rewrite_extent_iertr::make_ready_future<
+		      std::chrono::steady_clock::time_point>(
+			std::move(extents_rewritten));
+		  });
+		}).si_then([this, &t, &seq, &accum_stats](auto extents_rewritten) {
+		  if (reclaim_state->is_complete())
+		    t.mark_segment_to_release(reclaim_state->get_segment_id());
+		  return ecb->submit_transaction_direct(
+		    t, std::make_optional<journal_seq_t>(std::move(seq))
+		  ).si_then([&accum_stats, extents_rewritten=std::move(extents_rewritten)] {
+		    auto d = std::chrono::steady_clock::now() - extents_rewritten;
+		    accum_stats.accumulated_transaction_submit_time += d.count();
 		  });
 		});
-	      }).si_then([this, &t, &seq] {
-		if (reclaim_state->is_complete()) {
-		  t.mark_segment_to_release(reclaim_state->get_segment_id());
-		}
-		return ecb->submit_transaction_direct(
-		  t, std::make_optional<journal_seq_t>(std::move(seq)));
 	      });
 	    });
 	  });
 	});
       });
     }).safe_then(
-      [&reclaimed, this, pavail_ratio, start, &runs] {
+      [&reclaimed, this, pavail_ratio, start, &runs, &accum_stats] {
       LOG_PREFIX(SegmentCleaner::gc_reclaim_space);
+      stats.sr_stats.reclaim_space_cycles++;
 #ifndef NDEBUG
       auto ndel_backrefs =
 	backref_manager.get_cached_backref_removals_in_range(
@@ -994,16 +1183,18 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
 	ceph_abort("impossible");
       }
 #endif
-      stats.reclaiming_bytes += reclaimed;
-      auto d = seastar::lowres_system_clock::now() - start;
-      DEBUG("duration: {}, pavail_ratio before: {}, repeats: {}", d, pavail_ratio, runs);
+      stats.sr_stats.reclaiming_bytes += reclaimed;
+      auto d = std::chrono::steady_clock::now() - start;
+      accum_stats.accumulated_reclaim_space_duration += d.count();
+      accum_stats.accumulated_reclaim_space_repeats += runs;
+      stats.sr_stats.accum_stats.add(accum_stats);
       if (reclaim_state->is_complete()) {
 	INFO("reclaim {} finish, alive/total={}",
              reclaim_state->get_segment_id(),
              stats.reclaiming_bytes/(double)segments.get_segment_size());
-	stats.reclaimed_bytes += stats.reclaiming_bytes;
 	stats.reclaimed_segment_bytes += segments.get_segment_size();
-	stats.reclaiming_bytes = 0;
+	stats.sr_stats.reclaim_rewrite_bytes += stats.sr_stats.reclaiming_bytes;
+	stats.sr_stats.reclaiming_bytes = 0;
 	reclaim_state.reset();
       }
     });
@@ -1406,24 +1597,35 @@ SegmentCleaner::reserve_projected_usage(std::size_t projected_usage)
     ++stats.io_blocked_count;
     stats.io_blocked_sum += stats.io_blocking_num;
   }
-  return seastar::do_until(
-    [this] {
-      log_gc_state("await_hard_limits");
-      return !should_block_on_gc();
-    },
-    [this] {
-      blocked_io_wake = seastar::promise<>();
-      return blocked_io_wake->get_future();
-    }
-  ).then([this, projected_usage, is_blocked] {
-    ceph_assert(!blocked_io_wake);
-    stats.projected_used_bytes += projected_usage;
-    ++stats.projected_count;
-    stats.projected_used_bytes_sum += stats.projected_used_bytes;
-    if (is_blocked) {
-      assert(stats.io_blocking_num > 0);
-      --stats.io_blocking_num;
-    }
+  return seastar::do_with(
+    std::chrono::steady_clock::time_point(),
+    [this, projected_usage, is_blocked](auto &maybe_block_begin) {
+    return seastar::do_until(
+      [this, &maybe_block_begin] {
+	log_gc_state("await_hard_limits");
+	bool block = should_block_on_gc();
+	if (block && !maybe_block_begin.time_since_epoch().count()) {
+	  maybe_block_begin = std::chrono::steady_clock::now();
+	}
+	return !block;
+      },
+      [this] {
+	blocked_io_wake = seastar::promise<>();
+	return blocked_io_wake->get_future();
+      }
+    ).then([this, projected_usage, is_blocked, &maybe_block_begin] {
+      ceph_assert(!blocked_io_wake);
+      stats.projected_used_bytes += projected_usage;
+      ++stats.projected_count;
+      stats.projected_used_bytes_sum += stats.projected_used_bytes;
+      if (is_blocked) {
+	ceph_assert(maybe_block_begin.time_since_epoch().count());
+	auto d = std::chrono::steady_clock::now() - maybe_block_begin;
+	stats.accumulated_io_block_time += d.count();
+	assert(stats.io_blocking_num > 0);
+	--stats.io_blocking_num;
+      }
+    });
   });
 }
 

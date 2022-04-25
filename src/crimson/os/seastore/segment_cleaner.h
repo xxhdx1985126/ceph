@@ -645,6 +645,87 @@ private:
   segments_info_t segments;
   bool init_complete = false;
 
+  struct space_reclaim_accumulated_stats_t{
+    uint64_t accumulated_get_backref_mappings_time = 0;
+    uint64_t accumulated_get_backref_extents_time = 0;
+    uint64_t accumulated_rewrite_extents_time = 0;
+    uint64_t accumulated_backref_batch_insert_time = 0;
+    uint64_t accumulated_get_live_extents_time = 0;
+    uint64_t accumulated_reclaim_space_duration = 0;
+    uint64_t accumulated_reclaim_space_repeats = 0;
+    uint64_t accumulated_backrefs_to_be_rewritten = 0;
+    uint64_t accumulated_backrefs_calc_time = 0;
+    uint64_t accumulated_transaction_submit_time = 0;
+    uint64_t accumulated_time_wasted_on_repeat = 0;
+
+    void add(struct space_reclaim_accumulated_stats_t& st) {
+      accumulated_get_backref_mappings_time +=
+	st.accumulated_get_backref_mappings_time;
+      accumulated_get_backref_extents_time +=
+	st.accumulated_get_backref_extents_time;
+      accumulated_rewrite_extents_time +=
+	st.accumulated_rewrite_extents_time;
+      accumulated_backref_batch_insert_time +=
+	st.accumulated_backref_batch_insert_time;
+      accumulated_get_live_extents_time +=
+	st.accumulated_get_live_extents_time;
+      accumulated_reclaim_space_duration +=
+	st.accumulated_reclaim_space_duration;
+      accumulated_reclaim_space_repeats +=
+	st.accumulated_reclaim_space_repeats;
+      accumulated_backrefs_to_be_rewritten +=
+	st.accumulated_backrefs_to_be_rewritten;
+      accumulated_backrefs_calc_time +=
+	st.accumulated_backrefs_calc_time;
+      accumulated_transaction_submit_time +=
+	st.accumulated_transaction_submit_time;
+      accumulated_time_wasted_on_repeat +=
+	st.accumulated_time_wasted_on_repeat;
+    }
+  };
+
+  struct space_reclaim_stats_t {
+    uint64_t reclaim_rewrite_bytes = 0;
+    uint64_t reclaiming_bytes = 0;
+    uint64_t reclaim_space_cycles = 0;
+    space_reclaim_accumulated_stats_t accum_stats;
+  };
+
+  struct journal_trim_accumulated_stats_t {
+    uint64_t accumulated_trim_backrefs_time = 0;
+    uint64_t accumulated_rewrite_dirty_time = 0;
+    uint64_t accumulated_rewrite_dirty_trans_commit_time = 0;
+    uint64_t accumulated_prepare_rewrite_dirty_time = 0;
+    uint64_t accumulated_io_blocked_rewrite_dirty_trans_commit_time = 0;
+    uint64_t accumulated_io_blocked_prepare_rewrite_dirty_time = 0;
+    uint64_t accumulated_io_blocked_committed_extents = 0;
+    
+    void add(journal_trim_accumulated_stats_t &st) {
+      accumulated_trim_backrefs_time +=
+	st.accumulated_trim_backrefs_time;
+      accumulated_rewrite_dirty_time +=
+	st.accumulated_rewrite_dirty_time;
+      accumulated_rewrite_dirty_trans_commit_time +=
+	st.accumulated_rewrite_dirty_trans_commit_time;
+      accumulated_prepare_rewrite_dirty_time +=
+	st.accumulated_prepare_rewrite_dirty_time;
+      accumulated_io_blocked_rewrite_dirty_trans_commit_time +=
+	st.accumulated_io_blocked_rewrite_dirty_trans_commit_time;
+      accumulated_io_blocked_prepare_rewrite_dirty_time +=
+	st.accumulated_io_blocked_prepare_rewrite_dirty_time;
+      accumulated_io_blocked_committed_extents +=
+	st.accumulated_io_blocked_committed_extents;
+    }
+  };
+
+  struct journal_trim_stats_t {
+    uint64_t repeats = 0;
+    uint64_t cycles = 0;
+    uint64_t cycles_io_blocked = 0;
+    uint64_t duration = 0;
+    journal_trim_accumulated_stats_t accum_stats;
+  };
+
   struct {
     /**
      * used_bytes
@@ -679,6 +760,14 @@ private:
     uint64_t reclaimed_bytes = 0;
     uint64_t reclaimed_segment_bytes = 0;
 
+    uint64_t accumulated_blocked_ios = 0;
+    int64_t ios_blocking = 0;
+    space_reclaim_stats_t sr_stats;
+    journal_trim_stats_t jt_stats;
+    uint64_t accumulated_gc_backref_trimming_duration = 0;
+    uint64_t gc_backref_trimming_cycles = 0;
+    uint64_t accumulated_gc_duration = 0;
+    uint64_t accumulated_io_block_time = 0;
     seastar::metrics::histogram segment_util;
   } stats;
   seastar::metrics::metric_group metrics;
