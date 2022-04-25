@@ -565,7 +565,7 @@ private:
   segments_info_t segments;
   bool init_complete = false;
 
-  struct accumulated_stats_t{
+  struct space_reclaim_accumulated_stats_t{
     uint64_t accumulated_get_backref_mappings_time = 0;
     uint64_t accumulated_get_backref_extents_time = 0;
     uint64_t accumulated_rewrite_extents_time = 0;
@@ -574,7 +574,7 @@ private:
     uint64_t accumulated_reclaim_space_duration = 0;
     uint64_t accumulated_reclaim_space_repeats = 0;
 
-    void add(struct accumulated_stats_t& st) {
+    void add(struct space_reclaim_accumulated_stats_t& st) {
       accumulated_get_backref_mappings_time +=
 	st.accumulated_get_backref_mappings_time;
       accumulated_get_backref_extents_time +=
@@ -596,7 +596,13 @@ private:
     uint64_t reclaim_rewrite_bytes = 0;
     uint64_t reclaiming_bytes = 0;
     uint64_t reclaim_space_cycles = 0;
-    accumulated_stats_t accum_stats;
+    space_reclaim_accumulated_stats_t accum_stats;
+  };
+
+  struct journal_trim_stats_t {
+    uint64_t repeats = 0;
+    uint64_t cycles = 0;
+    uint64_t duration = 0;
   };
 
   struct {
@@ -612,6 +618,7 @@ private:
     uint64_t accumulated_blocked_ios = 0;
     int64_t ios_blocking = 0;
     space_reclaim_stats_t sr_stats;
+    journal_trim_stats_t jt_stats;
     seastar::metrics::histogram segment_util;
   } stats;
   seastar::metrics::metric_group metrics;

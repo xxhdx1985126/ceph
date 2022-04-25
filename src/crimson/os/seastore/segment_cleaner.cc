@@ -470,6 +470,12 @@ void SegmentCleaner::register_metrics()
 		   sm::description("accumulated repeats of space reclamation runs")),
     sm::make_counter("reclaim_space_cycles", stats.sr_stats.reclaim_space_cycles,
 		     sm::description("cycles for space reclamation")),
+    sm::make_counter("journal_trim_cycles", stats.jt_stats.cycles,
+		     sm::description("cycls of journal trims")),
+    sm::make_counter("journal_trim_repeats", stats.jt_stats.repeats,
+		     sm::description("repeated runs of journal trims")),
+    sm::make_counter("journal_trim_duration", stats.jt_stats.duration,
+		     sm::description("accumulated duration of journal trims")),
     sm::make_derive("ios_blocking", stats.ios_blocking,
 		    sm::description("IOs that are blocking on space usage")),
     sm::make_derive("used_bytes", stats.used_bytes,
@@ -665,45 +671,56 @@ SegmentCleaner::gc_trim_journal_ret SegmentCleaner::gc_trim_journal()
 {
   LOG_PREFIX(SegmentCleaner::gc_trim_journal);
   DEBUG("triming journal");
-  return ecb->with_transaction_intr(
-    Transaction::src_t::TRIM_BACKREF,
-    "trim_backref",
-    [this](auto &t) {
-    return seastar::do_with(
-      get_dirty_tail(),
-      [this, &t](auto &limit) {
-      return trim_backrefs(t, limit).si_then(
-	[this, &t, &limit](auto trim_backrefs_to)
-	-> ExtentCallbackInterface::submit_transaction_direct_iertr::future<
-	     journal_seq_t> {
-	if (trim_backrefs_to != JOURNAL_SEQ_NULL) {
-	  return ecb->submit_transaction_direct(
-	    t, std::make_optional<journal_seq_t>(trim_backrefs_to)
-	  ).si_then([trim_backrefs_to=std::move(trim_backrefs_to)]() mutable {
-	    return seastar::make_ready_future<
-	      journal_seq_t>(std::move(trim_backrefs_to));
-	  });
-	}
-	return seastar::make_ready_future<journal_seq_t>(std::move(limit));
-      });
-    });
-  }).handle_error(
-    crimson::ct_error::eagain::handle([](auto) {
-      ceph_abort("unexpected eagain");
-    }),
-    crimson::ct_error::pass_further_all()
-  ).safe_then([this](auto seq) {
-    return repeat_eagain([this, seq=std::move(seq)]() mutable {
-      return ecb->with_transaction_intr(
-	Transaction::src_t::CLEANER_TRIM,
-	"trim_journal",
-	[this, seq=std::move(seq)](auto& t)
-      {
-	return rewrite_dirty(t, seq
-	).si_then([this, &t] {
-	  return ecb->submit_transaction_direct(t);
+  return seastar::do_with(
+    (size_t)0,
+    seastar::lowres_system_clock::now(),
+    [this](auto &repeats, auto &start) {
+    return ecb->with_transaction_intr(
+      Transaction::src_t::TRIM_BACKREF,
+      "trim_backref",
+      [this](auto &t) {
+      return seastar::do_with(
+	get_dirty_tail(),
+	[this, &t](auto &limit) {
+	return trim_backrefs(t, limit).si_then(
+	  [this, &t, &limit](auto trim_backrefs_to)
+	  -> ExtentCallbackInterface::submit_transaction_direct_iertr::future<
+	       journal_seq_t> {
+	  if (trim_backrefs_to != JOURNAL_SEQ_NULL) {
+	    return ecb->submit_transaction_direct(
+	      t, std::make_optional<journal_seq_t>(trim_backrefs_to)
+	    ).si_then([trim_backrefs_to=std::move(trim_backrefs_to)]() mutable {
+	      return seastar::make_ready_future<
+		journal_seq_t>(std::move(trim_backrefs_to));
+	    });
+	  }
+	  return seastar::make_ready_future<journal_seq_t>(std::move(limit));
 	});
       });
+    }).handle_error(
+      crimson::ct_error::eagain::handle([](auto) {
+	ceph_abort("unexpected eagain");
+      }),
+      crimson::ct_error::pass_further_all()
+    ).safe_then([this, &repeats](auto seq) {
+      return repeat_eagain([this, seq=std::move(seq), &repeats]() mutable {
+	repeats++;
+	return ecb->with_transaction_intr(
+	  Transaction::src_t::CLEANER_TRIM,
+	  "trim_journal",
+	  [this, seq=std::move(seq)](auto& t)
+	{
+	  return rewrite_dirty(t, seq
+	  ).si_then([this, &t] {
+	    return ecb->submit_transaction_direct(t);
+	  });
+	});
+      });
+    }).safe_then([&start, this, &repeats] {
+      stats.jt_stats.repeats += repeats;
+      stats.jt_stats.cycles++;
+      auto d = seastar::lowres_system_clock::now() - start;
+      stats.jt_stats.duration += d.count();
     });
   });
 }
@@ -805,7 +822,7 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
   return seastar::do_with(
     (size_t)0,
     (size_t)0,
-    accumulated_stats_t(),
+    space_reclaim_accumulated_stats_t(),
     seastar::lowres_system_clock::now(),
     [this, segment_id, pavail_ratio, end_paddr](
       auto &reclaimed,
