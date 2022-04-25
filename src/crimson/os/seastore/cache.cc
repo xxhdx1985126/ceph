@@ -791,6 +791,9 @@ void Cache::invalidate_extent(
       }
       assert(!i.t->is_weak());
       account_conflict(t.get_src(), i.t->get_src());
+      if (t.get_src() == Transaction::src_t::TRIM_BACKREF) {
+	ERRORT("invalidating trim_backref transaction on {}", t, extent);
+      }
       mark_transaction_conflicted(*i.t, extent);
     }
   }
