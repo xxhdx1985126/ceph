@@ -470,6 +470,15 @@ void SegmentCleaner::register_metrics()
 		   sm::description("accumulated repeats of space reclamation runs")),
     sm::make_counter("reclaim_space_cycles", stats.sr_stats.reclaim_space_cycles,
 		     sm::description("cycles for space reclamation")),
+    sm::make_counter("accumulated_trim_backrefs_time",
+		     stats.jt_stats.accum_stats.accumulated_trim_backrefs_time,
+		     sm::description("accumulated time spent trimming backrefs")),
+    sm::make_counter("accumulated_rewrite_dirty_time",
+		     stats.jt_stats.accum_stats.accumulated_rewrite_dirty_time,
+		     sm::description("accumulated time spent rewriting dirty extents")),
+    sm::make_counter("accumulated_backrefs_to_be_rewritten",
+		     stats.sr_stats.accum_stats.accumulated_backrefs_to_be_rewritten,
+		     sm::description("accumulated backref entries corresponding to rewritten extents")),
     sm::make_counter("journal_trim_cycles", stats.jt_stats.cycles,
 		     sm::description("cycls of journal trims")),
     sm::make_counter("journal_trim_repeats", stats.jt_stats.repeats,
@@ -673,8 +682,9 @@ SegmentCleaner::gc_trim_journal_ret SegmentCleaner::gc_trim_journal()
   DEBUG("triming journal");
   return seastar::do_with(
     (size_t)0,
-    seastar::lowres_system_clock::now(),
-    [this](auto &repeats, auto &start) {
+    std::chrono::steady_clock::now(),
+    journal_trim_accumulated_stats_t(),
+    [this](auto &repeats, auto &start, auto &accum_stats) {
     return ecb->with_transaction_intr(
       Transaction::src_t::TRIM_BACKREF,
       "trim_backref",
@@ -702,25 +712,35 @@ SegmentCleaner::gc_trim_journal_ret SegmentCleaner::gc_trim_journal()
 	ceph_abort("unexpected eagain");
       }),
       crimson::ct_error::pass_further_all()
-    ).safe_then([this, &repeats](auto seq) {
-      return repeat_eagain([this, seq=std::move(seq), &repeats]() mutable {
+    ).safe_then([this, &repeats, &start, &accum_stats](auto seq) {
+      auto backrefs_trimmed = std::chrono::steady_clock::now();
+      auto d = backrefs_trimmed - start;
+      accum_stats.accumulated_trim_backrefs_time += d.count();
+      return repeat_eagain([this, seq=std::move(seq), &repeats, &accum_stats,
+			    backrefs_trimmed=std::move(backrefs_trimmed)]() mutable
+      {
 	repeats++;
 	return ecb->with_transaction_intr(
 	  Transaction::src_t::CLEANER_TRIM,
 	  "trim_journal",
-	  [this, seq=std::move(seq)](auto& t)
+	  [this, seq=std::move(seq), &accum_stats,
+	  backrefs_trimmed=std::move(backrefs_trimmed)](auto& t)
 	{
 	  return rewrite_dirty(t, seq
 	  ).si_then([this, &t] {
 	    return ecb->submit_transaction_direct(t);
+	  }).si_then([&accum_stats, backrefs_trimmed=std::move(backrefs_trimmed)] {
+	    auto d = std::chrono::steady_clock::now() - backrefs_trimmed;
+	    accum_stats.accumulated_rewrite_dirty_time += d.count();
 	  });
 	});
       });
-    }).safe_then([&start, this, &repeats] {
+    }).safe_then([&start, this, &repeats, &accum_stats] {
       stats.jt_stats.repeats += repeats;
       stats.jt_stats.cycles++;
-      auto d = seastar::lowres_system_clock::now() - start;
+      auto d = std::chrono::steady_clock::now() - start;
       stats.jt_stats.duration += d.count();
+      stats.jt_stats.accum_stats.add(accum_stats);
     });
   });
 }
@@ -823,7 +843,7 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
     (size_t)0,
     (size_t)0,
     space_reclaim_accumulated_stats_t(),
-    seastar::lowres_system_clock::now(),
+    std::chrono::steady_clock::now(),
     [this, segment_id, pavail_ratio, end_paddr](
       auto &reclaimed,
       auto &runs,
@@ -869,6 +889,7 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
 		pin->get_type(),
 		journal_seq_t());
 	    }
+	    accum_stats.accumulated_backrefs_to_be_rewritten += backrefs.size();
 	    for (auto &del_backref : del_backrefs) {
 	      TRACE("del_backref {}~{} {} {}",
 		del_backref.paddr, del_backref.len, del_backref.type, del_backref.seq);
@@ -879,7 +900,7 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
 		  || (del_backref.seq != JOURNAL_SEQ_NULL && del_backref.seq > seq))
 		seq = del_backref.seq;
 	    }
-	    auto got_mappings = seastar::lowres_system_clock::now();
+	    auto got_mappings = std::chrono::steady_clock::now();
 	    auto d = got_mappings - start;
 	    accum_stats.accumulated_get_backref_mappings_time += d.count();
 	    return seastar::do_with(
@@ -891,29 +912,29 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
 		t, std::move(backref_extents), extents
 	      ).si_then([this, &extents, &t, &backrefs,
 			got_mappings=std::move(got_mappings)] {
-		auto got_backref_extents = seastar::lowres_system_clock::now();
+		auto got_backref_extents = std::chrono::steady_clock::now();
 		auto d = got_backref_extents - got_mappings;
 		accum_stats.accumulated_get_backref_extents_time += d.count();
 		return _retrieve_live_extents(
 		  t, std::move(backrefs), extents
 		).si_then([this, &seq, &t, &accum_stats
 			  got_backref_extents=std::move(got_backref_extents)](auto nseq) {
-		  auto got_live_extents = seastar::lowres_system_clock::now();
+		  auto got_live_extents = std::chrono::steady_clock::now();
 		  auto d = got_live_extents - got_backref_extents;
 		  accum_stats.accumulated_get_live_extents_time += d.count();
 		  if (nseq != JOURNAL_SEQ_NULL && nseq > seq)
 		    seq = nseq;
 		  auto fut = BackrefManager::batch_insert_iertr::make_ready_future<
-		    seastar::lowres_system_clock::time_point>(got_live_extents);
+		    std::chrono::steady_clock::time_point>(got_live_extents);
 		  if (seq != JOURNAL_SEQ_NULL) {
 		    fut = backref_manager.batch_insert_from_cache(
 		      t, seq, std::numeric_limits<uint64_t>::max()
 		    ).si_then([&accum_stats, got_live_extents=std::move(got_live_extents)](auto) {
-		      auto backref_inserted = seastar::lowres_system_clock::now();
+		      auto backref_inserted = std::chrono::steady_clock::now();
 		      auto d = backref_inserted - got_live_extents;
 		      accum_stats.accumulated_backref_batch_insert_time += d.count();
 		      return BackrefManager::batch_insert_iertr::make_ready_future<
-			seastar::lowres_system_clock::time_point>(
+			std::chrono::steady_clock::time_point>(
 			  std::move(backref_inserted));
 		    });
 		  }
@@ -928,7 +949,7 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
 		  return ecb->rewrite_extent(t, ext);
 		}).si_then([&accum_stats,
 			    backref_inserted=std::move(backref_inserted)] {
-		  auto d = seastar::lowres_system_clock::now() - backref_inserted;
+		  auto d = std::chrono::steady_clock::now() - backref_inserted;
 		  accum_stats.accumulated_rewrite_extents_time += d.count();
 		});
 	      });
@@ -957,7 +978,7 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
       }
 #endif
       stats.sr_stats.reclaiming_bytes += reclaimed;
-      auto d = seastar::lowres_system_clock::now() - start;
+      auto d = std::chrono::steady_clock::now() - start;
       accum_stats.accumulated_reclaim_space_duration += d.count();
       accum_stats.accumulated_reclaim_space_repeats += runs;
       stats.sr_stats.accum_stats.add(accum_stats);

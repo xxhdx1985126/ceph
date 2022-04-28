@@ -573,6 +573,7 @@ private:
     uint64_t accumulated_get_live_extents_time = 0;
     uint64_t accumulated_reclaim_space_duration = 0;
     uint64_t accumulated_reclaim_space_repeats = 0;
+    uint64_t accumulated_backrefs_to_be_rewritten = 0;
 
     void add(struct space_reclaim_accumulated_stats_t& st) {
       accumulated_get_backref_mappings_time +=
@@ -589,6 +590,8 @@ private:
 	st.accumulated_reclaim_space_duration;
       accumulated_reclaim_space_repeats +=
 	st.accumulated_reclaim_space_repeats;
+      accumulated_backrefs_to_be_rewritten +=
+	st.accumulated_backrefs_to_be_rewritten;
     }
   };
 
@@ -599,10 +602,23 @@ private:
     space_reclaim_accumulated_stats_t accum_stats;
   };
 
+  struct journal_trim_accumulated_stats_t {
+    uint64_t accumulated_trim_backrefs_time = 0;
+    uint64_t accumulated_rewrite_dirty_time = 0;
+    
+    void add(journal_trim_accumulated_stats_t &st) {
+      accumulated_trim_backrefs_time +=
+	st.accumulated_trim_backrefs_time;
+      accumulated_rewrite_dirty_time +=
+	st.accumulated_rewrite_dirty_time;
+    }
+  };
+
   struct journal_trim_stats_t {
     uint64_t repeats = 0;
     uint64_t cycles = 0;
     uint64_t duration = 0;
+    journal_trim_accumulated_stats_t accum_stats;
   };
 
   struct {
