@@ -910,14 +910,14 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
 	      (auto &extents) {
 	      return _retrieve_backref_extents(
 		t, std::move(backref_extents), extents
-	      ).si_then([this, &extents, &t, &backrefs,
-			got_mappings=std::move(got_mappings)] {
+	      ).si_then([this, &extents, &t, &backrefs, &accum_stats,
+			got_mappings=std::move(got_mappings), &seq] {
 		auto got_backref_extents = std::chrono::steady_clock::now();
 		auto d = got_backref_extents - got_mappings;
 		accum_stats.accumulated_get_backref_extents_time += d.count();
 		return _retrieve_live_extents(
 		  t, std::move(backrefs), extents
-		).si_then([this, &seq, &t, &accum_stats
+		).si_then([this, &seq, &t, &accum_stats,
 			  got_backref_extents=std::move(got_backref_extents)](auto nseq) {
 		  auto got_live_extents = std::chrono::steady_clock::now();
 		  auto d = got_live_extents - got_backref_extents;
