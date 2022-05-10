@@ -441,6 +441,7 @@ BtreeBackrefManager::remove_mapping(
 	if (iter.is_end() || iter.get_key() != addr) {
 	  LOG_PREFIX(BtreeBackrefManager::remove_mapping);
 	  ERRORT("paddr={} doesn't exist", c.trans, addr);
+	  ceph_abort("impossible");
 	  return crimson::ct_error::enoent::make();
 	}
 

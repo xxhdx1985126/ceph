@@ -679,7 +679,7 @@ SegmentCleaner::gc_cycle_ret SegmentCleaner::do_gc_cycle()
 SegmentCleaner::gc_trim_journal_ret SegmentCleaner::gc_trim_journal()
 {
   LOG_PREFIX(SegmentCleaner::gc_trim_journal);
-  DEBUG("triming journal");
+  INFO("triming journal");
   return seastar::do_with(
     (size_t)0,
     std::chrono::steady_clock::now(),
@@ -692,6 +692,8 @@ SegmentCleaner::gc_trim_journal_ret SegmentCleaner::gc_trim_journal()
       return seastar::do_with(
 	get_dirty_tail(),
 	[this, &t](auto &limit) {
+	LOG_PREFIX(SegmentCleaner::gc_trim_journal);
+	INFO("trimming backrefs: limit: {}", limit);
 	return trim_backrefs(t, limit).si_then(
 	  [this, &t, &limit](auto trim_backrefs_to)
 	  -> ExtentCallbackInterface::submit_transaction_direct_iertr::future<
@@ -700,10 +702,14 @@ SegmentCleaner::gc_trim_journal_ret SegmentCleaner::gc_trim_journal()
 	    return ecb->submit_transaction_direct(
 	      t, std::make_optional<journal_seq_t>(trim_backrefs_to)
 	    ).si_then([trim_backrefs_to=std::move(trim_backrefs_to)]() mutable {
+	      LOG_PREFIX(SegmentCleaner::gc_trim_journal);
+	      INFO("trimmed backrefs: to {}", trim_backrefs_to);
 	      return seastar::make_ready_future<
 		journal_seq_t>(std::move(trim_backrefs_to));
 	    });
 	  }
+	  LOG_PREFIX(SegmentCleaner::gc_trim_journal);
+	  INFO("no backrefs trimmed, limit: {}", limit);
 	  return seastar::make_ready_future<journal_seq_t>(std::move(limit));
 	});
       });
@@ -716,6 +722,8 @@ SegmentCleaner::gc_trim_journal_ret SegmentCleaner::gc_trim_journal()
       auto backrefs_trimmed = std::chrono::steady_clock::now();
       auto d = backrefs_trimmed - start;
       accum_stats.accumulated_trim_backrefs_time += d.count();
+      LOG_PREFIX(SegmentCleaner::gc_trim_journal);
+      INFO("rewrite dirty: to {}", seq);
       return repeat_eagain([this, seq=std::move(seq), &repeats, &accum_stats,
 			    backrefs_trimmed=std::move(backrefs_trimmed)]() mutable
       {
@@ -824,7 +832,7 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
     next_reclaim_pos = std::make_optional<paddr_t>(next.offset);
   }
   LOG_PREFIX(SegmentCleaner::gc_reclaim_space);
-  DEBUG("cleaning {}", *next_reclaim_pos);
+  INFO("cleaning {}", *next_reclaim_pos);
   auto &seg_paddr = next_reclaim_pos->as_seg_paddr();
   paddr_t end_paddr;
   auto segment_id = seg_paddr.get_segment_id();
@@ -877,8 +885,8 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
 	    DEBUG("{} backrefs, {} del_backrefs, {} pins",
 	      backrefs.size(), del_backrefs.size(), pin_list.size());
 	    for (auto &br : backrefs) {
-	      if (seq == JOURNAL_SEQ_NULL
-		  || (br.seq != JOURNAL_SEQ_NULL && br.seq > seq))
+	      ceph_assert(br.seq != JOURNAL_SEQ_NULL);
+	      if (seq == JOURNAL_SEQ_NULL || br.seq > seq)
 		seq = br.seq;
 	    }
 	    for (auto &pin : pin_list) {
@@ -887,7 +895,7 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
 		pin->get_val(),
 		pin->get_length(),
 		pin->get_type(),
-		journal_seq_t());
+		JOURNAL_SEQ_NULL);
 	    }
 	    accum_stats.accumulated_backrefs_to_be_rewritten += backrefs.size();
 	    for (auto &del_backref : del_backrefs) {
@@ -896,8 +904,8 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
 	      auto it = backrefs.find(del_backref.paddr);
 	      if (it != backrefs.end())
 		backrefs.erase(it);
-	      if (seq == JOURNAL_SEQ_NULL
-		  || (del_backref.seq != JOURNAL_SEQ_NULL && del_backref.seq > seq))
+	      ceph_assert(del_backref.seq != JOURNAL_SEQ_NULL);
+	      if (seq == JOURNAL_SEQ_NULL || del_backref.seq > seq)
 		seq = del_backref.seq;
 	    }
 	    auto got_mappings = std::chrono::steady_clock::now();
