@@ -559,7 +559,6 @@ private:
 
   SegmentManagerGroupRef sm_group;
   BackrefManager &backref_manager;
-  Cache &cache;
 
   SpaceTrackerIRef space_tracker;
   segments_info_t segments;
@@ -611,7 +610,6 @@ public:
     config_t config,
     SegmentManagerGroupRef&& sm_group,
     BackrefManager &backref_manager,
-    Cache &cache,
     bool detailed = false);
 
   SegmentSeqAllocator& get_ool_segment_seq_allocator() {

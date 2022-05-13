@@ -398,7 +398,7 @@ struct transaction_manager_test_t :
 	      offset.as_seg_paddr().get_segment_off(),
 	      len);
 	  }).si_then([&tracker, this] {
-	    auto &backrefs = cache->get_backrefs();
+	    auto &backrefs = backref_manager->get_cached_backrefs();
 	    for (auto &backref : backrefs) {
 	      logger().debug("check_usage: by backref, tracker alloc {}~{}",
 		backref.paddr, backref.len);
@@ -407,7 +407,7 @@ struct transaction_manager_test_t :
 		backref.paddr.as_seg_paddr().get_segment_off(),
 		backref.len);
 	    }
-	    auto &del_backrefs = cache->get_del_backrefs();
+	    auto &del_backrefs = backref_manager->get_cached_backref_removals();
 	    for (auto &del_backref : del_backrefs) {
 	      logger().debug("check_usage: by backref, tracker release {}~{}",
 		del_backref.paddr, del_backref.len);

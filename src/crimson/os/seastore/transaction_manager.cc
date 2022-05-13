@@ -143,16 +143,16 @@ TransactionManager::mount_ertr::future<> TransactionManager::mount()
 		  }
 		  if (depth) {
 		    if (depth > 1) {
-		      cache->add_backref_extent(
+		      backref_manager->cache_new_backref_extent(
 			addr, extent_types_t::BACKREF_INTERNAL);
 		    } else {
-		      cache->add_backref_extent(
+		      backref_manager->cache_new_backref_extent(
 			addr, extent_types_t::BACKREF_LEAF);
 		    }
 		  }
 		}).si_then([this] {
 		  LOG_PREFIX(TransactionManager::mount);
-		  auto &backrefs = cache->get_backrefs();
+		  auto &backrefs = backref_manager->get_cached_backrefs();
 		  DEBUG("marking {} backrefs used", backrefs.size());
 		  for (auto &backref : backrefs) {
 		    segment_cleaner->mark_space_used(
@@ -162,7 +162,7 @@ TransactionManager::mount_ertr::future<> TransactionManager::mount()
 		      seastar::lowres_system_clock::time_point(),
 		      true);
 		  }
-		  auto &del_backrefs = cache->get_del_backrefs();
+		  auto &del_backrefs = backref_manager->get_cached_backref_removals();
 		  DEBUG("marking {} backrefs free", del_backrefs.size());
 		  for (auto &del_backref : del_backrefs) {
 		    segment_cleaner->mark_space_free(
@@ -645,7 +645,6 @@ TransactionManagerRef make_transaction_manager(bool detailed)
     SegmentCleaner::config_t::get_default(),
     std::move(sms),
     *backref_manager,
-    *cache,
     detailed);
   auto journal = journal::make_segmented(*segment_cleaner);
   epm->init_ool_writers(

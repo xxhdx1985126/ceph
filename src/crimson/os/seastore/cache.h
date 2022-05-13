@@ -19,6 +19,10 @@
 #include "crimson/os/seastore/segment_manager.h"
 #include "crimson/os/seastore/transaction.h"
 
+namespace crimson::os::seastore::backref {
+class BtreeBackrefManager;
+}
+
 namespace crimson::os::seastore {
 
 class SegmentCleaner;
@@ -530,41 +534,7 @@ private:
   // backrefs that needs to be inserted into the backref tree
   backref_buf_entry_t::set_t backref_inserted_set;
   backref_buf_entry_t::set_t backref_remove_set; // backrefs needs to be removed
-					      // from the backref tree
-public:
-  /**
-   * get_extent_by_type
-   *
-   * Based on type, instantiate the correct concrete type
-   * and read in the extent at location offset~length.
-   */
-  template <typename Func>
-  get_extent_by_type_ret get_extent_by_type(
-    Transaction &t,         ///< [in] transaction
-    extent_types_t type,    ///< [in] type tag
-    paddr_t offset,         ///< [in] starting addr
-    laddr_t laddr,          ///< [in] logical address if logical
-    seastore_off_t length,   ///< [in] length
-    Func &&extent_init_func ///< [in] extent init func
-  ) {
-    return _get_extent_by_type(
-      t,
-      type,
-      offset,
-      laddr,
-      length,
-      extent_init_func_t(std::forward<Func>(extent_init_func)));
-  }
-  get_extent_by_type_ret get_extent_by_type(
-    Transaction &t,
-    extent_types_t type,
-    paddr_t offset,
-    laddr_t laddr,
-    seastore_off_t length
-  ) {
-    return get_extent_by_type(
-      t, type, offset, laddr, length, [](CachedExtent &) {});
-  }
+						 // from the backref tree
 
   std::set<
     backref_buf_entry_t,
@@ -630,6 +600,41 @@ public:
 
   backref_buffer_ref& get_backref_buffer() {
     return backref_buffer;
+  }
+
+public:
+  /**
+   * get_extent_by_type
+   *
+   * Based on type, instantiate the correct concrete type
+   * and read in the extent at location offset~length.
+   */
+  template <typename Func>
+  get_extent_by_type_ret get_extent_by_type(
+    Transaction &t,         ///< [in] transaction
+    extent_types_t type,    ///< [in] type tag
+    paddr_t offset,         ///< [in] starting addr
+    laddr_t laddr,          ///< [in] logical address if logical
+    seastore_off_t length,   ///< [in] length
+    Func &&extent_init_func ///< [in] extent init func
+  ) {
+    return _get_extent_by_type(
+      t,
+      type,
+      offset,
+      laddr,
+      length,
+      extent_init_func_t(std::forward<Func>(extent_init_func)));
+  }
+  get_extent_by_type_ret get_extent_by_type(
+    Transaction &t,
+    extent_types_t type,
+    paddr_t offset,
+    laddr_t laddr,
+    seastore_off_t length
+  ) {
+    return get_extent_by_type(
+      t, type, offset, laddr, length, [](CachedExtent &) {});
   }
 
   void trim_backref_bufs(const journal_seq_t &trim_to) {
@@ -946,6 +951,24 @@ public:
     };
   };
 
+private:
+  ExtentPlacementManager& epm;
+  RootBlockRef root;               ///< ref to current root
+  ExtentIndex extents;             ///< set of live extents
+
+  journal_seq_t last_commit = JOURNAL_SEQ_MIN;
+
+  /**
+   * dirty
+   *
+   * holds refs to dirty extents.  Ordered by CachedExtent::get_dirty_from().
+   */
+  CachedExtent::list dirty;
+
+  std::set<
+    backref_extent_buf_entry_t,
+    backref_extent_buf_entry_t::cmp_t> backref_extents;
+
   void add_backref_extent(paddr_t paddr, extent_types_t type) {
     assert(!paddr.is_relative());
     auto [iter, inserted] = backref_extents.emplace(paddr, type);
@@ -972,24 +995,7 @@ public:
     return res;
   }
 
-private:
-  ExtentPlacementManager& epm;
-  RootBlockRef root;               ///< ref to current root
-  ExtentIndex extents;             ///< set of live extents
-
-  journal_seq_t last_commit = JOURNAL_SEQ_MIN;
-
-  /**
-   * dirty
-   *
-   * holds refs to dirty extents.  Ordered by CachedExtent::get_dirty_from().
-   */
-  CachedExtent::list dirty;
-
-  std::set<
-    backref_extent_buf_entry_t,
-    backref_extent_buf_entry_t::cmp_t> backref_extents;
-
+  friend class crimson::os::seastore::backref::BtreeBackrefManager;
   /**
    * lru
    *
