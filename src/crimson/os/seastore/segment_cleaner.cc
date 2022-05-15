@@ -739,7 +739,7 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
     next_reclaim_pos = std::make_optional<paddr_t>(next.offset);
   }
   LOG_PREFIX(SegmentCleaner::gc_reclaim_space);
-  INFO("cleaning {}", *next_reclaim_pos);
+  DEBUG("cleaning {}", *next_reclaim_pos);
   auto &seg_paddr = next_reclaim_pos->as_seg_paddr();
   paddr_t end_paddr;
   auto segment_id = seg_paddr.get_segment_id();
@@ -811,7 +811,7 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
 		  journal_seq_t());
 	      }
 	      for (auto &del_backref : del_backrefs) {
-		INFO("del_backref {}~{} {} {}",
+		DEBUG("del_backref {}~{} {} {}",
 		  del_backref.paddr, del_backref.len, del_backref.type, del_backref.seq);
 		auto it = backrefs.find(del_backref.paddr);
 		if (it != backrefs.end())
@@ -876,7 +876,7 @@ SegmentCleaner::gc_reclaim_space_ret SegmentCleaner::gc_reclaim_space()
 #endif
       stats.reclaiming_bytes += reclaimed;
       auto d = seastar::lowres_system_clock::now() - start;
-      INFO("duration: {}, pavail_ratio before: {}, repeats: {}", d, pavail_ratio, runs);
+      DEBUG("duration: {}, pavail_ratio before: {}, repeats: {}", d, pavail_ratio, runs);
       if (final_reclaim()) {
 	stats.reclaim_rewrite_bytes += stats.reclaiming_bytes;
 	stats.reclaiming_bytes = 0;
