@@ -209,6 +209,7 @@ private:
     const char* tname,
     op_type_t op_type,
     F &&f) {
+    stats.ops_inflight[static_cast<std::size_t>(op_type)]++;
     return seastar::do_with(
       internal_context_t(
 	ch, std::move(t),
@@ -230,6 +231,7 @@ private:
 	}).then([this, op_type, &ctx] {
 	  add_latency_sample(op_type,
 	      std::chrono::steady_clock::now() - ctx.begin_timestamp);
+	  stats.ops_inflight[static_cast<std::size_t>(op_type)]--;
 	});
       }
     );
@@ -244,6 +246,8 @@ private:
     op_type_t op_type,
     F &&f) const {
     auto begin_time = std::chrono::steady_clock::now();
+    const_cast<SeaStore*>(this)->stats.ops_inflight[
+      static_cast<std::size_t>(op_type)]++;
     return seastar::do_with(
       oid, Ret{}, std::forward<F>(f),
       [this, src, op_type, begin_time, tname
@@ -267,6 +271,8 @@ private:
       }).safe_then([&ret, op_type, begin_time, this] {
         const_cast<SeaStore*>(this)->add_latency_sample(op_type,
                    std::chrono::steady_clock::now() - begin_time);
+	const_cast<SeaStore*>(this)->stats.ops_inflight[
+	  static_cast<std::size_t>(op_type)]--;
         return seastar::make_ready_future<Ret>(ret);
       });
     });
@@ -401,15 +407,23 @@ private:
 
   boost::intrusive_ptr<SeastoreCollection> _get_collection(const coll_t& cid);
 
-  static constexpr auto LAT_MAX = static_cast<std::size_t>(op_type_t::MAX);
+  static constexpr auto OP_TYPE_MAX = static_cast<std::size_t>(op_type_t::MAX);
+  using inflight_ops_counter_t = uint64_t;
   struct {
-    std::array<seastar::metrics::histogram, LAT_MAX> op_lat;
+    std::array<seastar::metrics::histogram, OP_TYPE_MAX> op_lat;
+    std::array<inflight_ops_counter_t, OP_TYPE_MAX> ops_inflight;
   } stats;
 
   seastar::metrics::histogram& get_latency(
       op_type_t op_type) {
     assert(static_cast<std::size_t>(op_type) < stats.op_lat.size());
     return stats.op_lat[static_cast<std::size_t>(op_type)];
+  }
+
+  inflight_ops_counter_t get_inflight_ops(
+      op_type_t op_type) {
+    assert(static_cast<std::size_t>(op_type) < stats.op_lat.size());
+    return stats.ops_inflight[static_cast<std::size_t>(op_type)];
   }
 
   void add_latency_sample(op_type_t op_type,
