@@ -147,6 +147,7 @@ SeaStore::~SeaStore() = default;
 
 void SeaStore::register_metrics()
 {
+  stats.ops_inflight.fill(0);
   namespace sm = seastar::metrics;
   using op_type_t = SeaStore::op_type_t;
   std::pair<op_type_t, sm::label_instance> labels_by_op_type[] = {
@@ -161,8 +162,6 @@ void SeaStore::register_metrics()
   };
 
   for (auto& [op_type, label] : labels_by_op_type) {
-    auto desc = fmt::format("latency of seastore operation (optype={})",
-                            op_type);
     metrics.add_group(
       "seastore",
       {
@@ -170,9 +169,19 @@ void SeaStore::register_metrics()
           "op_lat", [this, op_type=op_type] {
             return get_latency(op_type);
           },
-          sm::description(desc),
+          sm::description(
+	    fmt::format("latency of seastore operation (optype={})",
+	      op_type)),
           {label}
         ),
+	sm::make_gauge(
+	  "ops_inflight", [this, op_type] {
+	    return get_inflight_ops(op_type);
+	  },
+	  sm::description(
+	    fmt::format("inflight ops (optype={})", op_type)),
+	  {label}
+	),
       }
     );
   }
