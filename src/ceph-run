@@ -13,8 +13,9 @@ while [ true ]; do
     exit_code=$?
     
     if [ $exit_code -gt 128 ] && [ $no_restart -eq 0 ]; then
+	echo $exit_code &> ceph-run.log
 	case $(($exit_code-128)) in
-	    3 | 4 | 5 | 6 | 8 | 11)
+	    3 | 4 | 5 | 6 | 8 | 9 | 11)
 		;;
 	    *)
 		exit;
