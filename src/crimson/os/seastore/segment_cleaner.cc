@@ -803,14 +803,7 @@ SegmentCleaner::gc_cycle_ret SegmentCleaner::GCProcess::run()
 
 SegmentCleaner::gc_cycle_ret SegmentCleaner::do_gc_cycle()
 {
-  if (gc_should_trim_journal()) {
-    return gc_trim_journal(
-    ).handle_error(
-      crimson::ct_error::assert_all{
-	"GCProcess::run encountered invalid error in gc_trim_journal"
-      }
-    );
-  } else if (gc_should_trim_backref()) {
+  if (gc_should_trim_backref()) {
     auto start = std::chrono::steady_clock::now();
     return gc_trim_backref(get_backref_tail()
     ).safe_then([this, start=std::move(start)](auto) {
@@ -821,6 +814,13 @@ SegmentCleaner::gc_cycle_ret SegmentCleaner::do_gc_cycle()
     }).handle_error(
       crimson::ct_error::assert_all{
 	"GCProcess::run encountered invalid error in gc_trim_backref"
+      }
+    );
+  } else if (gc_should_trim_journal()) {
+    return gc_trim_journal(
+    ).handle_error(
+      crimson::ct_error::assert_all{
+	"GCProcess::run encountered invalid error in gc_trim_journal"
       }
     );
   } else if (gc_should_reclaim_space()) {
