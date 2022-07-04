@@ -117,6 +117,13 @@ public:
     const journal_seq_t &limit,
     const uint64_t max) = 0;
 
+  using backref_merge_set_t = Cache::backref_buf_entry_query_set_t;
+  using merge_backrefs_iertr = base_iertr;
+  using merge_backrefs_ret = merge_backrefs_iertr::future<>;
+  virtual merge_backrefs_ret merge_backrefs(
+    Transaction &t,
+    const backref_merge_set_t &backrefs) = 0;
+
   struct remove_mapping_result_t {
     paddr_t offset = P_ADDR_NULL;
     extent_len_t len = 0;

@@ -69,6 +69,10 @@ public:
     const journal_seq_t &limit,
     const uint64_t max) final;
 
+  merge_backrefs_ret merge_backrefs(
+    Transaction &t,
+    const backref_merge_set_t &backrefs) final;
+
   remove_mapping_ret remove_mapping(
     Transaction &t,
     paddr_t offset) final;
