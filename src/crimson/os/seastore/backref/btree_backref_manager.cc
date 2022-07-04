@@ -203,6 +203,41 @@ BtreeBackrefManager::new_mapping(
     });
 }
 
+BtreeBackrefManager::merge_backrefs_ret
+BtreeBackrefManager::merge_backrefs(
+  Transaction &t,
+  const BtreeBackrefManager::backref_merge_set_t &backrefs)
+{
+  return trans_intr::do_for_each(
+    backrefs.first,
+    backrefs.second,
+    [this, &t](auto &backref) {
+    LOG_PREFIX(BtreeBackrefManager::merge_backrefs);
+    if (backref.laddr != L_ADDR_NULL) {
+      DEBUGT("new mapping: {}~{} -> {}",
+	t, backref.paddr, backref.len, backref.laddr);
+      return new_mapping(
+	t,
+	backref.paddr,
+	backref.len,
+	backref.laddr,
+	backref.type).si_then([](auto &&pin) {
+	return seastar::now();
+      });
+    } else {
+      DEBUGT("remove mapping: {}", t, backref.paddr);
+      return remove_mapping(
+	t,
+	backref.paddr).si_then([](auto&&) {
+	return seastar::now();
+      }).handle_error_interruptible(
+	crimson::ct_error::input_output_error::pass_further(),
+	crimson::ct_error::assert_all("no enoent possible")
+      );
+    }
+  });
+}
+
 BtreeBackrefManager::merge_cached_backrefs_ret
 BtreeBackrefManager::merge_cached_backrefs(
   Transaction &t,

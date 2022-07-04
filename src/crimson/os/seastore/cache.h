@@ -562,9 +562,7 @@ private:
   backref_set_t backref_set; // in cache backrefs indexed by paddr_t
 
   using backref_buf_entry_query_set_t =
-    std::multiset<
-      backref_buf_entry_t,
-      backref_buf_entry_t::cmp_t>;
+    std::pair<backref_set_t::iterator, backref_set_t::iterator>;
 
   backref_buf_entry_query_set_t get_backrefs_in_range(
     paddr_t start,
@@ -575,13 +573,7 @@ private:
     auto end_iter = backref_set.lower_bound(
       end,
       backref_buf_entry_t::cmp_t());
-    backref_buf_entry_query_set_t res;
-    for (auto it = start_iter;
-	 it != end_iter;
-	 it++) {
-      res.emplace(it->paddr, it->laddr, it->len, it->type, it->seq);
-    }
-    return res;
+    return std::make_pair(start_iter, end_iter);
   }
 
   const backref_set_t& get_backrefs() {
@@ -635,6 +627,26 @@ public:
       auto iter = backref_buffer->backrefs_by_seq.upper_bound(trim_to);
       backref_buffer->backrefs_by_seq.erase(
 	backref_buffer->backrefs_by_seq.begin(), iter);
+    }
+  }
+
+  void remove_backrefs_in_range(
+    const paddr_t start_pos,
+    const paddr_t end_pos)
+  {
+    LOG_PREFIX(Cache::remove_backrefs_in_range);
+    SUBDEBUG(seastore_cache, "removing backrefs in range {}~{}",
+      start_pos, end_pos);
+    auto start_iter = backref_set.lower_bound(
+      start_pos,
+      backref_buf_entry_t::cmp_t());
+    auto end_iter = backref_set.lower_bound(
+      end_pos,
+      backref_buf_entry_t::cmp_t());
+    for (auto sit = start_iter; sit != end_iter;) {
+      ceph_assert(sit->backref_buf_hook.is_linked());
+      sit->backref_buf_hook.unlink();
+      sit = backref_set.erase(sit);
     }
   }
 
