@@ -277,6 +277,14 @@ std::ostream &operator<<(std::ostream &out, const segment_header_t &header)
 	     << ")";
 }
 
+std::ostream &operator<<(std::ostream &out, const last_reclaimed_t &reclaimed_to)
+{
+  return out << "last_reclaimed_t("
+	     << "reclaim_seq=" << reclaimed_to.reclaim_seq
+	     << ", reclaimed_to=" << reclaimed_to.reclaimed_to
+	     << ")";
+}
+
 std::ostream &operator<<(std::ostream &out, const segment_tail_t &tail)
 {
   return out << "segment_tail_t("
@@ -286,6 +294,7 @@ std::ostream &operator<<(std::ostream &out, const segment_tail_t &tail)
 	     << ", segment_nonce=" << tail.segment_nonce
 	     << ", modify_time=" << mod_time_point_printer_t{tail.modify_time}
 	     << ", num_extents=" << tail.num_extents
+	     << ", last_reclaimed_to=" << tail.reclaimed_to
 	     << ")";
 }
 

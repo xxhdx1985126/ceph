@@ -286,6 +286,8 @@ public:
 
   virtual void update_segment_avail_bytes(segment_type_t, paddr_t) = 0;
 
+  virtual last_reclaimed_t get_reclaimed_to() = 0;
+
   virtual void update_modify_time(
       segment_id_t, sea_time_point, std::size_t) = 0;
 
@@ -880,6 +882,10 @@ public:
   using work_ertr = ExtentCallbackInterface::extent_mapping_ertr;
   using work_iertr = ExtentCallbackInterface::extent_mapping_iertr;
 
+  last_reclaimed_t get_reclaimed_to() final {
+    return last_reclaimed_to;
+  }
+
 private:
   /*
    * 10 buckets for the number of closed segments by usage
@@ -974,18 +980,21 @@ private:
     std::size_t segment_size;
     paddr_t start_pos;
     paddr_t end_pos;
+    segment_seq_t reclaim_seq = NULL_SEG_SEQ;
 
     static reclaim_state_t create(
         segment_id_t segment_id,
         reclaim_gen_t generation,
-        std::size_t segment_size) {
+        std::size_t segment_size,
+	segment_seq_t reclaim_seq) {
       ceph_assert(generation < RECLAIM_GENERATIONS);
       return {generation,
               (reclaim_gen_t)(generation == RECLAIM_GENERATIONS - 1 ?
                               generation : generation + 1),
               segment_size,
               P_ADDR_NULL,
-              paddr_t::make_seg_paddr(segment_id, 0)};
+              paddr_t::make_seg_paddr(segment_id, 0),
+	      reclaim_seq};
     }
 
     segment_id_t get_segment_id() const {
@@ -1009,6 +1018,19 @@ private:
     }
   };
   std::optional<reclaim_state_t> reclaim_state;
+  last_reclaimed_t last_reclaimed_to;
+
+  // only supposed to be called before mount completes
+  void update_last_reclaimed(last_reclaimed_t to) {
+    ceph_assert(!init_complete);
+    if ((last_reclaimed_to.reclaim_seq == NULL_SEG_SEQ
+	  || last_reclaimed_to.reclaim_seq < to.reclaim_seq)
+	|| (last_reclaimed_to.reclaim_seq == to.reclaim_seq
+	  && (last_reclaimed_to.reclaimed_to.offset == P_ADDR_NULL
+	    || last_reclaimed_to.reclaimed_to.offset <= to.reclaimed_to.offset))) {
+      last_reclaimed_to = to;
+    }
+  }
 
   /**
    * GCProcess

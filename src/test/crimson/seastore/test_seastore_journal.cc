@@ -107,6 +107,10 @@ struct journal_test_t : seastar_test_suite_t, SegmentProvider {
     return JOURNAL_SEQ_NULL;
   }
 
+  last_reclaimed_t get_reclaimed_to() final {
+    return {};
+  }
+
   segment_id_t allocate_segment(
     segment_seq_t seq,
     segment_type_t type,

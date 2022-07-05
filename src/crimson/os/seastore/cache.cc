@@ -1147,11 +1147,21 @@ record_t Cache::prepare_record(
     if ((is_backref_mapped_extent_node(i)
 	  || is_retired_placeholder(i->get_type()))
 	&& t.should_record_release(i->get_paddr())) {
+      auto sseq = NULL_SEG_SEQ;
+      if (cleaner != nullptr && i->get_paddr().get_addr_type() ==
+	  addr_types_t::SEGMENT) {
+        auto sid = i->get_paddr().as_seg_paddr().get_segment_id();
+        auto &sinfo = cleaner->get_seg_info(sid);
+        sseq = sinfo.seq;
+      }
+      DEBUGT("adding release alloc_blk: {}~{}, type: {}, seq:{}",
+	t, i->get_paddr(), i->get_length(), i->get_type(), sseq);
       rel_delta.alloc_blk_ranges.emplace_back(
 	i->get_paddr(),
 	L_ADDR_NULL,
 	i->get_length(),
-	i->get_type());
+	i->get_type(),
+	sseq);
     }
   }
   alloc_deltas.emplace_back(std::move(rel_delta));
@@ -1207,7 +1217,8 @@ record_t Cache::prepare_record(
 	  ? i->cast<lba_manager::btree::LBANode>()->get_node_meta().begin
 	  : L_ADDR_NULL),
 	i->get_length(),
-	i->get_type());
+	i->get_type(),
+	NULL_SEG_SEQ);
     }
   }
 
@@ -1218,23 +1229,39 @@ record_t Cache::prepare_record(
     get_by_ext(efforts.fresh_ool_by_ext,
                i->get_type()).increment(i->get_length());
     if (is_backref_mapped_extent_node(i)) {
+      auto sseq = NULL_SEG_SEQ;
+      if (cleaner != nullptr && i->get_paddr().get_addr_type() ==
+	  addr_types_t::SEGMENT) {
+        auto sid = i->get_paddr().as_seg_paddr().get_segment_id();
+        auto &sinfo = cleaner->get_seg_info(sid);
+        sseq = sinfo.seq;
+      }
       alloc_delta.alloc_blk_ranges.emplace_back(
 	i->get_paddr(),
 	i->is_logical()
 	? i->cast<LogicalCachedExtent>()->get_laddr()
 	: i->cast<lba_manager::btree::LBANode>()->get_node_meta().begin,
 	i->get_length(),
-	i->get_type());
+	i->get_type(),
+	sseq);
     }
   }
 
   for (auto &i: t.existing_block_list) {
+    auto sseq = NULL_SEG_SEQ;
+    if (cleaner != nullptr && i->get_paddr().get_addr_type() ==
+	addr_types_t::SEGMENT) {
+      auto sid = i->get_paddr().as_seg_paddr().get_segment_id();
+      auto &sinfo = cleaner->get_seg_info(sid);
+      sseq = sinfo.seq;
+    }
     if (i->is_valid()) {
       alloc_delta.alloc_blk_ranges.emplace_back(
         i->get_paddr(),
 	i->cast<LogicalCachedExtent>()->get_laddr(),
 	i->get_length(),
-	i->get_type());
+	i->get_type(),
+	sseq);
     }
   }
   alloc_deltas.emplace_back(std::move(alloc_delta));
@@ -1251,6 +1278,7 @@ record_t Cache::prepare_record(
   if (is_cleaner_transaction(trans_src)) {
     bufferlist bl;
     encode(get_oldest_backref_dirty_from().value_or(JOURNAL_SEQ_NULL), bl);
+    encode(cleaner->get_reclaimed_to(), bl);
     delta_info_t delta;
     delta.type = extent_types_t::ALLOC_TAIL;
     delta.bl = bl;
@@ -1598,7 +1626,8 @@ Cache::replay_delta(
   paddr_t record_base,
   const delta_info_t &delta,
   const journal_seq_t &alloc_replay_from,
-  sea_time_point &modify_time)
+  sea_time_point &modify_time,
+  SegmentProvider *cleaner)
 {
   LOG_PREFIX(Cache::replay_delta);
   assert(alloc_replay_from != JOURNAL_SEQ_NULL);
@@ -1625,12 +1654,48 @@ Cache::replay_delta(
     decode(alloc_delta, delta.bl);
     std::vector<backref_buf_entry_ref> backref_list;
     for (auto &alloc_blk : alloc_delta.alloc_blk_ranges) {
+      bool no_skip = false;
       if (alloc_blk.paddr.is_relative()) {
 	assert(alloc_blk.paddr.is_record_relative());
 	alloc_blk.paddr = record_base.add_relative(alloc_blk.paddr);
+	no_skip = true; // extent alloc'd is in journal,
+			// this backref mustn't have been merged by gc,
+			// and must be replayed
       }
       DEBUG("replay alloc_blk {}~{} {}, journal_seq: {}",
 	alloc_blk.paddr, alloc_blk.len, alloc_blk.laddr, journal_seq);
+
+      if (cleaner != nullptr &&
+	  alloc_blk.paddr.get_addr_type() == addr_types_t::SEGMENT) {
+	auto sid = alloc_blk.paddr.as_seg_paddr().get_segment_id();
+	auto &sinfo = cleaner->get_seg_info(sid);
+	auto reclaimed_to = cleaner->get_reclaimed_to().reclaimed_to;
+
+	// if the journal seq of the segment has changed, the segment
+	// must have been reclaimed after this alloc_blk which shouldn't
+	// be replayed
+	bool still_same_segment_seq = (sinfo.seq ==
+	  (alloc_blk.seg_seq == NULL_SEG_SEQ
+	   ? journal_seq.segment_seq : alloc_blk.seg_seq));
+	// true if the segment was being reclaimed and the reclamation had
+        // passed this alloc_blk point, don't replay
+	bool has_been_reclaimed = still_same_segment_seq &&
+	  (reclaimed_to.segment_seq == sinfo.seq
+	    && reclaimed_to.offset.as_seg_paddr().get_segment_id() == sid
+	    && reclaimed_to.offset.as_seg_paddr().get_segment_off()
+	      > alloc_blk.paddr.as_seg_paddr().get_segment_off());
+
+	if (!no_skip && (!still_same_segment_seq || has_been_reclaimed)) {
+	  // the segment in which the extent alloc'd by this alloc_blk
+	  // must have been reclaimed, so this alloc_blk's backref must
+	  // have been merged. Skip this alloc_blk.
+	  DEBUG("skipping alloc_blk {}~{} {}, journal_seq: {}, alloc_blk seq: {},"
+		" current segment seq: {}, reclaimed_to: {}",
+	    alloc_blk.paddr, alloc_blk.len, alloc_blk.laddr,
+	    journal_seq, alloc_blk.seg_seq, sinfo.seq, reclaimed_to);
+	  continue;
+	}
+      }
       backref_list.emplace_back(
 	std::make_unique<backref_buf_entry_t>(
 	  alloc_blk.paddr,

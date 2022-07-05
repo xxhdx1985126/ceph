@@ -294,7 +294,7 @@ void NVMeManager::add_free_extent(
     super.device_id);
   alloc_delta_t alloc_info;
   alloc_info.alloc_blk_ranges.emplace_back(
-    paddr, L_ADDR_NULL, len, extent_types_t::ROOT);
+    paddr, L_ADDR_NULL, len, extent_types_t::ROOT, NULL_SEG_SEQ);
   alloc_info.op = alloc_delta_t::op_types_t::CLEAR;
   v.push_back(alloc_info);
 }
