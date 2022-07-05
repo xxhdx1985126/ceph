@@ -1400,8 +1400,9 @@ struct alloc_blk_t {
     paddr_t paddr,
     laddr_t laddr,
     extent_len_t len,
-    extent_types_t type)
-    : paddr(paddr), laddr(laddr), len(len), type(type)
+    extent_types_t type,
+    segment_seq_t seg_seq)
+    : paddr(paddr), laddr(laddr), len(len), type(type), seg_seq(seg_seq)
   {}
 
   explicit alloc_blk_t() = default;
@@ -1410,12 +1411,14 @@ struct alloc_blk_t {
   laddr_t laddr = L_ADDR_NULL;
   extent_len_t len = 0;
   extent_types_t type = extent_types_t::ROOT;
+  segment_seq_t seg_seq = NULL_SEG_SEQ;
   DENC(alloc_blk_t, v, p) {
     DENC_START(1, 1, p);
     denc(v.paddr, p);
     denc(v.laddr, p);
     denc(v.len, p);
     denc(v.type, p);
+    denc(v.seg_seq, p);
     DENC_FINISH(p);
   }
 };
@@ -1516,6 +1519,8 @@ struct segment_tail_t {
   mod_time_point_t modify_time;
   std::size_t num_extents;
 
+  paddr_t reclaimed_to = P_ADDR_NULL;
+
   segment_type_t get_type() const {
     return type;
   }
@@ -1530,6 +1535,7 @@ struct segment_tail_t {
     denc(v.type, p);
     denc(v.modify_time, p);
     denc(v.num_extents, p);
+    denc(v.reclaimed_to, p);
     DENC_FINISH(p);
   }
 };

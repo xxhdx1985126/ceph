@@ -404,6 +404,7 @@ public:
     return rewrite_version_stats;
   }
 
+  void set_reclaimed_to(paddr_t to);
 private:
   friend class Cache;
   friend Ref make_test_transaction();
@@ -418,6 +419,9 @@ private:
 
   seastore_off_t offset = 0; ///< relative offset of next block
   seastore_off_t delayed_temp_offset = 0;
+
+  // the point to which space reclamation trans has reach
+  paddr_t reclaimed_to = P_ADDR_NULL;
 
   /**
    * read_set

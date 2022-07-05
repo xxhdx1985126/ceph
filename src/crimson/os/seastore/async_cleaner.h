@@ -286,6 +286,8 @@ public:
 
   virtual void update_segment_avail_bytes(segment_type_t, paddr_t) = 0;
 
+  virtual paddr_t get_reclaimed_to() = 0;
+
   virtual void update_modify_time(
       segment_id_t, sea_time_point, std::size_t) = 0;
 
@@ -880,6 +882,10 @@ public:
   using work_ertr = ExtentCallbackInterface::extent_mapping_ertr;
   using work_iertr = ExtentCallbackInterface::extent_mapping_iertr;
 
+  paddr_t get_reclaimed_to() final {
+    return last_reclaimed_to.reclaimed_to;
+  }
+
 private:
   /*
    * 10 buckets for the number of closed segments by usage
@@ -1009,6 +1015,21 @@ private:
     }
   };
   std::optional<reclaim_state_t> reclaim_state;
+
+  struct last_reclaimed_t {
+    segment_seq_t journal_segment_seq = NULL_SEG_SEQ; // only used on mount
+    paddr_t reclaimed_to = P_ADDR_NULL;
+  };
+  last_reclaimed_t last_reclaimed_to;
+
+  // only supposed to be called before mount completes
+  void update_last_reclaimed(last_reclaimed_t to) {
+    ceph_assert(!init_complete);
+    if (last_reclaimed_to.journal_segment_seq == NULL_SEG_SEQ
+	|| last_reclaimed_to.journal_segment_seq <= to.journal_segment_seq) {
+      last_reclaimed_to = to;
+    }
+  }
 
   /**
    * GCProcess

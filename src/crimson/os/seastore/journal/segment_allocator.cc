@@ -233,7 +233,8 @@ SegmentAllocator::close_segment()
     current_segment_nonce,
     type,
     timepoint_to_mod(close_seg_info.modify_time),
-    close_seg_info.num_extents};
+    close_seg_info.num_extents,
+    segment_provider.get_reclaimed_to()};
   ceph::bufferlist bl;
   encode(tail, bl);
   INFO("{} close segment id={}, seq={}, written_to={}, nonce={}, journal_tail={}",

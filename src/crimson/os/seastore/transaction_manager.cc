@@ -104,7 +104,8 @@ TransactionManager::mount_ertr::future<> TransactionManager::mount()
 	  offsets.record_block_base,
 	  e,
 	  alloc_replay_from,
-	  modify_time);
+	  modify_time,
+	  async_cleaner.get());
       });
   }).safe_then([this] {
     return journal->open_for_write();
