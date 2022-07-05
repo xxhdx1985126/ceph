@@ -761,7 +761,8 @@ public:
     const delta_info_t &delta,
     const journal_seq_t &, // journal seq from which alloc
 			   // delta should be replayed
-    sea_time_point &modify_time);
+    sea_time_point &modify_time,
+    SegmentProvider* cleaner);
 
   /**
    * init_cached_extents

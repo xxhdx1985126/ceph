@@ -112,7 +112,7 @@ struct rbm_test_t :
 	    rbm_manager->get_device_id());
 	size_t len = p.second * block_size;
 	alloc_info.alloc_blk_ranges.emplace_back(
-	  paddr, L_ADDR_NULL, len, extent_types_t::ROOT);
+	  paddr, L_ADDR_NULL, len, extent_types_t::ROOT, NULL_SEG_SEQ);
 	alloc_info.op = alloc_delta_t::op_types_t::SET;
       }
       t.add_rbm_allocated_blocks(alloc_info);

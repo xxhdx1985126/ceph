@@ -1404,8 +1404,9 @@ struct alloc_blk_t {
     paddr_t paddr,
     laddr_t laddr,
     extent_len_t len,
-    extent_types_t type)
-    : paddr(paddr), laddr(laddr), len(len), type(type)
+    extent_types_t type,
+    segment_seq_t seg_seq)
+    : paddr(paddr), laddr(laddr), len(len), type(type), seg_seq(seg_seq)
   {}
 
   explicit alloc_blk_t() = default;
@@ -1414,12 +1415,14 @@ struct alloc_blk_t {
   laddr_t laddr = L_ADDR_NULL;
   extent_len_t len = 0;
   extent_types_t type = extent_types_t::ROOT;
+  segment_seq_t seg_seq = NULL_SEG_SEQ;
   DENC(alloc_blk_t, v, p) {
     DENC_START(1, 1, p);
     denc(v.paddr, p);
     denc(v.laddr, p);
     denc(v.len, p);
     denc(v.type, p);
+    denc(v.seg_seq, p);
     DENC_FINISH(p);
   }
 };
@@ -1507,6 +1510,19 @@ struct segment_header_t {
 };
 std::ostream &operator<<(std::ostream &out, const segment_header_t &header);
 
+struct last_reclaimed_t {
+  segment_seq_t reclaim_seq = NULL_SEG_SEQ;
+  journal_seq_t reclaimed_to = JOURNAL_SEQ_NULL;
+
+  DENC(last_reclaimed_t, v, p) {
+    DENC_START(1, 1, p);
+    denc(v.reclaim_seq, p);
+    denc(v.reclaimed_to, p);
+    DENC_FINISH(p);
+  }
+};
+std::ostream &operator<<(std::ostream &out, const last_reclaimed_t &);
+
 struct segment_tail_t {
   segment_seq_t segment_seq;
   segment_id_t physical_segment_id; // debugging
@@ -1519,6 +1535,8 @@ struct segment_tail_t {
 
   mod_time_point_t modify_time;
   std::size_t num_extents;
+
+  last_reclaimed_t reclaimed_to;
 
   segment_type_t get_type() const {
     return type;
@@ -1534,6 +1552,7 @@ struct segment_tail_t {
     denc(v.type, p);
     denc(v.modify_time, p);
     denc(v.num_extents, p);
+    denc(v.reclaimed_to, p);
     DENC_FINISH(p);
   }
 };
@@ -1928,6 +1947,7 @@ WRITE_CLASS_DENC_BOUNDED(crimson::os::seastore::extent_info_t)
 WRITE_CLASS_DENC_BOUNDED(crimson::os::seastore::segment_header_t)
 WRITE_CLASS_DENC_BOUNDED(crimson::os::seastore::alloc_blk_t)
 WRITE_CLASS_DENC_BOUNDED(crimson::os::seastore::alloc_delta_t)
+WRITE_CLASS_DENC_BOUNDED(crimson::os::seastore::last_reclaimed_t)
 WRITE_CLASS_DENC_BOUNDED(crimson::os::seastore::segment_tail_t)
 
 template<>

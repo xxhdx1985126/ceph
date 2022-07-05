@@ -91,6 +91,10 @@ struct btree_test_base :
     return JOURNAL_SEQ_NULL;
   }
 
+  last_reclaimed_t get_reclaimed_to() final {
+    return {};
+  }
+
   virtual void complete_commit(Transaction &t) {}
   seastar::future<> submit_transaction(TransactionRef t)
   {
