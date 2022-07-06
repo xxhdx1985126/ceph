@@ -1439,6 +1439,7 @@ void Cache::complete_commit(
     if (is_backref_mapped_extent_node(i)
 	  || is_retired_placeholder(i->get_type())) {
       if (t.should_record_release(i->get_paddr())) {
+	DEBUGT("inserting del backref {}", t, i->get_paddr());
 	backref_list.emplace_back(
 	  std::make_unique<backref_buf_entry_t>(
 	    i->get_paddr(),
