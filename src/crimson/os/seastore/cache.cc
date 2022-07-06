@@ -1488,6 +1488,7 @@ void Cache::complete_commit(
 	     i->get_length(),
 	     t.should_record_release(i->get_paddr()));
       if (t.should_record_release(i->get_paddr())) {
+	DEBUGT("inserting del backref {}", t, i->get_paddr());
 	backref_list.emplace_back(
 	  std::make_unique<backref_buf_entry_t>(
 	    i->get_paddr(),
