@@ -107,8 +107,8 @@ struct journal_test_t : seastar_test_suite_t, SegmentProvider {
     return JOURNAL_SEQ_NULL;
   }
 
-  paddr_t get_reclaimed_to() final {
-    return P_ADDR_NULL;
+  journal_seq_t get_reclaimed_to() final {
+    return JOURNAL_SEQ_NULL;
   }
 
   segment_id_t allocate_segment(

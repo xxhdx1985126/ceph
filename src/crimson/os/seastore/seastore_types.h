@@ -1519,7 +1519,7 @@ struct segment_tail_t {
   mod_time_point_t modify_time;
   std::size_t num_extents;
 
-  paddr_t reclaimed_to = P_ADDR_NULL;
+  journal_seq_t reclaimed_to;
 
   segment_type_t get_type() const {
     return type;

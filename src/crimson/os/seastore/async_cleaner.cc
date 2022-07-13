@@ -1055,7 +1055,10 @@ AsyncCleaner::gc_reclaim_space_ret AsyncCleaner::gc_reclaim_space()
 	      });
 	    }).si_then([this, &t] {
 	      t.set_reclaimed_to(reclaim_state->end_pos);
-	      last_reclaimed_to.reclaimed_to = reclaim_state->end_pos;
+	      last_reclaimed_to.segment_seq = get_seg_info(
+		reclaim_state->start_pos.as_seg_paddr().get_segment_id()).seq;
+	      ceph_assert(last_reclaimed_to.segment_seq != NULL_SEG_SEQ);
+	      last_reclaimed_to.offset = reclaim_state->end_pos;
 	      if (reclaim_state->is_complete()) {
 		t.mark_segment_to_release(reclaim_state->get_segment_id());
 	      }
@@ -1143,7 +1146,7 @@ AsyncCleaner::mount_ret AsyncCleaner::mount()
           update_journal_tail_target(
             tail.journal_tail,
             tail.alloc_replay_from);
-	  update_last_reclaimed({tail.segment_seq, tail.reclaimed_to});
+	  update_last_reclaimed(tail.reclaimed_to);
         }
 
         sea_time_point modify_time = mod_to_timepoint(tail.modify_time);
@@ -1219,12 +1222,12 @@ AsyncCleaner::scan_extents_ret AsyncCleaner::scan_no_tail_segment(
           for (auto &[ctime, delta] : record_deltas.deltas) {
             if (delta.type == extent_types_t::ALLOC_TAIL) {
               journal_seq_t seq;
-	      paddr_t reclaimed_to;
+	      journal_seq_t reclaimed_to;
 	      auto bliter = delta.bl.cbegin();
               decode(seq, bliter);
 	      decode(reclaimed_to, bliter);
               update_alloc_info_replay_from(seq);
-	      update_last_reclaimed({segment_header.segment_seq, reclaimed_to});
+	      update_last_reclaimed(reclaimed_to);
             }
           }
         }

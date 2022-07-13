@@ -1568,9 +1568,13 @@ Cache::replay_delta(
     decode(alloc_delta, delta.bl);
     std::vector<backref_buf_entry_ref> backref_list;
     for (auto &alloc_blk : alloc_delta.alloc_blk_ranges) {
+      bool no_skip = false;
       if (alloc_blk.paddr.is_relative()) {
 	assert(alloc_blk.paddr.is_record_relative());
 	alloc_blk.paddr = record_base.add_relative(alloc_blk.paddr);
+	no_skip = true; // extent alloc'd is in journal,
+			// this backref mustn't have been merged by gc,
+			// and must be replayed
       }
       DEBUG("replay alloc_blk {}~{} {}, journal_seq: {}",
 	alloc_blk.paddr, alloc_blk.len, alloc_blk.laddr, journal_seq);
@@ -1580,16 +1584,18 @@ Cache::replay_delta(
 	auto sid = alloc_blk.paddr.as_seg_paddr().get_segment_id();
 	auto &sinfo = cleaner->get_seg_info(sid);
 	auto reclaimed_to = cleaner->get_reclaimed_to();
-	if (sinfo.seq !=
-	      (alloc_blk.seg_seq == NULL_SEG_SEQ
-	       ? journal_seq.segment_seq : alloc_blk.seg_seq)
-	    || (reclaimed_to.as_seg_paddr().get_segment_id() == sid
-		&& reclaimed_to.as_seg_paddr().get_segment_off()
-		    > alloc_blk.paddr.as_seg_paddr().get_segment_off())) {
+	if (!no_skip
+	    && (sinfo.seq !=
+		(alloc_blk.seg_seq == NULL_SEG_SEQ
+		? journal_seq.segment_seq : alloc_blk.seg_seq)
+		|| ((reclaimed_to.segment_seq == sinfo.seq
+		    && reclaimed_to.offset.as_seg_paddr().get_segment_id() == sid
+		    && reclaimed_to.offset.as_seg_paddr().get_segment_off()
+		      > alloc_blk.paddr.as_seg_paddr().get_segment_off())))) {
 	  // the segment in which the extent alloc'd by this alloc_blk
 	  // must have been reclaimed, so this alloc_blk's backref must
 	  // have been merged. Skip this alloc_blk.
-	  DEBUG("skipping alloc_blk {}~{} {}, journal_seq: {}, alloc_blk seq: {},"
+	  WARN("skipping alloc_blk {}~{} {}, journal_seq: {}, alloc_blk seq: {},"
 		" current segment seq: {}, reclaimed_to: {}",
 	    alloc_blk.paddr, alloc_blk.len, alloc_blk.laddr,
 	    journal_seq, alloc_blk.seg_seq, sinfo.seq, reclaimed_to);
