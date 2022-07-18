@@ -364,23 +364,13 @@ TransactionManager::submit_transaction_direct(
   }).si_then([this, FNAME, &tref, seq_to_trim=std::move(seq_to_trim),
 	      gc_range=std::move(gc_range)]() mutable
 	      -> submit_transaction_iertr::future<> {
+    ceph_assert(!(seq_to_trim && gc_range));
     if (seq_to_trim && *seq_to_trim != JOURNAL_SEQ_NULL) {
       cache->trim_backref_bufs(*seq_to_trim);
     }
-
-#ifndef NDEBUG
     if (gc_range) {
-      auto backref_set = 
-	backref_manager->get_cached_backrefs_in_range(
-	  gc_range->first, gc_range->second);
-      for (auto &backref : backref_set) {
-	ERRORT("unexpected backref: {}~{}, {}, {}, {}",
-	  tref, backref.paddr, backref.len, backref.laddr,
-	  backref.type, backref.seq);
-	ceph_abort("impossible");
-      }
+      cache->remove_backrefs_in_range(gc_range->first, gc_range->second);
     }
-#endif
     auto record = cache->prepare_record(tref, async_cleaner.get());
 
     tref.get_handle().maybe_release_collection_lock();
