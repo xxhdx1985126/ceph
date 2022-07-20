@@ -796,6 +796,7 @@ void Cache::commit_replace_extent(
   }
 
   invalidate_extent(t, *prev);
+  next->on_replace_extent(t);
 }
 
 void Cache::invalidate_extent(

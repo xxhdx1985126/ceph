@@ -236,14 +236,30 @@ public:
     SUBTRACET(seastore_tm, "{}~{}", t, offset, length);
     return get_pin(
       t, offset
-    ).si_then([this, FNAME, &t, offset, length] (auto pin) {
+    ).si_then([this, FNAME, &t, offset, length] (auto pin)
+      -> read_extent_ret<T> {
       if (length != pin->get_length() || !pin->get_val().is_real()) {
         SUBERRORT(seastore_tm,
             "offset {} len {} got wrong pin {}",
             t, offset, length, *pin);
         ceph_assert(0 == "Should be impossible");
       }
-      return this->pin_to_extent<T>(t, std::move(pin));
+      auto ptracker = pin->get_parent_tracker();
+      assert(ptracker);
+      if (ptracker->is_empty()) {
+	return this->pin_to_extent<T>(t, std::move(pin));
+      } else {
+	auto e = ptracker->get_child(t, &pin->get_extent());
+	if (e) {
+	  return read_extent_iertr::make_ready_future<
+	    TCachedExtentRef<T>>(
+	      e->template cast<T>());
+	} else {
+	  return read_extent_iertr::make_ready_future<
+	    TCachedExtentRef<T>>(
+	      TCachedExtentRef<T>());
+	}
+      }
     });
   }
 
@@ -260,14 +276,30 @@ public:
     SUBTRACET(seastore_tm, "{}", t, offset);
     return get_pin(
       t, offset
-    ).si_then([this, FNAME, &t, offset] (auto pin) {
+    ).si_then([this, FNAME, &t, offset] (auto pin)
+      -> read_extent_ret<T> {
       if (!pin->get_val().is_real()) {
         SUBERRORT(seastore_tm,
             "offset {} got wrong pin {}",
             t, offset, *pin);
         ceph_assert(0 == "Should be impossible");
       }
-      return this->pin_to_extent<T>(t, std::move(pin));
+      auto ptracker = pin->get_parent_tracker();
+      assert(ptracker);
+      if (ptracker->is_empty()) {
+	return this->pin_to_extent<T>(t, std::move(pin));
+      } else {
+	auto e = ptracker->get_child(t, &pin->get_extent());
+	if (e) {
+	  return read_extent_iertr::make_ready_future<
+	    TCachedExtentRef<T>>(
+	      e->template cast<T>());
+	} else {
+	  return read_extent_iertr::make_ready_future<
+	    TCachedExtentRef<T>>(
+	      TCachedExtentRef<T>());
+	}
+      }
     });
   }
 

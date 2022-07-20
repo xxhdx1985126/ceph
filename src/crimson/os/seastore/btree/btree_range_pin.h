@@ -430,6 +430,8 @@ class BtreeNodePin : public PhysicalNodePin<key_t, val_t> {
   extent_len_t len;
   btree_range_pin_t<key_t> pin;
 
+  ChildNodeTracker* parent_tracker;
+
 public:
   using val_type = val_t;
   BtreeNodePin() = default;
@@ -438,9 +440,17 @@ public:
     CachedExtentRef parent,
     val_t &value,
     extent_len_t len,
-    fixed_kv_node_meta_t<key_t> &&meta)
-    : parent(parent), value(value), len(len) {
+    fixed_kv_node_meta_t<key_t> &&meta,
+    ChildNodeTracker* parent_tracker)
+    : parent(parent),
+      value(value),
+      len(len),
+      parent_tracker(parent_tracker) {
     pin.set_range(std::move(meta));
+  }
+
+  ChildNodeTracker* get_parent_tracker() const final {
+    return parent_tracker;
   }
 
   btree_range_pin_t<key_t>& get_range_pin() {
@@ -456,7 +466,12 @@ public:
   }
 
   void link_extent(LogicalCachedExtent *ref) final {
+    parent_tracker->update_child(ref);
     pin.set_extent(ref);
+  }
+
+  CachedExtent& get_extent() final {
+    return pin.get_extent();
   }
 
   extent_len_t get_length() const final {

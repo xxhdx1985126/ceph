@@ -4,6 +4,7 @@
 #include "crimson/os/seastore/cached_extent.h"
 
 #include "crimson/common/log.h"
+#include "crimson/os/seastore/transaction.h"
 
 namespace {
   [[maybe_unused]] seastar::logger& logger() {
@@ -104,6 +105,44 @@ std::ostream &operator<<(std::ostream &out, const lba_pin_list_t &rhs)
     first = false;
   }
   return out << ']';
+}
+
+CachedExtentRef ChildNodeTracker::get_child(
+  Transaction &t,
+  CachedExtent* parent)
+{
+  if (!child_per_trans) {
+    return child;
+  }
+  auto it = child_per_trans->find(t.get_trans_id());
+  ceph_assert(child);
+  if (it == child_per_trans->end()) {
+    return child;
+  } else {
+    ceph_assert(!parent->is_pending()
+      || (parent->is_pending() && !child_per_trans));
+    return it->second;
+  }
+}
+
+void ChildNodeTracker::add_child_per_trans(
+  Transaction &t,
+  CachedExtentRef &child)
+{
+  ceph_assert(child);
+  if (!child_per_trans) {
+    child_per_trans = std::make_optional<
+      std::map<transaction_id_t, CachedExtentRef>>();
+  }
+  child_per_trans->emplace(t.get_trans_id(), child);
+}
+
+void ChildNodeTracker::on_transaction_commit(Transaction &t) {
+  ceph_assert(child_per_trans);
+  auto it = child_per_trans->find(t.get_trans_id());
+  ceph_assert(it != child_per_trans->end());
+  child = it->second;
+  child_per_trans->erase(it);
 }
 
 }

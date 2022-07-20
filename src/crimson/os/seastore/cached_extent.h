@@ -185,6 +185,13 @@ public:
   virtual void on_delta_write(paddr_t record_block_offset) {}
 
   /**
+   * on_replace_extent
+   *
+   * Called when extents are replaced by their mutated counterpart
+   */
+  virtual void on_replace_extent(Transaction &t) {}
+
+  /**
    * get_type
    *
    * Returns concrete type.
@@ -720,6 +727,33 @@ class PhysicalNodePin;
 template <typename key_t, typename val_t>
 using PhysicalNodePinRef = std::unique_ptr<PhysicalNodePin<key_t, val_t>>;
 
+class ChildNodeTracker {
+public:
+  ChildNodeTracker() = default;
+  ChildNodeTracker(const ChildNodeTracker &other)
+    : child(other.child) {}
+  CachedExtentRef get_child(Transaction &t, CachedExtent* parent);
+  void add_child_per_trans(Transaction &t, CachedExtentRef &child);
+  void update_child(CachedExtentRef c) {
+    child = c;
+    if (child_per_trans) {
+      child_per_trans.reset();
+    }
+  }
+  void on_transaction_commit(Transaction &t);
+  bool is_empty() {
+    assert(child || (!child && !child_per_trans));
+    return (bool)child;
+  }
+private:
+  CachedExtentRef child;
+  //TODO: should change to use intrusive map
+  std::optional<std::map<transaction_id_t, CachedExtentRef>> child_per_trans;
+};
+
+using ChildNodeTrackerRef = seastar::shared_ptr<ChildNodeTracker>;
+
+
 template <typename key_t, typename val_t>
 class PhysicalNodePin {
 public:
@@ -731,6 +765,8 @@ public:
   virtual key_t get_key() const = 0;
   virtual PhysicalNodePinRef<key_t, val_t> duplicate() const = 0;
   virtual bool has_been_invalidated() const = 0;
+  virtual ChildNodeTracker* get_parent_tracker() const = 0;
+  virtual CachedExtent& get_extent() = 0;
 
   virtual ~PhysicalNodePin() {}
 };

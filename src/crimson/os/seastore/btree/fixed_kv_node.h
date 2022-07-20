@@ -31,10 +31,42 @@ struct FixedKVNode : CachedExtent {
   using FixedKVNodeRef = TCachedExtentRef<FixedKVNode>;
 
   btree_range_pin_t<node_key_t> pin;
+  std::vector<ChildNodeTracker> child_trackers;
+  // used to remember the pos in the parent node, should only
+  // be non-nullptr if the current node is the root of the modified
+  // subtree
+  ChildNodeTracker* parent_pos;
 
-  FixedKVNode(ceph::bufferptr &&ptr) : CachedExtent(std::move(ptr)), pin(this) {}
+  FixedKVNode(size_t node_size, ceph::bufferptr &&ptr)
+    : CachedExtent(std::move(ptr)), pin(this), child_trackers(node_size) {}
   FixedKVNode(const FixedKVNode &rhs)
-    : CachedExtent(rhs), pin(rhs.pin, this) {}
+    : CachedExtent(rhs),
+      pin(rhs.pin, this),
+      child_trackers(rhs.child_trackers),
+      parent_pos(rhs.parent_pos)
+  {}
+
+  void add_child_tracker(CachedExtentRef child, Transaction &t, uint64_t pos) {
+    ceph_assert(pos < child_trackers.size());
+    auto &tracker = child_trackers[pos];
+    tracker.add_child_per_trans(t, child);
+  }
+
+  template<typename T>
+  TCachedExtentRef<T> get_child(Transaction &t, uint64_t pos) {
+    static_assert(std::is_base_of_v<FixedKVNode, T>);
+    auto &tracker = child_trackers[pos];
+    auto child = tracker.get_child(t, this);
+    if (child)
+      return child->template cast<T>();
+    else
+      return TCachedExtentRef<T>();
+  }
+
+  ChildNodeTracker& get_child_tracker(uint64_t pos) {
+    ceph_assert(pos < child_trackers.size());
+    return child_trackers[pos];
+  }
 
   virtual fixed_kv_node_meta_t<node_key_t> get_node_meta() const = 0;
 
@@ -45,6 +77,10 @@ struct FixedKVNode : CachedExtent {
     assert(get_prior_instance());
     pin.take_pin(get_prior_instance()->template cast<FixedKVNode>()->pin);
     resolve_relative_addrs(record_block_offset);
+  }
+
+  void on_replace_extent(Transaction &t) {
+    parent_pos->on_transaction_commit(t);
   }
 
   void on_initial_write() final {
@@ -90,12 +126,15 @@ struct FixedKVInternalNode
       NODE_KEY_LE,
       paddr_t,
       paddr_le_t>;
+  using base_ref_t = typename FixedKVNode<NODE_KEY>::FixedKVNodeRef;
   using internal_const_iterator_t = typename node_layout_t::const_iterator;
   using internal_iterator_t = typename node_layout_t::iterator;
-  template <typename... T>
-  FixedKVInternalNode(T&&... t) :
-    FixedKVNode<NODE_KEY>(std::forward<T>(t)...),
-    node_layout_t(this->get_bptr().c_str()) {}
+  FixedKVInternalNode(ceph::bufferptr &&ptr)
+    : FixedKVNode<NODE_KEY>(node_size, std::move(ptr)),
+      node_layout_t(this->get_bptr().c_str()) {}
+  FixedKVInternalNode(const FixedKVInternalNode &rhs)
+    : FixedKVNode<NODE_KEY>(rhs),
+      node_layout_t(this->get_bptr().c_str()) {}
 
   virtual ~FixedKVInternalNode() {}
 
@@ -127,6 +166,10 @@ struct FixedKVInternalNode
     internal_const_iterator_t iter,
     NODE_KEY pivot,
     paddr_t addr) {
+    std::move(
+      this->child_trackers.begin() + iter.offset,
+      this->child_trackers.begin() + this->get_size() - 1,
+      this->child_trackers.begin() + iter.offset + 1);
     return this->journal_insert(
       iter,
       pivot,
@@ -135,6 +178,10 @@ struct FixedKVInternalNode
   }
 
   void remove(internal_const_iterator_t iter) {
+    std::move(
+      this->child_trackers.begin() + iter.offset + 1,
+      this->child_trackers.begin() + this->get_size() - 1,
+      this->child_trackers.begin() + iter.offset);
     return this->journal_remove(
       iter,
       maybe_get_delta_buffer());
@@ -321,11 +368,14 @@ struct FixedKVLeafNode
       NODE_KEY_LE,
       VAL,
       VAL_LE>;
+  using base_ref_t = typename FixedKVNode<NODE_KEY>::FixedKVNodeRef;
   using internal_const_iterator_t = typename node_layout_t::const_iterator;
-  template <typename... T>
-  FixedKVLeafNode(T&&... t) :
-    FixedKVNode<NODE_KEY>(std::forward<T>(t)...),
-    node_layout_t(this->get_bptr().c_str()) {}
+  FixedKVLeafNode(ceph::bufferptr &&ptr)
+    : FixedKVNode<NODE_KEY>(node_size, std::move(ptr)),
+      node_layout_t(this->get_bptr().c_str()) {}
+  FixedKVLeafNode(const FixedKVLeafNode &rhs)
+    : FixedKVNode<NODE_KEY>(rhs),
+      node_layout_t(this->get_bptr().c_str()) {}
 
   virtual ~FixedKVLeafNode() {}
 

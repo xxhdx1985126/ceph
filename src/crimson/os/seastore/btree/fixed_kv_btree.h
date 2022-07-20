@@ -201,7 +201,8 @@ public:
       return std::make_unique<pin_t>(
 	leaf.node,
 	val,
-	fixed_kv_node_meta_t<node_key_t>{ key, key + val.len, 0 });
+	fixed_kv_node_meta_t<node_key_t>{ key, key + val.len, 0 },
+        leaf.pos);
     }
 
     typename leaf_node_t::Ref get_leaf_node() {
@@ -524,12 +525,13 @@ public:
             ++(get_tree_stats<self_type>(c.trans).num_inserts);
             return handle_split(
               c, ret
-            ).si_then([c, laddr, val, &ret] {
+            ).si_then([c, laddr, val, &ret, this] {
               if (!ret.leaf.node->is_pending()) {
                 CachedExtentRef mut = c.cache.duplicate_for_write(
                   c.trans, ret.leaf.node
                 );
                 ret.leaf.node = mut->cast<leaf_node_t>();
+                may_link_parent_child(ret, 1, c.trans);
               }
               auto iter = typename leaf_node_t::const_iterator(
                   ret.leaf.node.get(), ret.leaf.pos);
@@ -586,6 +588,7 @@ public:
         c.trans, iter.leaf.node
       );
       iter.leaf.node = mut->cast<leaf_node_t>();
+      may_link_parent_child(iter, 1, c.trans);
     }
     ++(get_tree_stats<self_type>(c.trans).num_updates);
     iter.leaf.node->update(
@@ -627,6 +630,7 @@ public:
             c.trans, ret.leaf.node
           );
           ret.leaf.node = mut->cast<leaf_node_t>();
+          may_link_parent_child(ret, 1, c.trans);
         }
         ret.leaf.node->remove(
           ret.leaf.node->iter_idx(ret.leaf.pos));
@@ -851,7 +855,9 @@ public:
         n_fixed_kv_extent->get_node_meta().begin,
         e->get_paddr(),
         n_fixed_kv_extent->get_paddr()
-      ).si_then([c, e] {
+      ).si_then([c, e, n_fixed_kv_extent] {
+        auto tracker = n_fixed_kv_extent->parent_pos;
+        tracker->update_child(n_fixed_kv_extent);
         c.cache.retire_extent(c.trans, e);
       });
     };
@@ -966,6 +972,7 @@ public:
           c.trans,
           parent.node
         );
+        may_link_parent_child(iter, depth, c.trans);
         typename internal_node_t::Ref mparent = mut->cast<internal_node_t>();
         mparent->update(piter, new_addr);
 
@@ -984,6 +991,37 @@ private:
   phy_tree_root_t root;
   bool root_dirty = false;
 
+  template <typename T>
+  using node_position_t = typename iterator::template node_position_t<T>;
+
+  void may_link_parent_child(iterator &ret, depth_t d, Transaction &t) {
+    auto &parent_entry = ret.get_internal(d + 1);
+    auto parent = parent_entry.node;
+    auto child = (d == 1
+                  ? (typename leaf_node_t::base_ref_t)ret.leaf.node
+                  : (typename internal_node_t::base_ref_t)ret.get_internal(d).node);
+    if (!parent->is_pending()) {
+      // parent node isn't being mutated, the leaf should be
+      // set with the parent pos and the parent node should add
+      // the mutated leaf to the parent node's child trackers
+      parent->add_child_tracker(child, t, parent_entry.pos);
+      child->parent_pos = &parent->get_child_tracker(parent_entry.pos);
+    }
+  }
+
+  template <typename NodeType>
+  void may_link_parent_child(
+    node_position_t<internal_node_t> &parent_pos,
+    node_position_t<NodeType> &child_pos,
+    Transaction &t) {
+    auto parent = parent_pos.node;
+    auto child = child_pos.node;
+    if (!parent->is_pending()) {
+      parent->add_child_tracker(child, t, parent_pos.pos);
+      child->parent_pos = &parent->get_child_tracker(parent_pos.pos);
+    }
+  }
+
   using get_internal_node_iertr = base_iertr;
   using get_internal_node_ret = get_internal_node_iertr::future<InternalNodeRef>;
   static get_internal_node_ret get_internal_node(
@@ -991,7 +1029,8 @@ private:
     depth_t depth,
     paddr_t offset,
     node_key_t begin,
-    node_key_t end)
+    node_key_t end,
+    std::optional<node_position_t<internal_node_t>> parent_pos = std::nullopt)
   {
     LOG_PREFIX(FixedKVBtree::get_internal_node);
     SUBTRACET(
@@ -1003,10 +1042,20 @@ private:
       begin,
       end);
     assert(depth > 1);
-    auto init_internal = [c, depth, begin, end](internal_node_t &node) {
+    auto init_internal = [c, depth, begin, end,
+                          parent_pos=std::move(parent_pos)]
+                          (internal_node_t &node) {
       assert(!node.is_pending());
       assert(!node.pin.is_linked());
       node.pin.set_range(fixed_kv_node_meta_t<node_key_t>{begin, end, depth});
+      assert(!node.parent_pos);
+      if (parent_pos) {
+        auto parent = parent_pos->node;
+        auto &tracker = parent->get_child_tracker(parent_pos->pos);
+        ceph_assert(tracker.is_empty());
+        tracker.update_child(&node);
+        node.parent_pos = &tracker;
+      }
       if (c.pins) {
         c.pins->add_pin(node.pin);
       }
@@ -1053,7 +1102,8 @@ private:
     op_context_t<node_key_t> c,
     paddr_t offset,
     node_key_t begin,
-    node_key_t end)
+    node_key_t end,
+    std::optional<node_position_t<internal_node_t>> parent_pos = std::nullopt)
   {
     LOG_PREFIX(FixedKVBtree::get_leaf_node);
     SUBTRACET(
@@ -1063,10 +1113,19 @@ private:
       offset,
       begin,
       end);
-    auto init_leaf = [c, begin, end](leaf_node_t &node) {
+    auto init_leaf = [c, begin, end,
+                      parent_pos=std::move(parent_pos)]
+                      (leaf_node_t &node) {
       assert(!node.is_pending());
       assert(!node.pin.is_linked());
       node.pin.set_range(fixed_kv_node_meta_t<node_key_t>{begin, end, 1});
+      assert(!node.parent_pos);
+      if (parent_pos) {
+        auto parent = parent_pos->node;
+        auto &tracker = parent->get_child_tracker(parent_pos->pos);
+        tracker.update_child(&node);
+        node.parent_pos = &tracker;
+      }
       if (c.pins) {
         c.pins->add_pin(node.pin);
       }
@@ -1159,6 +1218,28 @@ private:
     assert(depth > 1);
     auto &parent_entry = iter.get_internal(depth + 1);
     auto parent = parent_entry.node;
+
+    auto on_found =
+      [depth, visitor, &iter, &f](InternalNodeRef node) {
+        auto &entry = iter.get_internal(depth);
+        entry.node = node;
+        auto node_iter = f(*node);
+        assert(node_iter != node->end());
+        entry.pos = node_iter->get_offset();
+        if (visitor)
+          (*visitor)(
+            node->get_paddr(),
+            node->get_length(),
+            depth,
+            node->get_type());
+        return seastar::now();
+      };
+    auto child = parent->template get_child<internal_node_t>(
+      c.trans, parent_entry.pos);
+    if (child) {
+      return on_found(child);
+    }
+
     auto node_iter = parent->iter_idx(parent_entry.pos);
     auto next_iter = node_iter + 1;
     auto begin = node_iter->get_key();
@@ -1170,20 +1251,10 @@ private:
       depth,
       node_iter->get_val().maybe_relative_to(parent->get_paddr()),
       begin,
-      end
-    ).si_then([depth, visitor, &iter, &f](InternalNodeRef node) {
-      auto &entry = iter.get_internal(depth);
-      entry.node = node;
-      auto node_iter = f(*node);
-      assert(node_iter != node->end());
-      entry.pos = node_iter->get_offset();
-      if (visitor)
-        (*visitor)(
-          node->get_paddr(),
-          node->get_length(),
-          depth,
-          node->get_type());
-      return seastar::now();
+      end,
+      std::make_optional<node_position_t<internal_node_t>>(parent_entry)
+    ).si_then([on_found=std::move(on_found)](InternalNodeRef node) {
+      return on_found(node);
     });
   }
 
@@ -1199,6 +1270,26 @@ private:
     auto &parent_entry = iter.get_internal(2);
     auto parent = parent_entry.node;
     assert(parent);
+
+    auto on_found =
+      [visitor, &iter, &f](LeafNodeRef node) {
+      iter.leaf.node = node;
+      auto node_iter = f(*node);
+      iter.leaf.pos = node_iter->get_offset();
+      if (visitor)
+        (*visitor)(
+          node->get_paddr(),
+          node->get_length(),
+          1,
+          node->get_type());
+      return seastar::now();
+    };
+    auto child = parent->template get_child<leaf_node_t>(
+      c.trans, parent_entry.pos);
+    if (child) {
+      return on_found(child);
+    }
+
     auto node_iter = parent->iter_idx(parent_entry.pos);
     auto next_iter = node_iter + 1;
     auto begin = node_iter->get_key();
@@ -1210,18 +1301,11 @@ private:
       c,
       node_iter->get_val().maybe_relative_to(parent->get_paddr()),
       begin,
-      end
-    ).si_then([visitor, &iter, &f](LeafNodeRef node) {
-      iter.leaf.node = node;
-      auto node_iter = f(*node);
-      iter.leaf.pos = node_iter->get_offset();
-      if (visitor)
-        (*visitor)(
-          node->get_paddr(),
-          node->get_length(),
-          1,
-          node->get_type());
-      return seastar::now();
+      end,
+      std::make_optional<node_position_t<internal_node_t>>(parent_entry)
+    ).si_then([visitor, &iter, &f, on_found=std::move(on_found)]
+      (LeafNodeRef node) {
+      return on_found(node);
     });
   }
 
@@ -1440,6 +1524,10 @@ private:
         parent_iter + 1,
         pivot,
         right->get_paddr());
+      auto &l_tracker = parent_node->get_child_tracker(parent_pos.pos);
+      auto &r_tracker = parent_node->get_child_tracker(parent_pos.pos + 1);
+      l_tracker.update_child(left);
+      r_tracker.update_child(right);
 
       SUBTRACET(
         seastore_fixedkv_tree,
@@ -1460,6 +1548,7 @@ private:
         parent_pos.node = c.cache.duplicate_for_write(
           c.trans, parent_pos.node
         )->template cast<internal_node_t>();
+        may_link_parent_child(iter, split_from, c.trans);
       }
 
       if (split_from > 1) {
@@ -1594,9 +1683,6 @@ private:
       });
   }
 
-  template <typename T>
-  using node_position_t = typename iterator::template node_position_t<T>;
-
   template <typename NodeType,
             std::enable_if_t<std::is_same_v<NodeType, leaf_node_t>, int> = 0>
   base_iertr::future<typename NodeType::Ref> get_node(
@@ -1604,9 +1690,10 @@ private:
     depth_t depth,
     paddr_t addr,
     node_key_t begin,
-    node_key_t end) {
+    node_key_t end,
+    std::optional<node_position_t<internal_node_t>> parent_pos) {
     assert(depth == 1);
-    return get_leaf_node(c, addr, begin, end);
+    return get_leaf_node(c, addr, begin, end, std::move(parent_pos));
   }
 
   template <typename NodeType,
@@ -1616,8 +1703,9 @@ private:
     depth_t depth,
     paddr_t addr,
     node_key_t begin,
-    node_key_t end) {
-    return get_internal_node(c, depth, addr, begin, end);
+    node_key_t end,
+    std::optional<node_position_t<internal_node_t>> parent_pos) {
+    return get_internal_node(c, depth, addr, begin, end, std::move(parent_pos));
   }
 
   template <typename NodeType>
@@ -1632,6 +1720,7 @@ private:
       parent_pos.node = c.cache.duplicate_for_write(
         c.trans, parent_pos.node
       )->template cast<internal_node_t>();
+      may_link_parent_child(parent_pos, pos, c.trans);
     }
 
     auto iter = parent_pos.get_iter();
@@ -1650,7 +1739,8 @@ private:
       depth,
       donor_iter.get_val().maybe_relative_to(parent_pos.node->get_paddr()),
       begin,
-      end
+      end,
+      std::make_optional<node_position_t<internal_node_t>>(parent_pos)
     ).si_then([c, iter, donor_iter, donor_is_left, &parent_pos, &pos](
                 typename NodeType::Ref donor) {
       LOG_PREFIX(FixedKVBtree::merge_level);
@@ -1667,6 +1757,8 @@ private:
           liter,
           replacement->get_paddr());
         parent_pos.node->remove(riter);
+        auto l_tracker = l->parent_pos;
+        l_tracker->update_child(replacement);
 
         pos.node = replacement;
         if (donor_is_left) {
@@ -1693,6 +1785,10 @@ private:
           riter,
           pivot,
           replacement_r->get_paddr());
+        auto l_tracker = l->parent_pos;
+        auto r_tracker = r->parent_pos;
+        l_tracker->update_child(replacement_l);
+        r_tracker->update_child(replacement_r);
 
         if (donor_is_left) {
           assert(parent_pos.pos > 0);
