@@ -198,7 +198,15 @@ public:
     SUBTRACET(seastore_tm, "getting extent {}", t, *pin);
     using ret = pin_to_extent_ret<T>;
     auto &pref = *pin;
-    return cache->get_extent<T>(
+#ifndef NDEBUG
+    CachedExtentRef ext;
+    auto r = t.get_extent(pref.get_val(), &ext);
+    if (r != Transaction::get_extent_ret::ABSENT) {
+      SUBERRORT(seastore_tm, "unexpected non-absent extent {}", t, *ext);
+      ceph_abort();
+    }
+#endif
+    return cache->get_extent<false, T>(
       t,
       pref.get_val(),
       pref.get_length(),
@@ -245,20 +253,18 @@ public:
         ceph_assert(0 == "Should be impossible");
       }
       auto ptracker = pin->get_parent_tracker();
-      assert(ptracker);
+      ceph_assert(ptracker);
       if (ptracker->is_empty()) {
 	return this->pin_to_extent<T>(t, std::move(pin));
       } else {
-	auto e = ptracker->get_child(t, &pin->get_extent());
-	if (e) {
-	  return read_extent_iertr::make_ready_future<
-	    TCachedExtentRef<T>>(
-	      e->template cast<T>());
-	} else {
-	  return read_extent_iertr::make_ready_future<
-	    TCachedExtentRef<T>>(
-	      TCachedExtentRef<T>());
+	auto e = ptracker->get_child(t, pin->get_parent().get());
+	assert(e && e->is_valid());
+	if (!e->is_pending()) {
+	  t.add_to_read_set(e);
 	}
+	return read_extent_iertr::make_ready_future<
+	  TCachedExtentRef<T>>(
+	    e->template cast<T>());
       }
     });
   }
@@ -285,20 +291,18 @@ public:
         ceph_assert(0 == "Should be impossible");
       }
       auto ptracker = pin->get_parent_tracker();
-      assert(ptracker);
+      ceph_assert(ptracker);
       if (ptracker->is_empty()) {
 	return this->pin_to_extent<T>(t, std::move(pin));
       } else {
-	auto e = ptracker->get_child(t, &pin->get_extent());
-	if (e) {
-	  return read_extent_iertr::make_ready_future<
-	    TCachedExtentRef<T>>(
-	      e->template cast<T>());
-	} else {
-	  return read_extent_iertr::make_ready_future<
-	    TCachedExtentRef<T>>(
-	      TCachedExtentRef<T>());
+	auto e = ptracker->get_child(t, pin->get_parent().get());
+	assert(e && e->is_valid());
+	if (!e->is_pending()) {
+	  t.add_to_read_set(e);
 	}
+	return read_extent_iertr::make_ready_future<
+	  TCachedExtentRef<T>>(
+	    e->template cast<T>());
       }
     });
   }

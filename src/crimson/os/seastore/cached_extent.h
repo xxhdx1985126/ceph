@@ -46,12 +46,15 @@ namespace onode {
 
 template <typename T>
 class read_set_item_t {
-  boost::intrusive::list_member_hook<> list_hook;
-  using list_hook_options = boost::intrusive::member_hook<
+  using set_hook_t = boost::intrusive::set_member_hook<
+    boost::intrusive::link_mode<
+      boost::intrusive::auto_unlink>>;
+  set_hook_t set_hook;
+  using set_hook_options = boost::intrusive::member_hook<
     read_set_item_t,
-    boost::intrusive::list_member_hook<>,
-    &read_set_item_t::list_hook>;
-
+    set_hook_t,
+    &read_set_item_t::set_hook>;
+    
 public:
   struct cmp_t {
     using is_transparent = paddr_t;
@@ -60,9 +63,29 @@ public:
     bool operator()(const read_set_item_t<T> &lhs, const paddr_t &rhs) const;
   };
 
-  using list =  boost::intrusive::list<
+  struct trans_cmp_t {
+    bool operator()(
+      const read_set_item_t<Transaction> &lhs,
+      const read_set_item_t<Transaction> &rhs) const {
+      return lhs.t < rhs.t;
+    }
+    bool operator()(
+      const Transaction *lhs,
+      const read_set_item_t<Transaction> &rhs) const {
+      return lhs < rhs.t;
+    }
+    bool operator()(
+      const read_set_item_t<Transaction> &lhs,
+      const Transaction *rhs) const {
+      return lhs.t < rhs;
+    }
+  };
+
+  using trans_set_t = boost::intrusive::set<
     read_set_item_t,
-    list_hook_options>;
+    set_hook_options,
+    boost::intrusive::constant_time_size<false>,
+    boost::intrusive::compare<trans_cmp_t>>;
 
   T *t = nullptr;
   CachedExtentRef ref;
@@ -77,9 +100,52 @@ using read_set_t = std::set<
   read_set_item_t<T>,
   typename read_set_item_t<T>::cmp_t>;
 
+struct per_trans_view_t {
+  transaction_id_t mutated_by;
+
+  struct trans_view_compare_t {
+    bool operator()(
+      const per_trans_view_t &lhs,
+      const per_trans_view_t &rhs) const
+    {
+      return lhs.mutated_by < rhs.mutated_by;
+    }
+    bool operator()(
+      const transaction_id_t &lhs,
+      const per_trans_view_t &rhs) const
+    {
+      return lhs < rhs.mutated_by;
+    }
+    bool operator()(
+      const per_trans_view_t &lhs,
+      const transaction_id_t &rhs) const
+    {
+      return lhs.mutated_by < rhs;
+    }
+  };
+
+  using trans_view_hook_t =
+    boost::intrusive::set_member_hook<
+      boost::intrusive::link_mode<
+	boost::intrusive::auto_unlink>>;
+  trans_view_hook_t transaction_view_hook;
+
+  using trans_view_member_options =
+    boost::intrusive::member_hook<
+      per_trans_view_t,
+      trans_view_hook_t,
+      &per_trans_view_t::transaction_view_hook>;
+  using trans_view_set_t = boost::intrusive::set<
+    per_trans_view_t,
+    trans_view_member_options,
+    boost::intrusive::constant_time_size<false>,
+    boost::intrusive::compare<trans_view_compare_t>>;
+};
+
 class ExtentIndex;
 class CachedExtent : public boost::intrusive_ref_counter<
-  CachedExtent, boost::thread_unsafe_counter> {
+  CachedExtent, boost::thread_unsafe_counter>,
+                     public per_trans_view_t {
   enum class extent_state_t : uint8_t {
     INITIAL_WRITE_PENDING, // In Transaction::write_set and fresh_block_list
     MUTATION_PENDING,      // In Transaction::write_set and mutated_block_list
@@ -189,7 +255,9 @@ public:
    *
    * Called when extents are replaced by their mutated counterpart
    */
-  virtual void on_replace_extent(Transaction &t) {}
+  virtual void on_replace_extent(Transaction &t) {
+    mutated_by = 0;
+  }
 
   /**
    * get_type
@@ -491,7 +559,7 @@ private:
     }
   }
 
-  read_set_item_t<Transaction>::list transactions;
+  read_set_item_t<Transaction>::trans_set_t transactions;
 
   placement_hint_t user_hint;
 
@@ -732,10 +800,19 @@ public:
   ChildNodeTracker() = default;
   ChildNodeTracker(const ChildNodeTracker &other)
     : child(other.child) {}
+  ChildNodeTracker& operator=(ChildNodeTracker &&) = default;
+
   CachedExtentRef get_child(Transaction &t, CachedExtent* parent);
-  void add_child_per_trans(Transaction &t, CachedExtentRef &child);
-  void update_child(CachedExtentRef c) {
+  void add_child_per_trans(Transaction &t, CachedExtent* child);
+  void update_child(CachedExtent* c) {
     child = c;
+    // directly modify global child view, this should only happens
+    // in two scenarios: 1) the child is just loaded from disk; 2)
+    // a new child is alloc'd, in both of which child_per_trans serves
+    // no purpose(in the first scenario, there shouldn't be any trans
+    // specific child view; while, in the latter, trans specific child
+    // view should be cleared, as the parent must be in a pending state
+    // and the child should only be visible to the current transaction).
     if (child_per_trans) {
       child_per_trans.reset();
     }
@@ -743,16 +820,23 @@ public:
   void on_transaction_commit(Transaction &t);
   bool is_empty() {
     assert(child || (!child && !child_per_trans));
-    return (bool)child;
+    return child == nullptr;
+  }
+  void remove_child(CachedExtent* c) {
+    // no need to worry about child_per_trans, entries in which
+    // should be removed by intrusive map hooks
+    if (child == c) {
+      child = nullptr;
+    }
   }
 private:
-  CachedExtentRef child;
-  //TODO: should change to use intrusive map
-  std::optional<std::map<transaction_id_t, CachedExtentRef>> child_per_trans;
+  CachedExtent* child = nullptr;
+  // only the parent of an mutated extent should have this field initialized
+  using trans_view_set_ref = std::unique_ptr<per_trans_view_t::trans_view_set_t>;
+  trans_view_set_ref child_per_trans;
 };
 
-using ChildNodeTrackerRef = seastar::shared_ptr<ChildNodeTracker>;
-
+using ChildNodeTrackerRef = std::unique_ptr<ChildNodeTracker>;
 
 template <typename key_t, typename val_t>
 class PhysicalNodePin {
@@ -766,7 +850,7 @@ public:
   virtual PhysicalNodePinRef<key_t, val_t> duplicate() const = 0;
   virtual bool has_been_invalidated() const = 0;
   virtual ChildNodeTracker* get_parent_tracker() const = 0;
-  virtual CachedExtent& get_extent() = 0;
+  virtual CachedExtentRef get_parent() = 0;
 
   virtual ~PhysicalNodePin() {}
 };
@@ -929,15 +1013,13 @@ struct ref_laddr_cmp {
 
 template <typename T>
 read_set_item_t<T>::read_set_item_t(T *t, CachedExtentRef ref)
-  : t(t), ref(ref)
-{
-  ref->transactions.push_back(*this);
-}
+  : t(t), ref(ref) {}
 
 template <typename T>
 read_set_item_t<T>::~read_set_item_t()
 {
-  ref->transactions.erase(ref->transactions.s_iterator_to(*this));
+  if (set_hook.is_linked())
+    ref->transactions.erase(ref->transactions.s_iterator_to(*this));
 }
 
 template <typename T>

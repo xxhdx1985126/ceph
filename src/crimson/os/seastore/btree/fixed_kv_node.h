@@ -31,32 +31,156 @@ struct FixedKVNode : CachedExtent {
   using FixedKVNodeRef = TCachedExtentRef<FixedKVNode>;
 
   btree_range_pin_t<node_key_t> pin;
-  std::vector<ChildNodeTracker> child_trackers;
+  std::vector<ChildNodeTrackerRef> child_trackers;
+  size_t node_size;
   // used to remember the pos in the parent node, should only
   // be non-nullptr if the current node is the root of the modified
   // subtree
-  ChildNodeTracker* parent_pos;
+  ChildNodeTracker* parent_pos = nullptr;
 
   FixedKVNode(size_t node_size, ceph::bufferptr &&ptr)
-    : CachedExtent(std::move(ptr)), pin(this), child_trackers(node_size) {}
+    : CachedExtent(std::move(ptr)),
+      pin(this),
+      child_trackers(node_size),
+      node_size(node_size)
+  {}
   FixedKVNode(const FixedKVNode &rhs)
     : CachedExtent(rhs),
       pin(rhs.pin, this),
-      child_trackers(rhs.child_trackers),
+      child_trackers(rhs.node_size),
       parent_pos(rhs.parent_pos)
-  {}
+  {
+    //TODO: may need perf improvement
+    auto it_l = child_trackers.begin();
+    for (auto &r_tracker : rhs.child_trackers) {
+      if (r_tracker) {
+	*it_l = std::make_unique<ChildNodeTracker>(*r_tracker);
+      }
+      it_l++;
+    }
+  }
 
-  void add_child_tracker(CachedExtentRef child, Transaction &t, uint64_t pos) {
+  void split_child_trackers(FixedKVNode &left, FixedKVNode &right, size_t size) {
+    auto split_pos = size / 2;
+    auto l_it = left.child_trackers.begin();
+    auto r_it = right.child_trackers.begin();
+    auto my_mid_it = child_trackers.begin() + split_pos;
+    for (auto my_it = child_trackers.begin();
+	 my_it != child_trackers.end();
+	 my_it++) {
+      if (!(*my_it))
+	continue;
+      if (my_it < my_mid_it) {
+	*l_it = std::make_unique<ChildNodeTracker>(**my_it);
+	l_it++;
+      } else {
+	*r_it = std::make_unique<ChildNodeTracker>(**my_it);
+	r_it++;
+      }
+    }
+  }
+
+  void merge_child_trackers(
+    const FixedKVNode &left,
+    const FixedKVNode &right)
+  {
+    auto l_it = left.child_trackers.begin();
+    auto r_it = right.child_trackers.begin();
+    for (auto &tracker : child_trackers) {
+      if (l_it != left.child_trackers.end()) {
+	if (!(*l_it))
+	  continue;
+	tracker = std::make_unique<ChildNodeTracker>(**l_it);
+	l_it++;
+      } else if (r_it != right.child_trackers.end()) {
+	if (!(*r_it))
+	  continue;
+	tracker = std::make_unique<ChildNodeTracker>(**r_it);
+	r_it++;
+      } else {
+	break;
+      }
+    }
+  }
+
+  static void balance_child_trackers(
+    const FixedKVNode &left,
+    const FixedKVNode &right,
+    bool prefer_left,
+    FixedKVNode &replacement_left,
+    FixedKVNode &replacement_right,
+    size_t l_size,
+    size_t r_size)
+  {
+    auto total = l_size + r_size;
+    auto pivot_idx = (l_size + r_size) / 2;
+    if (total % 2 && prefer_left) {
+      pivot_idx++;
+    }
+    if (pivot_idx < l_size) {
+      auto r_l_it = replacement_left.child_trackers.begin();
+      auto end_it = left.child_trackers.begin() + pivot_idx;
+      for (auto it = left.child_trackers.begin(); it != end_it; it++) {
+	if (!(*it))
+	  continue;
+	*r_l_it = std::make_unique<ChildNodeTracker>(**it);
+	r_l_it++;
+      }
+      auto r_r_it = replacement_right.child_trackers.begin();
+      for (auto it = end_it; it != left.child_trackers.end(); it++) {
+	if (!(*it))
+	  continue;
+	*r_r_it = std::make_unique<ChildNodeTracker>(**it);
+	r_r_it++;
+      }
+      for (auto &tracker : right.child_trackers) {
+	if (!tracker)
+	  continue;
+	*r_r_it = std::make_unique<ChildNodeTracker>(*tracker);
+	r_r_it++;
+      }
+    } else {
+      auto r_l_it = replacement_left.child_trackers.begin();
+      for (auto &tracker : left.child_trackers) {
+	if (!tracker)
+	  continue;
+	*r_l_it = std::make_unique<ChildNodeTracker>(*tracker);
+	r_l_it++;
+      }
+      auto end_it = replacement_left.child_trackers.begin() + pivot_idx;
+      for (auto it = right.child_trackers.begin()
+	   ; r_l_it != end_it; r_l_it++) {
+	if (!(*it))
+	  continue;
+	*r_l_it = std::make_unique<ChildNodeTracker>(**it);
+	it++;
+      }
+      auto r_r_it = replacement_right.child_trackers.begin();
+      for (auto it = right.child_trackers.begin() + pivot_idx - l_size;
+	   it != right.child_trackers.end();
+	   it++) {
+	if (!(*it))
+	  continue;
+	*r_r_it = std::make_unique<ChildNodeTracker>(**it);
+	r_r_it++;
+      }
+    }
+  }
+
+  void add_child_tracker(CachedExtent* child, Transaction &t, uint64_t pos) {
     ceph_assert(pos < child_trackers.size());
     auto &tracker = child_trackers[pos];
-    tracker.add_child_per_trans(t, child);
+    ceph_assert(!tracker->is_empty());
+    ceph_assert(tracker);
+    tracker->add_child_per_trans(t, child);
   }
 
   template<typename T>
   TCachedExtentRef<T> get_child(Transaction &t, uint64_t pos) {
     static_assert(std::is_base_of_v<FixedKVNode, T>);
     auto &tracker = child_trackers[pos];
-    auto child = tracker.get_child(t, this);
+    ceph_assert(tracker);
+    auto child = tracker->get_child(t, this);
     if (child)
       return child->template cast<T>();
     else
@@ -65,12 +189,19 @@ struct FixedKVNode : CachedExtent {
 
   ChildNodeTracker& get_child_tracker(uint64_t pos) {
     ceph_assert(pos < child_trackers.size());
-    return child_trackers[pos];
+    auto &tracker = child_trackers[pos];
+    if (!tracker) {
+      tracker = std::make_unique<ChildNodeTracker>();
+    }
+    return *tracker;
   }
 
   virtual fixed_kv_node_meta_t<node_key_t> get_node_meta() const = 0;
 
-  virtual ~FixedKVNode() = default;
+  virtual ~FixedKVNode() {
+    if (parent_pos)
+      parent_pos->remove_child(this);
+  };
 
   void on_delta_write(paddr_t record_block_offset) final {
     // All in-memory relative addrs are necessarily record-relative
@@ -80,12 +211,19 @@ struct FixedKVNode : CachedExtent {
   }
 
   void on_replace_extent(Transaction &t) {
-    parent_pos->on_transaction_commit(t);
+    if (parent_pos)
+      parent_pos->on_transaction_commit(t);
+    CachedExtent::on_replace_extent(t);
   }
 
   void on_initial_write() final {
     // All in-memory relative addrs are necessarily block-relative
     resolve_relative_addrs(get_paddr());
+    for (auto &tracker : child_trackers) {
+      if (tracker) {
+	tracker->get_child()
+      }
+    }
   }
 
   void on_clean_read() final {
@@ -204,6 +342,7 @@ struct FixedKVInternalNode
       c.trans, node_size, placement_hint_t::HOT, 0);
     auto right = c.cache.template alloc_new_extent<node_type_t>(
       c.trans, node_size, placement_hint_t::HOT, 0);
+    this->split_child_trackers(*left, *right, this->get_size());
     auto pivot = this->split_into(*left, *right);
     left->pin.set_range(left->get_meta());
     right->pin.set_range(right->get_meta());
@@ -218,6 +357,8 @@ struct FixedKVInternalNode
     Ref &right) {
     auto replacement = c.cache.template alloc_new_extent<node_type_t>(
       c.trans, node_size, placement_hint_t::HOT, 0);
+    replacement->merge_child_trackers(
+      *this, *right->template cast<node_type_t>());
     replacement->merge_from(*this, *right->template cast<node_type_t>());
     replacement->pin.set_range(replacement->get_meta());
     return replacement;
@@ -234,6 +375,15 @@ struct FixedKVInternalNode
       c.trans, node_size, placement_hint_t::HOT, 0);
     auto replacement_right = c.cache.template alloc_new_extent<node_type_t>(
       c.trans, node_size, placement_hint_t::HOT, 0);
+
+    this->balance_child_trackers(
+      *this,
+      right,
+      prefer_left,
+      *replacement_left,
+      *replacement_right,
+      this->get_size(),
+      right.get_size());
 
     auto pivot = this->balance_into_new_nodes(
       *this,
@@ -408,6 +558,7 @@ struct FixedKVLeafNode
       c.trans, node_size, placement_hint_t::HOT, 0);
     auto right = c.cache.template alloc_new_extent<node_type_t>(
       c.trans, node_size, placement_hint_t::HOT, 0);
+    this->split_child_trackers(*left, *right, this->get_size());
     auto pivot = this->split_into(*left, *right);
     left->pin.set_range(left->get_meta());
     right->pin.set_range(right->get_meta());
@@ -422,6 +573,8 @@ struct FixedKVLeafNode
     Ref &right) {
     auto replacement = c.cache.template alloc_new_extent<node_type_t>(
       c.trans, node_size, placement_hint_t::HOT, 0);
+    replacement->merge_child_trackers(
+      *this, *right->template cast<node_type_t>());
     replacement->merge_from(*this, *right->template cast<node_type_t>());
     replacement->pin.set_range(replacement->get_meta());
     return replacement;
@@ -439,6 +592,15 @@ struct FixedKVLeafNode
     auto replacement_right = c.cache.template alloc_new_extent<node_type_t>(
       c.trans, node_size, placement_hint_t::HOT, 0);
 
+    this->balance_child_trackers(
+      *this,
+      right,
+      prefer_left,
+      *replacement_left,
+      *replacement_right,
+      this->get_size(),
+      right.get_size());
+     
     auto pivot = this->balance_into_new_nodes(
       *this,
       right,

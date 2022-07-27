@@ -141,8 +141,13 @@ public:
   void add_to_read_set(CachedExtentRef ref) {
     if (is_weak()) return;
 
+    auto it = ref->transactions.lower_bound(
+      this, read_set_item_t<Transaction>::trans_cmp_t());
+    if (it->t == this) return;
+
     auto [iter, inserted] = read_set.emplace(this, ref);
     ceph_assert(inserted);
+    ref->transactions.insert(it, const_cast<read_set_item_t<Transaction>&>(*iter));
   }
 
   void add_fresh_extent(

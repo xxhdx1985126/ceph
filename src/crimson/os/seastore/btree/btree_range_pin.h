@@ -430,7 +430,7 @@ class BtreeNodePin : public PhysicalNodePin<key_t, val_t> {
   extent_len_t len;
   btree_range_pin_t<key_t> pin;
 
-  ChildNodeTracker* parent_tracker;
+  ChildNodeTracker* parent_tracker = nullptr;
 
 public:
   using val_type = val_t;
@@ -450,6 +450,7 @@ public:
   }
 
   ChildNodeTracker* get_parent_tracker() const final {
+    ceph_assert(parent_tracker != nullptr);
     return parent_tracker;
   }
 
@@ -458,6 +459,7 @@ public:
   }
 
   CachedExtentRef get_parent() {
+    assert(parent);
     return parent;
   }
 
@@ -466,12 +468,9 @@ public:
   }
 
   void link_extent(LogicalCachedExtent *ref) final {
+    ceph_assert(parent_tracker != nullptr);
     parent_tracker->update_child(ref);
     pin.set_extent(ref);
-  }
-
-  CachedExtent& get_extent() final {
-    return pin.get_extent();
   }
 
   extent_len_t get_length() const final {
@@ -499,6 +498,7 @@ public:
     ret->value = value;
     ret->parent = parent;
     ret->len = len;
+    ret->parent_tracker = parent_tracker;
     return ret;
   }
 

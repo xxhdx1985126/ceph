@@ -114,34 +114,38 @@ CachedExtentRef ChildNodeTracker::get_child(
   if (!child_per_trans) {
     return child;
   }
-  auto it = child_per_trans->find(t.get_trans_id());
-  ceph_assert(child);
+  auto it = child_per_trans->find(
+    t.get_trans_id(),
+    per_trans_view_t::trans_view_compare_t());
+  ceph_assert(child != nullptr);
   if (it == child_per_trans->end()) {
     return child;
   } else {
     ceph_assert(!parent->is_pending()
       || (parent->is_pending() && !child_per_trans));
-    return it->second;
+    return (CachedExtent*)(&(*it));
   }
 }
 
 void ChildNodeTracker::add_child_per_trans(
   Transaction &t,
-  CachedExtentRef &child)
+  CachedExtent* c)
 {
-  ceph_assert(child);
+  ceph_assert(c != nullptr);
   if (!child_per_trans) {
-    child_per_trans = std::make_optional<
-      std::map<transaction_id_t, CachedExtentRef>>();
+    child_per_trans = std::make_unique<
+      per_trans_view_t::trans_view_set_t>();
   }
-  child_per_trans->emplace(t.get_trans_id(), child);
+  child_per_trans->insert(*c);
 }
 
 void ChildNodeTracker::on_transaction_commit(Transaction &t) {
   ceph_assert(child_per_trans);
-  auto it = child_per_trans->find(t.get_trans_id());
+  auto it = child_per_trans->find(
+    t.get_trans_id(),
+    per_trans_view_t::trans_view_compare_t());
   ceph_assert(it != child_per_trans->end());
-  child = it->second;
+  child = (CachedExtent*)(&(*it));
   child_per_trans->erase(it);
 }
 

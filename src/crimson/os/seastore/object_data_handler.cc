@@ -25,13 +25,23 @@ using get_iertr = ObjectDataHandler::write_iertr;
 auto read_pin(
   context_t ctx,
   LBAPinRef pin) {
-  return ctx.tm.pin_to_extent<ObjectDataBlock>(
-    ctx.t,
-    std::move(pin)
-  ).handle_error_interruptible(
-    get_iertr::pass_further{},
-    crimson::ct_error::assert_all{ "read_pin: invalid error" }
-  );
+  auto ptracker = pin->get_parent_tracker();
+  ceph_assert(ptracker);
+  if (ptracker->is_empty()) {
+    return ctx.tm.pin_to_extent<ObjectDataBlock>(
+      ctx.t,
+      std::move(pin)
+    ).handle_error_interruptible(
+      get_iertr::pass_further{},
+      crimson::ct_error::assert_all{ "read_pin: invalid error" }
+    );
+  } else {
+    auto e = ptracker->get_child(ctx.t, pin->get_parent().get());
+    assert(e);
+    ctx.t.add_to_read_set(e);
+    return get_iertr::make_ready_future<TCachedExtentRef<ObjectDataBlock>>(
+	e->template cast<ObjectDataBlock>());
+  }
 }
 
 /**
@@ -946,10 +956,24 @@ ObjectDataHandler::read_ret ObjectDataHandler::read(
 		      current = end;
 		      return seastar::now();
 		    } else {
-		      return ctx.tm.pin_to_extent<ObjectDataBlock>(
-			ctx.t,
-			std::move(pin)
-		      ).si_then([&ret, &current, end](auto extent) {
+		      auto fut = TransactionManager::pin_to_extent_iertr::
+			make_ready_future<TCachedExtentRef<ObjectDataBlock>>(
+			  TCachedExtentRef<ObjectDataBlock>());
+		      auto ptracker = pin->get_parent_tracker();
+		      ceph_assert(ptracker);
+		      if (ptracker->is_empty()) {
+			fut = ctx.tm.pin_to_extent<ObjectDataBlock>(
+			  ctx.t,
+			  std::move(pin));
+		      } else {
+			auto e = ptracker->get_child(ctx.t, pin->get_parent().get());
+			assert(e);
+			ctx.t.add_to_read_set(e);
+			fut = TransactionManager::pin_to_extent_iertr::
+			  make_ready_future<TCachedExtentRef<ObjectDataBlock>>(
+			    e->template cast<ObjectDataBlock>());
+		      }
+		      return fut.si_then([&ret, &current, end](auto extent) {
 			ceph_assert(
 			  (extent->get_laddr() + extent->get_length()) >= end);
 			ceph_assert(end > current);
