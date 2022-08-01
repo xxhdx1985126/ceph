@@ -473,6 +473,10 @@ public:
     pin.set_extent(ref);
   }
 
+  void new_parent_tracker(ChildNodeTracker* pt) final {
+    parent_tracker = pt;
+  }
+
   extent_len_t get_length() const final {
     ceph_assert(pin.range.end > pin.range.begin);
     return len;

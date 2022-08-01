@@ -976,7 +976,7 @@ public:
           c.trans,
           parent.node
         );
-        may_link_parent_child(iter, depth, c.trans);
+        may_link_parent_child(iter, depth + 1, c.trans);
         typename internal_node_t::Ref mparent = mut->cast<internal_node_t>();
         mparent->update(piter, new_addr);
 
@@ -999,32 +999,25 @@ private:
   using node_position_t = typename iterator::template node_position_t<T>;
 
   void may_link_parent_child(iterator &ret, depth_t d, Transaction &t) {
+    LOG_PREFIX(FixedKVBtree::may_link_parent_child);
     if (d == root.get_depth())
       return;
     auto &parent_entry = ret.get_internal(d + 1);
     auto &parent = parent_entry.node;
-    auto child = (d == 1
-                  ? (typename leaf_node_t::base_ref_t)ret.leaf.node
-                  : (typename internal_node_t::base_ref_t)ret.get_internal(d).node);
     if (!parent->is_pending()) {
+      auto child =
+        (d == 1
+          ? (typename leaf_node_t::base_ref_t)ret.leaf.node
+          : (typename internal_node_t::base_ref_t)ret.get_internal(d).node);
       // parent node isn't being mutated, the leaf should be
       // set with the parent pos and the parent node should add
       // the mutated leaf to the parent node's child trackers
       parent->add_child_tracker(child.get(), t, parent_entry.pos);
-      child->parent_pos = &parent->get_child_tracker(parent_entry.pos);
-    }
-  }
-
-  template <typename NodeType>
-  void may_link_parent_child(
-    node_position_t<internal_node_t> &parent_pos,
-    node_position_t<NodeType> &child_pos,
-    Transaction &t) {
-    auto &parent = parent_pos.node;
-    auto &child = child_pos.node;
-    if (!parent->is_pending()) {
-      parent->add_child_tracker(child.get(), t, parent_pos.pos);
-      child->parent_pos = &parent->get_child_tracker(parent_pos.pos);
+      auto &ptracker = parent->get_child_tracker(parent_entry.pos);
+      SUBTRACET(seastore_fixedkv_tree,
+        "linking parent: {}, child: {}, by tracker: {}, at pos: {}",
+        t, *parent, *child, ptracker, parent_entry.pos);
+      child->parent_pos = &ptracker;
     }
   }
 
@@ -1179,6 +1172,9 @@ private:
     op_context_t<node_key_t> c,
     iterator &iter,
     mapped_space_visitor_t *visitor) const {
+    LOG_PREFIX(FixedKVBtree::lookup_root);
+    SUBTRACET(seastore_fixedkv_tree,
+      "", c.trans);
     if (root.get_depth() > 1) {
       return get_internal_node<true>(
 	c,
@@ -1281,6 +1277,7 @@ private:
     F &f,
     mapped_space_visitor_t *visitor
   ) {
+    LOG_PREFIX(FixedKVBtree::lookup_leaf);
     auto &parent_entry = iter.get_internal(2);
     auto parent = parent_entry.node;
     assert(parent);
@@ -1304,6 +1301,13 @@ private:
       if (!child->is_pending()) {
         c.trans.add_to_read_set(child);
       }
+      SUBTRACET(seastore_fixedkv_tree,
+        "got child on {}, pos: {}, res: {}, tracker: {}",
+        c.trans,
+        *parent_entry.node,
+        parent_entry.pos,
+        *child,
+        parent->get_child_tracker(parent_entry.pos));
       return on_found(child);
     }
 
@@ -1567,7 +1571,7 @@ private:
         parent_pos.node = c.cache.duplicate_for_write(
           c.trans, parent_pos.node
         )->template cast<internal_node_t>();
-        may_link_parent_child(iter, split_from, c.trans);
+        may_link_parent_child(iter, split_from + 1, c.trans);
       }
 
       if (split_from > 1) {
@@ -1654,10 +1658,10 @@ private:
             auto merge_fut = handle_merge_iertr::now();
             if (to_merge > 1) {
               auto &pos = iter.get_internal(to_merge);
-              merge_fut = merge_level(c, to_merge, parent_pos, pos);
+              merge_fut = merge_level(c, to_merge, parent_pos, pos, iter);
             } else {
               auto &pos = iter.leaf;
-              merge_fut = merge_level(c, to_merge, parent_pos, pos);
+              merge_fut = merge_level(c, to_merge, parent_pos, pos, iter);
             }
 
             return merge_fut.si_then([FNAME, this, c, &iter, &to_merge] {
@@ -1732,14 +1736,15 @@ private:
     op_context_t<node_key_t> c,
     depth_t depth,
     node_position_t<internal_node_t> &parent_pos,
-    node_position_t<NodeType> &pos)
+    node_position_t<NodeType> &pos,
+    iterator &tree_iter)
   {
     LOG_PREFIX(FixedKVBtree::merge_level);
     if (!parent_pos.node->is_pending()) {
       parent_pos.node = c.cache.duplicate_for_write(
         c.trans, parent_pos.node
       )->template cast<internal_node_t>();
-      may_link_parent_child(parent_pos, pos, c.trans);
+      may_link_parent_child(tree_iter, depth + 1, c.trans);
     }
 
     auto iter = parent_pos.get_iter();
@@ -1752,7 +1757,7 @@ private:
       ? parent_pos.node->get_node_meta().end
       : next_iter->get_key();
     
-    SUBTRACET(seastore_fixedkv_tree, "parent: {}, node: {}", c.trans, *parent_pos.node, *pos.node);
+    SUBTRACET(seastore_fixedkv_tree, "parent: {}, pos: {}, node: {}", c.trans, *parent_pos.node, parent_pos.pos, *pos.node);
 
     auto do_merge = [c, iter, donor_iter, donor_is_left, &parent_pos, &pos](
                 typename NodeType::Ref donor) {
@@ -1770,8 +1775,6 @@ private:
           liter,
           replacement->get_paddr());
         parent_pos.node->remove(riter);
-        auto l_tracker = l->parent_pos;
-        l_tracker->update_child(replacement.get());
 
         pos.node = replacement;
         if (donor_is_left) {
@@ -1779,7 +1782,12 @@ private:
           parent_pos.pos--;
         }
 
-        SUBTRACET(seastore_fixedkv_tree, "l: {}, r: {}, replacement: {}", c.trans, *l, *r, *replacement);
+        auto &l_tracker = parent_pos.node->get_child_tracker(parent_pos.pos);
+        l_tracker.update_child(replacement.get());
+        SUBTRACET(seastore_fixedkv_tree,
+          "l: {}, r: {}, replacement: {}, parent: {}, parent pos: {}, tracker: {}",
+          c.trans, *l, *r, *replacement, *parent_pos.node,
+          parent_pos.pos, (void*)&l_tracker);
         c.cache.retire_extent(c.trans, l);
         c.cache.retire_extent(c.trans, r);
         get_tree_stats<self_type>(c.trans).extents_num_delta--;
@@ -1798,10 +1806,10 @@ private:
           riter,
           pivot,
           replacement_r->get_paddr());
-        auto l_tracker = l->parent_pos;
-        auto r_tracker = r->parent_pos;
-        l_tracker->update_child(replacement_l.get());
-        r_tracker->update_child(replacement_r.get());
+        auto &l_tracker = parent_pos.node->get_child_tracker(parent_pos.pos);
+        auto &r_tracker = parent_pos.node->get_child_tracker(parent_pos.pos + 1);
+        l_tracker.update_child(replacement_l.get());
+        r_tracker.update_child(replacement_r.get());
 
         if (donor_is_left) {
           assert(parent_pos.pos > 0);
@@ -1831,7 +1839,7 @@ private:
       return seastar::now();
     };
     auto child = parent_pos.node->template get_child<NodeType>(
-      c.trans, parent_pos.pos);
+      c.trans, donor_iter.get_offset());
     if (child) {
       if (!child->is_pending()) {
         c.trans.add_to_read_set(child);

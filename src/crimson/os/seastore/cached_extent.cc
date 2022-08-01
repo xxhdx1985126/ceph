@@ -149,4 +149,12 @@ void ChildNodeTracker::on_transaction_commit(Transaction &t) {
   child_per_trans->erase(it);
 }
 
+std::ostream &operator<<(std::ostream &out, const ChildNodeTracker &rhs) {
+  return out << "child_node_tracker(addr=" << (void*)&rhs
+	     << ", child=" << *rhs.child
+	     << ", trans_views: "<< ((!rhs.child_per_trans)
+				     ? 0 :rhs.child_per_trans->size())
+	     << ")";
+}
+
 }

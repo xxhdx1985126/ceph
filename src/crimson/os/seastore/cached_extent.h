@@ -266,6 +266,10 @@ public:
    */
   virtual extent_types_t get_type() const = 0;
 
+  virtual bool is_fixed_kv_btree_node() {
+    return false;
+  }
+
   virtual bool is_logical() const {
     return false;
   }
@@ -795,6 +799,8 @@ class PhysicalNodePin;
 template <typename key_t, typename val_t>
 using PhysicalNodePinRef = std::unique_ptr<PhysicalNodePin<key_t, val_t>>;
 
+class ChildNodeTracker;
+std::ostream &operator<<(std::ostream &out, const ChildNodeTracker &rhs);
 class ChildNodeTracker {
 public:
   ChildNodeTracker() = default;
@@ -829,11 +835,15 @@ public:
       child = nullptr;
     }
   }
+  CachedExtent* get_child_global_view() {
+    return child;
+  }
 private:
   CachedExtent* child = nullptr;
   // only the parent of an mutated extent should have this field initialized
   using trans_view_set_ref = std::unique_ptr<per_trans_view_t::trans_view_set_t>;
   trans_view_set_ref child_per_trans;
+  friend std::ostream &operator<<(std::ostream&, const ChildNodeTracker&);
 };
 
 using ChildNodeTrackerRef = std::unique_ptr<ChildNodeTracker>;
@@ -850,6 +860,7 @@ public:
   virtual PhysicalNodePinRef<key_t, val_t> duplicate() const = 0;
   virtual bool has_been_invalidated() const = 0;
   virtual ChildNodeTracker* get_parent_tracker() const = 0;
+  virtual void new_parent_tracker(ChildNodeTracker*) = 0;
   virtual CachedExtentRef get_parent() = 0;
 
   virtual ~PhysicalNodePin() {}
