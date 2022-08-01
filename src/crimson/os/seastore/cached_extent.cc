@@ -109,7 +109,7 @@ std::ostream &operator<<(std::ostream &out, const lba_pin_list_t &rhs)
 
 CachedExtentRef ChildNodeTracker::get_child(
   Transaction &t,
-  CachedExtent* parent)
+  CachedExtent* parent) const
 {
   if (!child_per_trans) {
     return child;
@@ -121,7 +121,7 @@ CachedExtentRef ChildNodeTracker::get_child(
   if (it == child_per_trans->end()) {
     return child;
   } else {
-    ceph_assert(!parent->is_pending()
+    assert(!parent || !parent->is_pending()
       || (parent->is_pending() && !child_per_trans));
     return (CachedExtent*)(&(*it));
   }
@@ -147,6 +147,13 @@ void ChildNodeTracker::on_transaction_commit(Transaction &t) {
   ceph_assert(it != child_per_trans->end());
   child = (CachedExtent*)(&(*it));
   child_per_trans->erase(it);
+}
+
+ChildNodeTracker::ChildNodeTracker(
+  const ChildNodeTracker &other,
+  Transaction &t)
+{
+  update_child(other.get_child(t).get());
 }
 
 std::ostream &operator<<(std::ostream &out, const ChildNodeTracker &rhs) {

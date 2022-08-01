@@ -1001,7 +1001,7 @@ CachedExtentRef Cache::duplicate_for_write(
     return i;
   }
 
-  auto ret = i->duplicate_for_write();
+  auto ret = i->duplicate_for_write(t);
   ret->prior_instance = i;
   t.add_mutated_extent(ret);
   if (ret->get_type() == extent_types_t::ROOT) {

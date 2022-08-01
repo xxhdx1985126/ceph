@@ -1004,11 +1004,12 @@ private:
       return;
     auto &parent_entry = ret.get_internal(d + 1);
     auto &parent = parent_entry.node;
+    auto child =
+      (d == 1
+        ? (typename leaf_node_t::base_ref_t)ret.leaf.node
+        : (typename internal_node_t::base_ref_t)ret.get_internal(d).node);
+    ceph_assert(child->is_mutation_pending());
     if (!parent->is_pending()) {
-      auto child =
-        (d == 1
-          ? (typename leaf_node_t::base_ref_t)ret.leaf.node
-          : (typename internal_node_t::base_ref_t)ret.get_internal(d).node);
       // parent node isn't being mutated, the leaf should be
       // set with the parent pos and the parent node should add
       // the mutated leaf to the parent node's child trackers
@@ -1017,6 +1018,13 @@ private:
       SUBTRACET(seastore_fixedkv_tree,
         "linking parent: {}, child: {}, by tracker: {}, at pos: {}",
         t, *parent, *child, ptracker, parent_entry.pos);
+      child->parent_pos = &ptracker;
+    } else {
+      auto &ptracker = parent->get_child_tracker(parent_entry.pos);
+      SUBTRACET(seastore_fixedkv_tree,
+        "linking pending parent: {}, child: {}, by tracker: {}, at pos: {}",
+        t, *parent, *child, ptracker, parent_entry.pos);
+      ptracker.update_child(child.get());
       child->parent_pos = &ptracker;
     }
   }
@@ -1298,9 +1306,6 @@ private:
     auto child = parent->template get_child<leaf_node_t>(
       c.trans, parent_entry.pos);
     if (child) {
-      if (!child->is_pending()) {
-        c.trans.add_to_read_set(child);
-      }
       SUBTRACET(seastore_fixedkv_tree,
         "got child on {}, pos: {}, res: {}, tracker: {}",
         c.trans,
@@ -1308,6 +1313,9 @@ private:
         parent_entry.pos,
         *child,
         parent->get_child_tracker(parent_entry.pos));
+      if (!child->is_pending()) {
+        c.trans.add_to_read_set(child);
+      }
       return on_found(child);
     }
 
