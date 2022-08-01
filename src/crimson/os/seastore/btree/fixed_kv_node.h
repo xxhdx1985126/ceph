@@ -32,24 +32,23 @@ struct FixedKVNode : CachedExtent {
 
   btree_range_pin_t<node_key_t> pin;
   std::vector<ChildNodeTrackerRef> child_trackers;
-  size_t node_size;
+  size_t max_entries;
   // used to remember the pos in the parent node, should only
   // be non-nullptr if the current node is the root of the modified
   // subtree
   ChildNodeTracker* parent_pos = nullptr;
 
-  //FIXME: node_size is 4096, wrong!
-  FixedKVNode(size_t node_size, ceph::bufferptr &&ptr)
+  FixedKVNode(size_t max_entries, ceph::bufferptr &&ptr)
     : CachedExtent(std::move(ptr)),
       pin(this),
-      child_trackers(node_size),
-      node_size(node_size)
+      child_trackers(max_entries),
+      max_entries(max_entries)
   {}
   FixedKVNode(const FixedKVNode &rhs)
     : CachedExtent(rhs),
       pin(rhs.pin, this),
-      child_trackers(rhs.node_size),
-      node_size(rhs.node_size),
+      child_trackers(rhs.max_entries),
+      max_entries(rhs.max_entries),
       parent_pos(rhs.parent_pos)
   {}
 
@@ -306,7 +305,7 @@ struct FixedKVInternalNode
   using internal_const_iterator_t = typename node_layout_t::const_iterator;
   using internal_iterator_t = typename node_layout_t::iterator;
   FixedKVInternalNode(ceph::bufferptr &&ptr)
-    : FixedKVNode<NODE_KEY>(node_size, std::move(ptr)),
+    : FixedKVNode<NODE_KEY>(CAPACITY, std::move(ptr)),
       node_layout_t(this->get_bptr().c_str()) {}
   FixedKVInternalNode(const FixedKVInternalNode &rhs)
     : FixedKVNode<NODE_KEY>(rhs),
@@ -562,7 +561,7 @@ struct FixedKVLeafNode
   using base_ref_t = typename FixedKVNode<NODE_KEY>::FixedKVNodeRef;
   using internal_const_iterator_t = typename node_layout_t::const_iterator;
   FixedKVLeafNode(ceph::bufferptr &&ptr)
-    : FixedKVNode<NODE_KEY>(node_size, std::move(ptr)),
+    : FixedKVNode<NODE_KEY>(CAPACITY, std::move(ptr)),
       node_layout_t(this->get_bptr().c_str()) {}
   FixedKVLeafNode(const FixedKVLeafNode &rhs)
     : FixedKVNode<NODE_KEY>(rhs),
