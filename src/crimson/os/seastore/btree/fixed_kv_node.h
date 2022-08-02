@@ -223,8 +223,14 @@ struct FixedKVNode : CachedExtent {
 
   virtual fixed_kv_node_meta_t<node_key_t> get_node_meta() const = 0;
 
-  virtual ~FixedKVNode() {
+  void on_invalidated(Transaction &t) {
+    ceph_assert(!is_valid());
     if (parent_pos)
+      parent_pos->remove_child(this);
+  }
+
+  virtual ~FixedKVNode() {
+    if (is_valid() && parent_pos)
       parent_pos->remove_child(this);
   };
 
@@ -233,6 +239,20 @@ struct FixedKVNode : CachedExtent {
     assert(get_prior_instance());
     pin.take_pin(get_prior_instance()->template cast<FixedKVNode>()->pin);
     resolve_relative_addrs(record_block_offset);
+    for (auto &tracker : child_trackers) {
+      if (tracker && !tracker->is_empty()) {
+	auto child = tracker->get_child_global_view();
+	if (child->is_fixed_kv_btree_node()) {
+	  child->cast<FixedKVNode>()->parent_pos =
+	    tracker.get();
+	} else {
+	  ceph_assert(child->is_logical());
+	  auto logical_child = child->cast<LogicalCachedExtent>();
+	  auto &pin = logical_child->get_pin();
+	  pin.new_parent_tracker(tracker.get());
+	}
+      }
+    }
   }
 
   void on_replace_extent(Transaction &t) {
@@ -303,6 +323,7 @@ struct FixedKVInternalNode
       paddr_t,
       paddr_le_t>;
   using base_ref_t = typename FixedKVNode<NODE_KEY>::FixedKVNodeRef;
+  using base_t = FixedKVNode<NODE_KEY>;
   using internal_const_iterator_t = typename node_layout_t::const_iterator;
   using internal_iterator_t = typename node_layout_t::iterator;
   FixedKVInternalNode(ceph::bufferptr &&ptr)

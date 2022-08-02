@@ -140,7 +140,10 @@ void ChildNodeTracker::add_child_per_trans(
 }
 
 void ChildNodeTracker::on_transaction_commit(Transaction &t) {
-  ceph_assert(child_per_trans);
+  if (!child_per_trans) {
+    ceph_assert(child);
+    return;
+  }
   auto it = child_per_trans->find(
     t.get_trans_id(),
     per_trans_view_t::trans_view_compare_t());
@@ -158,7 +161,7 @@ ChildNodeTracker::ChildNodeTracker(
 
 std::ostream &operator<<(std::ostream &out, const ChildNodeTracker &rhs) {
   return out << "child_node_tracker(addr=" << (void*)&rhs
-	     << ", child=" << *rhs.child
+	     << ", child=" << (void*)rhs.child
 	     << ", trans_views: "<< ((!rhs.child_per_trans)
 				     ? 0 :rhs.child_per_trans->size())
 	     << ")";

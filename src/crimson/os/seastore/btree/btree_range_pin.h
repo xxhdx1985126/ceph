@@ -172,6 +172,10 @@ public:
     return !!ref;
   }
 
+  bool has_extent() {
+    return extent != nullptr;
+  }
+
   void take_pin(btree_range_pin_t &other)
   {
     ceph_assert(other.extent);
@@ -471,6 +475,9 @@ public:
     ceph_assert(parent_tracker != nullptr);
     parent_tracker->update_child(ref);
     pin.set_extent(ref);
+    crimson::get_logger(ceph_subsys_seastore_fixedkv_tree
+      ).debug("{}: link to parent tracker {}, extent: {}",
+	__func__, *parent_tracker, *ref);
   }
 
   void new_parent_tracker(ChildNodeTracker* pt) final {
@@ -512,6 +519,15 @@ public:
 
   bool has_been_invalidated() const final {
     return parent->has_been_invalidated();
+  }
+
+  void unlink_from_parent() final {
+    if (parent_tracker && pin.has_extent()) {
+      crimson::get_logger(ceph_subsys_seastore_fixedkv_tree
+	).debug("{}: unlink from parent tracker {}, extent: {}",
+	  __func__, (void*)parent_tracker, (void*)&pin.get_extent());
+      parent_tracker->remove_child(&pin.get_extent());
+    }
   }
 };
 

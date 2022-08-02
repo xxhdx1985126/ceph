@@ -856,14 +856,9 @@ public:
         n_fixed_kv_extent->get_node_meta().depth,
         n_fixed_kv_extent->get_node_meta().begin,
         e->get_paddr(),
-        n_fixed_kv_extent->get_paddr()
-      ).si_then([c, e, n_fixed_kv_extent, this] {
-        auto tracker = n_fixed_kv_extent->parent_pos;
-        if (tracker) {
-          tracker->update_child(n_fixed_kv_extent.get());
-        } else {
-          ceph_assert(root.get_depth() == n_fixed_kv_extent->get_node_meta().depth);
-        }
+        n_fixed_kv_extent->get_paddr(),
+        *n_fixed_kv_extent
+      ).si_then([c, e, this] {
         c.cache.retire_extent(c.trans, e);
       });
     };
@@ -886,7 +881,8 @@ public:
     depth_t depth,
     node_key_t laddr,
     paddr_t old_addr,
-    paddr_t new_addr)
+    paddr_t new_addr,
+    typename internal_node_t::base_t &next_extent)
   {
     LOG_PREFIX(FixedKVBtree::update_internal_mapping);
     SUBTRACET(
@@ -900,7 +896,7 @@ public:
 
     return lower_bound(
       c, laddr
-    ).si_then([=](auto iter) {
+    ).si_then([=, &next_extent](auto iter) {
       assert(iter.get_depth() >= depth);
       if (depth == iter.get_depth()) {
         SUBTRACET(seastore_fixedkv_tree, "update at root", c.trans);
@@ -981,6 +977,10 @@ public:
         may_link_parent_child(iter, depth + 1, c.trans);
         typename internal_node_t::Ref mparent = mut->cast<internal_node_t>();
         mparent->update(piter, new_addr);
+        auto &tracker = mparent->get_child_tracker(parent.pos);
+        tracker.update_child(&next_extent);
+        ceph_assert(!next_extent.parent_pos);
+        next_extent.parent_pos = &tracker;
 
         /* Note, iter is now invalid as we didn't udpate either the parent
          * node reference to the new mutable instance nor did we update the
@@ -1027,7 +1027,7 @@ private:
         "linking pending parent: {}, child: {}, by tracker: {}, at pos: {}",
         t, *parent, *child, ptracker, parent_entry.pos);
       ptracker.update_child(child.get());
-      ceph_assert(child->parent_pos == &ptracker);
+      child->parent_pos = &ptracker;
     }
   }
 
@@ -1682,6 +1682,10 @@ private:
               if (to_merge == iter.get_depth()) {
                 if (pos.node->get_size() == 1) {
                   SUBTRACET(seastore_fixedkv_tree, "collapsing root", c.trans);
+                  auto new_root = pos.node->template get_child<
+                    typename internal_node_t::base_t>(c.trans, pos.pos);
+                  ceph_assert(new_root);
+                  new_root->parent_pos = nullptr;
                   c.cache.retire_extent(c.trans, pos.node);
                   assert(pos.pos == 0);
                   auto node_iter = pos.get_iter();

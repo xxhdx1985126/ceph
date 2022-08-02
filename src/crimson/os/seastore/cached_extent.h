@@ -259,6 +259,8 @@ public:
     mutated_by = 0;
   }
 
+  virtual void on_invalidated(Transaction &t) {}
+
   /**
    * get_type
    *
@@ -805,6 +807,7 @@ class ChildNodeTracker {
 public:
   ChildNodeTracker() = default;
   ChildNodeTracker(const ChildNodeTracker &, Transaction &);
+  ChildNodeTracker(const ChildNodeTracker&) = delete;
   ChildNodeTracker& operator=(ChildNodeTracker &&) = default;
   ChildNodeTracker& operator=(const ChildNodeTracker&) = delete;
 
@@ -864,6 +867,7 @@ public:
   virtual ChildNodeTracker* get_parent_tracker() const = 0;
   virtual void new_parent_tracker(ChildNodeTracker*) = 0;
   virtual CachedExtentRef get_parent() = 0;
+  virtual void unlink_from_parent() = 0;
 
   virtual ~PhysicalNodePin() {}
 };
@@ -994,6 +998,16 @@ public:
     return ext;
   }
 
+  void on_invalidated(Transaction &t) final {
+    ceph_assert(!is_valid());
+    if (pin)
+      pin->unlink_from_parent();
+  }
+
+  virtual ~LogicalCachedExtent() {
+    if (is_valid() && pin)
+      pin->unlink_from_parent();
+  }
 protected:
   virtual CachedExtentRef get_mutable_duplication(Transaction&) = 0;
   virtual void apply_delta(const ceph::bufferlist &bl) = 0;

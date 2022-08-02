@@ -822,6 +822,7 @@ void Cache::invalidate_extent(
     }
   }
   extent.state = CachedExtent::extent_state_t::INVALID;
+  extent.on_invalidated(t);
 }
 
 void Cache::mark_transaction_conflicted(
@@ -1168,6 +1169,7 @@ record_t Cache::prepare_record(
       fresh_invalid_stat.increment(i->get_length());
       get_by_ext(efforts.fresh_invalid_by_ext,
                  i->get_type()).increment(i->get_length());
+      i->on_invalidated(t);
     } else {
       TRACET("fresh inline extent -- {}", t, *i);
     }
