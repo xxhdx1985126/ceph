@@ -100,6 +100,10 @@ public:
     const_iterator iter,
     paddr_t key,
     backref_map_val_t val) final {
+    std::move(
+      this->child_trackers.begin() + iter.offset,
+      this->child_trackers.begin() + this->get_size(),
+      this->child_trackers.begin() + iter.offset + 1);
     journal_insert(
       iter,
       key,
@@ -118,6 +122,10 @@ public:
   }
 
   void remove(const_iterator iter) final {
+    std::move(
+      this->child_trackers.begin() + iter.offset + 1,
+      this->child_trackers.begin() + this->get_size(),
+      this->child_trackers.begin() + iter.offset);
     return journal_remove(
       iter,
       maybe_get_delta_buffer());

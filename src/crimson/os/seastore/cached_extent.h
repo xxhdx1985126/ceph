@@ -985,7 +985,17 @@ public:
   }
 
   std::ostream &print_detail(std::ostream &out) const final;
+
+  CachedExtentRef duplicate_for_write(Transaction &t) final {
+    auto ext = get_mutable_duplication(t);
+    auto ptracker = pin->get_parent_tracker();
+    ceph_assert(ptracker);
+    ptracker->add_child_per_trans(t, ext.get());
+    return ext;
+  }
+
 protected:
+  virtual CachedExtentRef get_mutable_duplication(Transaction&) = 0;
   virtual void apply_delta(const ceph::bufferlist &bl) = 0;
   virtual std::ostream &print_detail_l(std::ostream &out) const {
     return out;

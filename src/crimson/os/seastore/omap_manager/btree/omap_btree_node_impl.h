@@ -43,7 +43,7 @@ struct OMapInnerNode
   bool extent_is_below_min() const { return below_min(); }
   uint32_t get_node_size() { return get_size(); }
 
-  CachedExtentRef duplicate_for_write(Transaction &t) final {
+  CachedExtentRef get_mutable_duplication(Transaction &t) final {
     assert(delta_buffer.empty());
     return CachedExtentRef(new OMapInnerNode(*this));
   }
@@ -157,7 +157,7 @@ struct OMapLeafNode
   bool extent_is_below_min() const { return below_min(); }
   uint32_t get_node_size() { return get_size(); }
 
-  CachedExtentRef duplicate_for_write(Transaction &t) final {
+  CachedExtentRef get_mutable_duplication(Transaction &t) final {
     assert(delta_buffer.empty());
     return CachedExtentRef(new OMapLeafNode(*this));
   }

@@ -829,6 +829,8 @@ public:
         n_fixed_kv_extent->get_bptr().c_str());
       n_fixed_kv_extent->set_modify_time(fixed_kv_extent.get_modify_time());
       n_fixed_kv_extent->pin.set_range(n_fixed_kv_extent->get_node_meta());
+      n_fixed_kv_extent->move_to_trans_view(
+        c.trans, fixed_kv_extent, fixed_kv_extent.get_size());
       
       /* This is a bit underhanded.  Any relative addrs here must necessarily
        * be record relative as we are rewriting a dirty extent.  Thus, we
@@ -1018,14 +1020,14 @@ private:
       SUBTRACET(seastore_fixedkv_tree,
         "linking parent: {}, child: {}, by tracker: {}, at pos: {}",
         t, *parent, *child, ptracker, parent_entry.pos);
-      child->parent_pos = &ptracker;
+      ceph_assert(child->parent_pos == &ptracker);
     } else {
       auto &ptracker = parent->get_child_tracker(parent_entry.pos);
       SUBTRACET(seastore_fixedkv_tree,
         "linking pending parent: {}, child: {}, by tracker: {}, at pos: {}",
         t, *parent, *child, ptracker, parent_entry.pos);
       ptracker.update_child(child.get());
-      child->parent_pos = &ptracker;
+      ceph_assert(child->parent_pos == &ptracker);
     }
   }
 
@@ -1559,6 +1561,8 @@ private:
       auto &r_tracker = parent_node->get_child_tracker(parent_pos.pos + 1);
       l_tracker.update_child(left.get());
       r_tracker.update_child(right.get());
+      left->parent_pos = &l_tracker;
+      right->parent_pos = &r_tracker;
 
       SUBTRACET(
         seastore_fixedkv_tree,
@@ -1792,6 +1796,7 @@ private:
 
         auto &l_tracker = parent_pos.node->get_child_tracker(parent_pos.pos);
         l_tracker.update_child(replacement.get());
+        replacement->parent_pos = &l_tracker;
         SUBTRACET(seastore_fixedkv_tree,
           "l: {}, r: {}, replacement: {}, parent: {}, parent pos: {}, tracker: {}",
           c.trans, *l, *r, *replacement, *parent_pos.node,
@@ -1818,6 +1823,8 @@ private:
         auto &r_tracker = parent_pos.node->get_child_tracker(parent_pos.pos + 1);
         l_tracker.update_child(replacement_l.get());
         r_tracker.update_child(replacement_r.get());
+        replacement_l->parent_pos = &l_tracker;
+        replacement_r->parent_pos = &r_tracker;
 
         if (donor_is_left) {
           assert(parent_pos.pos > 0);

@@ -105,7 +105,7 @@ struct CollectionNode
   coll_map_t decoded;
   delta_buffer_t delta_buffer;
 
-  CachedExtentRef duplicate_for_write(Transaction &t) final {
+  CachedExtentRef get_mutable_duplication(Transaction &t) final {
     assert(delta_buffer.empty());
     return CachedExtentRef(new CollectionNode(*this));
   }

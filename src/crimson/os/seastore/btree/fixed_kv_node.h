@@ -190,7 +190,8 @@ struct FixedKVNode : CachedExtent {
   TCachedExtentRef<T> get_child(Transaction &t, uint64_t pos) {
     static_assert(std::is_base_of_v<FixedKVNode, T>);
     auto &tracker = child_trackers[pos];
-    ceph_assert(tracker);
+    if (!tracker)
+      return TCachedExtentRef<T>();
     auto child = tracker->get_child(t, this);
     if (child)
       return child->template cast<T>();

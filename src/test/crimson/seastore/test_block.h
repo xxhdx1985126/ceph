@@ -54,7 +54,7 @@ struct TestBlock : crimson::os::seastore::LogicalCachedExtent {
   TestBlock(const TestBlock &other)
     : LogicalCachedExtent(other) {}
 
-  CachedExtentRef duplicate_for_write(Transaction &t) final {
+  CachedExtentRef get_mutable_duplication(Transaction &t) final {
     return CachedExtentRef(new TestBlock(*this));
   };
 
