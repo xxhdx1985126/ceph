@@ -5,6 +5,8 @@
 
 #include "crimson/common/log.h"
 #include "crimson/os/seastore/transaction.h"
+#include "crimson/os/seastore/lba_manager/btree/lba_btree_node.h"
+#include "crimson/os/seastore/backref/backref_tree_node.h"
 
 namespace {
   [[maybe_unused]] seastar::logger& logger() {
@@ -156,7 +158,20 @@ ChildNodeTracker::ChildNodeTracker(
   const ChildNodeTracker &other,
   Transaction &t)
 {
-  update_child(other.get_child(t).get());
+  if (other.is_empty())
+    return;
+  auto e = other.get_child(t);
+  if (is_lba_node(e->get_type())) {
+    e->cast<lba_manager::btree::LBANode>()->parent_pos = this;
+  } else if (is_backref_node(e->get_type())) {
+    e->cast<backref::BackrefNode>()->parent_pos = this;
+  } else {
+    ceph_assert(e->is_logical());
+    auto l_e = e->cast<LogicalCachedExtent>();
+    auto &pin = l_e->get_pin();
+    pin.new_parent_tracker(this);
+  }
+  update_child(e.get());
 }
 
 std::ostream &operator<<(std::ostream &out, const ChildNodeTracker &rhs) {

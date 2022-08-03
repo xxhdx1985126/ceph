@@ -829,7 +829,7 @@ public:
     }
   }
   void on_transaction_commit(Transaction &t);
-  bool is_empty() {
+  bool is_empty() const {
     assert(child || (!child && !child_per_trans));
     return child == nullptr;
   }

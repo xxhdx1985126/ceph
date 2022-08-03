@@ -829,8 +829,6 @@ public:
         n_fixed_kv_extent->get_bptr().c_str());
       n_fixed_kv_extent->set_modify_time(fixed_kv_extent.get_modify_time());
       n_fixed_kv_extent->pin.set_range(n_fixed_kv_extent->get_node_meta());
-      n_fixed_kv_extent->move_to_trans_view(
-        c.trans, fixed_kv_extent, fixed_kv_extent.get_size());
       
       /* This is a bit underhanded.  Any relative addrs here must necessarily
        * be record relative as we are rewriting a dirty extent.  Thus, we
@@ -858,7 +856,9 @@ public:
         e->get_paddr(),
         n_fixed_kv_extent->get_paddr(),
         *n_fixed_kv_extent
-      ).si_then([c, e, this] {
+      ).si_then([c, e, &fixed_kv_extent, n_fixed_kv_extent, this] {
+        n_fixed_kv_extent->move_to_trans_view(
+          c.trans, fixed_kv_extent, fixed_kv_extent.get_size());
         c.cache.retire_extent(c.trans, e);
       });
     };
@@ -1127,6 +1127,7 @@ private:
     auto init_leaf = [c, begin, end,
                       parent_pos=std::move(parent_pos)]
                       (leaf_node_t &node) {
+      LOG_PREFIX(FixedKVBtree::get_leaf_node);
       assert(!node.is_pending());
       assert(!node.pin.is_linked());
       node.pin.set_range(fixed_kv_node_meta_t<node_key_t>{begin, end, 1});
@@ -1136,6 +1137,13 @@ private:
         auto &tracker = parent->get_child_tracker(parent_pos->pos);
         tracker.update_child(&node);
         node.parent_pos = &tracker;
+        SUBTRACET(
+          seastore_fixedkv_tree,
+          "linked new leaf {} to parent {} on {}",
+          c.trans,
+          node,
+          *parent_pos->node,
+          tracker);
       }
       if (c.pins) {
         c.pins->add_pin(node.pin);
