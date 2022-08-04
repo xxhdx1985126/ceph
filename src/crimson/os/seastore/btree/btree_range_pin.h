@@ -476,8 +476,8 @@ public:
     parent_tracker->update_child(ref);
     pin.set_extent(ref);
     crimson::get_logger(ceph_subsys_seastore_fixedkv_tree
-      ).debug("{}: link to parent tracker {}, extent: {}",
-	__func__, *parent_tracker, *ref);
+      ).debug("{}: link to parent tracker {}, extent: {}, parent: {}",
+	__func__, *parent_tracker, *ref, *parent);
   }
 
   void new_parent_tracker(ChildNodeTracker* pt) final {
@@ -524,8 +524,8 @@ public:
   void unlink_from_parent() final {
     if (parent_tracker && pin.has_extent()) {
       crimson::get_logger(ceph_subsys_seastore_fixedkv_tree
-	).debug("{}: unlink from parent tracker {}, extent: {}",
-	  __func__, (void*)parent_tracker, (void*)&pin.get_extent());
+	).debug("{}: unlink from parent tracker {}, extent: {}, parent: {}",
+	  __func__, (void*)parent_tracker, (void*)&pin.get_extent(), *parent);
       parent_tracker->remove_child(&pin.get_extent());
     }
   }

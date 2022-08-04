@@ -170,10 +170,11 @@ struct LBALeafNode
     const_iterator iter,
     laddr_t addr,
     lba_map_val_t val) final {
-    std::move(
-      this->child_trackers.begin() + iter.offset,
-      this->child_trackers.begin() + this->get_size(),
-      this->child_trackers.begin() + iter.offset + 1);
+    for (auto it = this->child_trackers.begin() + this->get_size() - 1;
+	 it >= this->child_trackers.begin() + iter.offset;
+	 it--) {
+      *(it + 1) = std::move(*it);
+    }
     val.paddr = maybe_generate_relative(val.paddr);
     journal_insert(
       iter,
@@ -184,10 +185,11 @@ struct LBALeafNode
   }
 
   void remove(const_iterator iter) final {
-    std::move(
-      this->child_trackers.begin() + iter.offset + 1,
-      this->child_trackers.begin() + this->get_size(),
-      this->child_trackers.begin() + iter.offset);
+    for (auto it = this->child_trackers.begin() + iter.offset + 1;
+	 it <= this->child_trackers.begin() + this->get_size();
+	 it++) {
+      *(it - 1) = std::move(*it);
+    }
     return journal_remove(
       iter,
       maybe_get_delta_buffer());

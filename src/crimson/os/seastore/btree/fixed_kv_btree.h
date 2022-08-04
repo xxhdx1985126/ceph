@@ -979,8 +979,8 @@ public:
         mparent->update(piter, new_addr);
         auto &tracker = mparent->get_child_tracker(parent.pos);
         tracker.update_child(&next_extent);
-        ceph_assert(!next_extent.parent_pos);
-        next_extent.parent_pos = &tracker;
+        ceph_assert(!next_extent.parent_tracker);
+        next_extent.parent_tracker = &tracker;
 
         /* Note, iter is now invalid as we didn't udpate either the parent
          * node reference to the new mutable instance nor did we update the
@@ -1020,14 +1020,14 @@ private:
       SUBTRACET(seastore_fixedkv_tree,
         "linking parent: {}, child: {}, by tracker: {}, at pos: {}",
         t, *parent, *child, ptracker, parent_entry.pos);
-      ceph_assert(child->parent_pos == &ptracker);
+      ceph_assert(child->parent_tracker == &ptracker);
     } else {
       auto &ptracker = parent->get_child_tracker(parent_entry.pos);
       SUBTRACET(seastore_fixedkv_tree,
         "linking pending parent: {}, child: {}, by tracker: {}, at pos: {}",
         t, *parent, *child, ptracker, parent_entry.pos);
       ptracker.update_child(child.get());
-      child->parent_pos = &ptracker;
+      child->parent_tracker = &ptracker;
     }
   }
 
@@ -1058,13 +1058,13 @@ private:
       assert(!node.is_pending());
       assert(!node.pin.is_linked());
       node.pin.set_range(fixed_kv_node_meta_t<node_key_t>{begin, end, depth});
-      assert(!node.parent_pos);
+      assert(!node.parent_tracker);
       if (parent_pos) {
         auto parent = parent_pos->node;
         auto &tracker = parent->get_child_tracker(parent_pos->pos);
         ceph_assert(tracker.is_empty());
         tracker.update_child(&node);
-        node.parent_pos = &tracker;
+        node.parent_tracker = &tracker;
       }
       if (c.pins) {
         c.pins->add_pin(node.pin);
@@ -1131,12 +1131,12 @@ private:
       assert(!node.is_pending());
       assert(!node.pin.is_linked());
       node.pin.set_range(fixed_kv_node_meta_t<node_key_t>{begin, end, 1});
-      assert(!node.parent_pos);
+      assert(!node.parent_tracker);
       if (parent_pos) {
         auto parent = parent_pos->node;
         auto &tracker = parent->get_child_tracker(parent_pos->pos);
         tracker.update_child(&node);
-        node.parent_pos = &tracker;
+        node.parent_tracker = &tracker;
         SUBTRACET(
           seastore_fixedkv_tree,
           "linked new leaf {} to parent {} on {}",
@@ -1259,10 +1259,16 @@ private:
     auto child = parent->template get_child<internal_node_t>(
       c.trans, parent_entry.pos);
     if (child) {
-      if (!child->is_pending()) {
+      if (!child->is_pending() ||
+          (child->is_mutation_pending() &&
+           child->get_mutated_by() != c.trans.get_trans_id())) {
+        // global visible extents might be MUTATION_PENDING when
+        // the transaction that mutated it is submitted but not committed
         c.trans.add_to_read_set(child);
       }
-      return on_found(child);
+      return child->wait_io().then([child, on_found=std::move(on_found)] {
+        return on_found(child);
+      });
     }
 
     auto node_iter = parent->iter_idx(parent_entry.pos);
@@ -1323,10 +1329,16 @@ private:
         parent_entry.pos,
         *child,
         parent->get_child_tracker(parent_entry.pos));
-      if (!child->is_pending()) {
+      if (!child->is_pending() ||
+          (child->is_mutation_pending() &&
+           child->get_mutated_by() != c.trans.get_trans_id())) {
+        // global visible extents might be MUTATION_PENDING when
+        // the transaction that mutated it is submitted but not committed
         c.trans.add_to_read_set(child);
       }
-      return on_found(child);
+      return child->wait_io().then([child, on_found=std::move(on_found)] {
+        return on_found(child);
+      });
     }
 
     auto node_iter = parent->iter_idx(parent_entry.pos);
@@ -1569,8 +1581,8 @@ private:
       auto &r_tracker = parent_node->get_child_tracker(parent_pos.pos + 1);
       l_tracker.update_child(left.get());
       r_tracker.update_child(right.get());
-      left->parent_pos = &l_tracker;
-      right->parent_pos = &r_tracker;
+      left->parent_tracker = &l_tracker;
+      right->parent_tracker = &r_tracker;
 
       SUBTRACET(
         seastore_fixedkv_tree,
@@ -1693,7 +1705,7 @@ private:
                   auto new_root = pos.node->template get_child<
                     typename internal_node_t::base_t>(c.trans, pos.pos);
                   ceph_assert(new_root);
-                  new_root->parent_pos = nullptr;
+                  new_root->parent_tracker = nullptr;
                   c.cache.retire_extent(c.trans, pos.node);
                   assert(pos.pos == 0);
                   auto node_iter = pos.get_iter();
@@ -1808,7 +1820,7 @@ private:
 
         auto &l_tracker = parent_pos.node->get_child_tracker(parent_pos.pos);
         l_tracker.update_child(replacement.get());
-        replacement->parent_pos = &l_tracker;
+        replacement->parent_tracker = &l_tracker;
         SUBTRACET(seastore_fixedkv_tree,
           "l: {}, r: {}, replacement: {}, parent: {}, parent pos: {}, tracker: {}",
           c.trans, *l, *r, *replacement, *parent_pos.node,
@@ -1835,8 +1847,8 @@ private:
         auto &r_tracker = parent_pos.node->get_child_tracker(parent_pos.pos + 1);
         l_tracker.update_child(replacement_l.get());
         r_tracker.update_child(replacement_r.get());
-        replacement_l->parent_pos = &l_tracker;
-        replacement_r->parent_pos = &r_tracker;
+        replacement_l->parent_tracker = &l_tracker;
+        replacement_r->parent_tracker = &r_tracker;
 
         if (donor_is_left) {
           assert(parent_pos.pos > 0);

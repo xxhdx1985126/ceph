@@ -36,20 +36,20 @@ struct FixedKVNode : CachedExtent {
   // used to remember the pos in the parent node, should only
   // be non-nullptr if the current node is the root of the modified
   // subtree
-  ChildNodeTracker* parent_pos = nullptr;
+  ChildNodeTracker* parent_tracker = nullptr;
 
   FixedKVNode(size_t max_entries, ceph::bufferptr &&ptr)
     : CachedExtent(std::move(ptr)),
       pin(this),
-      child_trackers(max_entries),
+      child_trackers(max_entries + 1),
       max_entries(max_entries)
   {}
   FixedKVNode(const FixedKVNode &rhs)
     : CachedExtent(rhs),
       pin(rhs.pin, this),
-      child_trackers(rhs.max_entries),
+      child_trackers(rhs.max_entries + 1),
       max_entries(rhs.max_entries),
-      parent_pos(rhs.parent_pos)
+      parent_tracker(rhs.parent_tracker)
   {}
 
   void split_child_trackers(
@@ -225,39 +225,28 @@ struct FixedKVNode : CachedExtent {
 
   void on_invalidated(Transaction &t) {
     ceph_assert(!is_valid());
-    if (parent_pos)
-      parent_pos->remove_child(this);
+    if (parent_tracker)
+      parent_tracker->remove_child(this);
   }
 
   virtual ~FixedKVNode() {
-    if (is_valid() && parent_pos)
-      parent_pos->remove_child(this);
+    if (is_valid() && parent_tracker)
+      parent_tracker->remove_child(this);
   };
+
+  virtual void adjust_child_parent_pointers() = 0;
 
   void on_delta_write(paddr_t record_block_offset) final {
     // All in-memory relative addrs are necessarily record-relative
     assert(get_prior_instance());
     pin.take_pin(get_prior_instance()->template cast<FixedKVNode>()->pin);
     resolve_relative_addrs(record_block_offset);
-    for (auto &tracker : child_trackers) {
-      if (tracker && !tracker->is_empty()) {
-	auto child = tracker->get_child_global_view();
-	if (child->is_fixed_kv_btree_node()) {
-	  child->cast<FixedKVNode>()->parent_pos =
-	    tracker.get();
-	} else {
-	  ceph_assert(child->is_logical());
-	  auto logical_child = child->cast<LogicalCachedExtent>();
-	  auto &pin = logical_child->get_pin();
-	  pin.new_parent_tracker(tracker.get());
-	}
-      }
-    }
+    adjust_child_parent_pointers();
   }
 
   void on_replace_extent(Transaction &t) {
-    if (parent_pos)
-      parent_pos->on_transaction_commit(t);
+    if (parent_tracker)
+      parent_tracker->on_transaction_commit(t);
     CachedExtent::on_replace_extent(t);
   }
 
@@ -268,20 +257,7 @@ struct FixedKVNode : CachedExtent {
   void on_initial_write() final {
     // All in-memory relative addrs are necessarily block-relative
     resolve_relative_addrs(get_paddr());
-    for (auto &tracker : child_trackers) {
-      if (tracker && !tracker->is_empty()) {
-	auto child = tracker->get_child_global_view();
-	if (child->is_fixed_kv_btree_node()) {
-	  child->cast<FixedKVNode>()->parent_pos =
-	    tracker.get();
-	} else {
-	  ceph_assert(child->is_logical());
-	  auto logical_child = child->cast<LogicalCachedExtent>();
-	  auto &pin = logical_child->get_pin();
-	  pin.new_parent_tracker(tracker.get());
-	}
-      }
-    }
+    adjust_child_parent_pointers();
   }
 
   void on_clean_read() final {
@@ -339,6 +315,26 @@ struct FixedKVInternalNode
     return this->get_meta();
   }
 
+  void adjust_child_parent_pointers() final {
+    for (auto it = this->child_trackers.begin();
+	 it != this->child_trackers.begin() + this->get_size();
+	 it++) {
+      auto &tracker = *it;
+      if (tracker && !tracker->is_empty()) {
+	auto child = tracker->get_child_global_view();
+	if (child->is_fixed_kv_btree_node()) {
+	  child->template cast<base_t>()->parent_tracker =
+	    tracker.get();
+	} else {
+	  ceph_assert(child->is_logical());
+	  auto logical_child = child->template cast<LogicalCachedExtent>();
+	  auto &pin = logical_child->get_pin();
+	  pin.new_parent_tracker(tracker.get());
+	}
+      }
+    }
+  }
+
   typename node_layout_t::delta_buffer_t delta_buffer;
   typename node_layout_t::delta_buffer_t *maybe_get_delta_buffer() {
     return this->is_mutation_pending() 
@@ -365,10 +361,11 @@ struct FixedKVInternalNode
     internal_const_iterator_t iter,
     NODE_KEY pivot,
     paddr_t addr) {
-    std::move(
-      this->child_trackers.begin() + iter.offset,
-      this->child_trackers.begin() + this->get_size(),
-      this->child_trackers.begin() + iter.offset + 1);
+    for (auto it = this->child_trackers.begin() + this->get_size() - 1;
+	 it >= this->child_trackers.begin() + iter.offset;
+	 it--) {
+      *(it + 1) = std::move(*it);
+    }
     return this->journal_insert(
       iter,
       pivot,
@@ -377,10 +374,11 @@ struct FixedKVInternalNode
   }
 
   void remove(internal_const_iterator_t iter) {
-    std::move(
-      this->child_trackers.begin() + iter.offset + 1,
-      this->child_trackers.begin() + this->get_size(),
-      this->child_trackers.begin() + iter.offset);
+    for (auto it = this->child_trackers.begin() + iter.offset + 1;
+	 it != this->child_trackers.begin() + this->get_size();
+	 it++) {
+      *(it - 1) = std::move(*it);
+    }
     return this->journal_remove(
       iter,
       maybe_get_delta_buffer());
@@ -581,6 +579,7 @@ struct FixedKVLeafNode
       VAL,
       VAL_LE>;
   using base_ref_t = typename FixedKVNode<NODE_KEY>::FixedKVNodeRef;
+  using base_t = FixedKVNode<NODE_KEY>;
   using internal_const_iterator_t = typename node_layout_t::const_iterator;
   FixedKVLeafNode(ceph::bufferptr &&ptr)
     : FixedKVNode<NODE_KEY>(CAPACITY, std::move(ptr)),
@@ -606,6 +605,26 @@ struct FixedKVLeafNode
     new_node->move_to_trans_view(t, *this, this->get_size());
     return CachedExtentRef(new_node);
   };
+
+  void adjust_child_parent_pointers() final {
+    for (auto it = this->child_trackers.begin();
+	 it != this->child_trackers.begin() + this->get_size();
+	 it++) {
+      auto &tracker = *it;
+      if (tracker && !tracker->is_empty()) {
+	auto child = tracker->get_child_global_view();
+	if (child->is_fixed_kv_btree_node()) {
+	  child->template cast<base_t>()->parent_tracker =
+	    tracker.get();
+	} else {
+	  ceph_assert(child->is_logical());
+	  auto logical_child = child->template cast<LogicalCachedExtent>();
+	  auto &pin = logical_child->get_pin();
+	  pin.new_parent_tracker(tracker.get());
+	}
+      }
+    }
+  }
 
   virtual void update(
     internal_const_iterator_t iter,

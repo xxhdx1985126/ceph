@@ -162,9 +162,9 @@ ChildNodeTracker::ChildNodeTracker(
     return;
   auto e = other.get_child(t);
   if (is_lba_node(e->get_type())) {
-    e->cast<lba_manager::btree::LBANode>()->parent_pos = this;
+    e->cast<lba_manager::btree::LBANode>()->parent_tracker = this;
   } else if (is_backref_node(e->get_type())) {
-    e->cast<backref::BackrefNode>()->parent_pos = this;
+    e->cast<backref::BackrefNode>()->parent_tracker = this;
   } else {
     ceph_assert(e->is_logical());
     auto l_e = e->cast<LogicalCachedExtent>();
