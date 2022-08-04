@@ -143,7 +143,7 @@ public:
   void add_pin(LBAPin &pin) final {
     auto *bpin = reinterpret_cast<BtreeLBAPin*>(&pin);
     pin_set.add_pin(bpin->get_range_pin());
-    bpin->set_parent(nullptr);
+    //bpin->set_parent(nullptr);
   }
 
   ~BtreeLBAManager();

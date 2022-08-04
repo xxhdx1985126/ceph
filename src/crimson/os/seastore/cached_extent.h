@@ -272,6 +272,10 @@ public:
     return false;
   }
 
+  transaction_id_t get_mutated_by() {
+    return mutated_by;
+  }
+
   virtual bool is_logical() const {
     return false;
   }
@@ -362,6 +366,12 @@ public:
     return state == extent_state_t::INITIAL_WRITE_PENDING ||
       state == extent_state_t::MUTATION_PENDING ||
       state == extent_state_t::EXIST_MUTATION_PENDING;
+  }
+
+  bool is_pending_by_me(transaction_id_t id) const {
+    return is_initial_pending()
+      || is_exist_mutation_pending()
+      || (is_mutation_pending() && mutated_by == id);
   }
 
   /// Returns true if extent has a pending delta
@@ -493,6 +503,15 @@ public:
   bool is_inline() const {
     return poffset.is_relative();
   }
+
+  seastar::future<> wait_io() {
+    if (!io_wait_promise) {
+      return seastar::now();
+    } else {
+      return io_wait_promise->get_shared_future();
+    }
+  }
+
 private:
   template <typename T>
   friend class read_set_item_t;
@@ -555,14 +574,6 @@ private:
     ceph_assert(io_wait_promise);
     io_wait_promise->set_value();
     io_wait_promise = std::nullopt;
-  }
-
-  seastar::future<> wait_io() {
-    if (!io_wait_promise) {
-      return seastar::now();
-    } else {
-      return io_wait_promise->get_shared_future();
-    }
   }
 
   read_set_item_t<Transaction>::trans_set_t transactions;
@@ -835,7 +846,7 @@ public:
   }
   void remove_child(CachedExtent* c) {
     // no need to worry about child_per_trans, entries in which
-    // should be removed by intrusive map hooks
+    // should be removed by intrusive set hooks
     if (child == c) {
       child = nullptr;
     }

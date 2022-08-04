@@ -259,7 +259,9 @@ public:
       } else {
 	auto e = ptracker->get_child(t, pin->get_parent().get());
 	assert(e && e->is_valid());
-	if (!e->is_pending()) {
+	if (!e->is_pending() ||
+	    (e->is_mutation_pending() &&
+	     e->get_mutated_by() != t.get_trans_id())) {
 	  t.add_to_read_set(e);
 	}
 	return read_extent_iertr::make_ready_future<
@@ -297,7 +299,9 @@ public:
       } else {
 	auto e = ptracker->get_child(t, pin->get_parent().get());
 	assert(e && e->is_valid());
-	if (!e->is_pending()) {
+	if (!e->is_pending() ||
+	    (e->is_mutation_pending() &&
+	     e->get_mutated_by() != t.get_trans_id())) {
 	  t.add_to_read_set(e);
 	}
 	return read_extent_iertr::make_ready_future<

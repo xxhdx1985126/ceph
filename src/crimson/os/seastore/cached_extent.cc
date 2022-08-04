@@ -142,7 +142,7 @@ void ChildNodeTracker::add_child_per_trans(
 }
 
 void ChildNodeTracker::on_transaction_commit(Transaction &t) {
-  if (!child_per_trans) {
+  if (!child_per_trans || child_per_trans->empty()) {
     ceph_assert(child);
     return;
   }
@@ -161,15 +161,17 @@ ChildNodeTracker::ChildNodeTracker(
   if (other.is_empty())
     return;
   auto e = other.get_child(t);
-  if (is_lba_node(e->get_type())) {
-    e->cast<lba_manager::btree::LBANode>()->parent_pos = this;
-  } else if (is_backref_node(e->get_type())) {
-    e->cast<backref::BackrefNode>()->parent_pos = this;
-  } else {
-    ceph_assert(e->is_logical());
-    auto l_e = e->cast<LogicalCachedExtent>();
-    auto &pin = l_e->get_pin();
-    pin.new_parent_tracker(this);
+  if (e->is_pending_by_me(t.get_trans_id())) {
+    if (is_lba_node(e->get_type())) {
+      e->cast<lba_manager::btree::LBANode>()->parent_tracker = this;
+    } else if (is_backref_node(e->get_type())) {
+      e->cast<backref::BackrefNode>()->parent_tracker = this;
+    } else {
+      ceph_assert(e->is_logical());
+      auto l_e = e->cast<LogicalCachedExtent>();
+      auto &pin = l_e->get_pin();
+      pin.new_parent_tracker(this);
+    }
   }
   update_child(e.get());
 }
