@@ -110,8 +110,7 @@ std::ostream &operator<<(std::ostream &out, const lba_pin_list_t &rhs)
 }
 
 CachedExtentRef ChildNodeTracker::get_child(
-  Transaction &t,
-  CachedExtent* parent) const
+  Transaction &t) const
 {
   if (!child_per_trans) {
     return child;
@@ -123,17 +122,17 @@ CachedExtentRef ChildNodeTracker::get_child(
   if (it == child_per_trans->end()) {
     return child;
   } else {
-    assert(!parent || !parent->is_pending()
+    ceph_assert(parent);
+    ceph_assert(!parent->is_pending()
       || (parent->is_pending() && !child_per_trans));
     return (CachedExtent*)(&(*it));
   }
 }
 
-void ChildNodeTracker::add_child_per_trans(
-  Transaction &t,
-  CachedExtent* c)
+void ChildNodeTracker::add_child_per_trans(CachedExtent* c)
 {
   ceph_assert(c != nullptr);
+  ceph_assert(c->get_mutated_by());
   if (!child_per_trans) {
     child_per_trans = std::make_unique<
       per_trans_view_t::trans_view_set_t>();
@@ -146,6 +145,7 @@ void ChildNodeTracker::on_transaction_commit(Transaction &t) {
     ceph_assert(child);
     return;
   }
+  //TODO: use intrusive set's s_iterator_to
   auto it = child_per_trans->find(
     t.get_trans_id(),
     per_trans_view_t::trans_view_compare_t());
@@ -156,8 +156,13 @@ void ChildNodeTracker::on_transaction_commit(Transaction &t) {
 
 ChildNodeTracker::ChildNodeTracker(
   const ChildNodeTracker &other,
+  CachedExtent* parent,
   Transaction &t)
+  : parent(parent)
 {
+  ceph_assert(parent && other.parent);
+  ceph_assert(parent != other.parent); // should only happens when allocating
+				       // new fixed kv nodes
   if (other.is_empty())
     return;
   auto e = other.get_child(t);
@@ -172,8 +177,31 @@ ChildNodeTracker::ChildNodeTracker(
       auto &pin = l_e->get_pin();
       pin.new_parent_tracker(this);
     }
+  } else if (e->is_logical()) {
+    auto l_e = e->cast<LogicalCachedExtent>();
+    auto &pin = l_e->get_pin();
+    pin.new_parent_tracker_trans_view(this);
   }
   update_child(e.get());
+}
+
+CachedExtentRef LogicalCachedExtent::duplicate_for_write(Transaction &t) {
+  auto ext = get_mutable_duplication(t);
+  ext->mutated_by = t.get_trans_id();
+  auto &ptracker = pin->get_parent_tracker(t.get_trans_id());
+  if (ptracker.is_parent_mutated_by_me(t.get_trans_id())) {
+    ptracker.update_child(ext.get());
+  } else {
+    ptracker.add_child_per_trans(ext.get());
+  }
+  return ext;
+}
+
+void LogicalCachedExtent::on_replace_extent(Transaction &t) {
+  assert(pin);
+  auto &ptracker = pin->get_parent_tracker(t.get_trans_id());
+  ptracker.on_transaction_commit(t);
+  CachedExtent::on_replace_extent(t);
 }
 
 std::ostream &operator<<(std::ostream &out, const ChildNodeTracker &rhs) {

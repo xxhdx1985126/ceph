@@ -22,12 +22,12 @@ namespace crimson::os::seastore {
 using context_t = ObjectDataHandler::context_t;
 using get_iertr = ObjectDataHandler::write_iertr;
 
-auto read_pin(
+get_iertr::future<TCachedExtentRef<ObjectDataBlock>>
+read_pin(
   context_t ctx,
   LBAPinRef pin) {
-  auto ptracker = pin->get_parent_tracker();
-  ceph_assert(ptracker);
-  if (ptracker->is_empty()) {
+  auto &ptracker = pin->get_parent_tracker(ctx.t.get_trans_id());
+  if (ptracker.is_empty()) {
     return ctx.tm.pin_to_extent<ObjectDataBlock>(
       ctx.t,
       std::move(pin)
@@ -36,11 +36,18 @@ auto read_pin(
       crimson::ct_error::assert_all{ "read_pin: invalid error" }
     );
   } else {
-    auto e = ptracker->get_child(ctx.t, pin->get_parent().get());
-    assert(e);
-    ctx.t.add_to_read_set(e);
-    return get_iertr::make_ready_future<TCachedExtentRef<ObjectDataBlock>>(
-	e->template cast<ObjectDataBlock>());
+    auto e = ptracker.get_child(ctx.t);
+    assert(e && e->is_valid());
+    if (!e->is_pending() ||
+	(e->is_mutation_pending() &&
+	 e->get_mutated_by() != ctx.t.get_trans_id())) {
+      ctx.t.add_to_read_set(e);
+    }
+    return e->wait_io().then([e] {
+      return seastar::make_ready_future<
+	TCachedExtentRef<ObjectDataBlock>>(
+	  e->template cast<ObjectDataBlock>());
+    });
   }
 }
 
@@ -959,19 +966,24 @@ ObjectDataHandler::read_ret ObjectDataHandler::read(
 		      auto fut = TransactionManager::pin_to_extent_iertr::
 			make_ready_future<TCachedExtentRef<ObjectDataBlock>>(
 			  TCachedExtentRef<ObjectDataBlock>());
-		      auto ptracker = pin->get_parent_tracker();
-		      ceph_assert(ptracker);
-		      if (ptracker->is_empty()) {
+		      auto &ptracker = pin->get_parent_tracker(ctx.t.get_trans_id());
+		      if (ptracker.is_empty()) {
 			fut = ctx.tm.pin_to_extent<ObjectDataBlock>(
 			  ctx.t,
 			  std::move(pin));
 		      } else {
-			auto e = ptracker->get_child(ctx.t, pin->get_parent().get());
-			assert(e);
-			ctx.t.add_to_read_set(e);
-			fut = TransactionManager::pin_to_extent_iertr::
-			  make_ready_future<TCachedExtentRef<ObjectDataBlock>>(
-			    e->template cast<ObjectDataBlock>());
+			auto e = ptracker.get_child(ctx.t);
+			assert(e && e->is_valid());
+			if (!e->is_pending() ||
+			    (e->is_mutation_pending() &&
+			     e->get_mutated_by() != ctx.t.get_trans_id())) {
+			  ctx.t.add_to_read_set(e);
+			}
+			fut = e->wait_io().then([e] {
+			  return seastar::make_ready_future<
+			    TCachedExtentRef<ObjectDataBlock>>(
+			      e->template cast<ObjectDataBlock>());
+			});
 		      }
 		      return fut.si_then([&ret, &current, end](auto extent) {
 			ceph_assert(

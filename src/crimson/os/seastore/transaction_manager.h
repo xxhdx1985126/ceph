@@ -252,21 +252,23 @@ public:
             t, offset, length, *pin);
         ceph_assert(0 == "Should be impossible");
       }
-      auto ptracker = pin->get_parent_tracker();
-      ceph_assert(ptracker);
-      if (ptracker->is_empty()) {
+      auto &ptracker = pin->get_parent_tracker(t.get_trans_id());
+      if (ptracker.is_empty()) {
 	return this->pin_to_extent<T>(t, std::move(pin));
       } else {
-	auto e = ptracker->get_child(t, pin->get_parent().get());
+	auto e = ptracker.get_child(t);
+	SUBTRACET(seastore_tm, "got child {}", t, *e);
 	assert(e && e->is_valid());
 	if (!e->is_pending() ||
 	    (e->is_mutation_pending() &&
 	     e->get_mutated_by() != t.get_trans_id())) {
 	  t.add_to_read_set(e);
 	}
-	return read_extent_iertr::make_ready_future<
-	  TCachedExtentRef<T>>(
-	    e->template cast<T>());
+	return e->wait_io().then([e] {
+	  return seastar::make_ready_future<
+	    TCachedExtentRef<T>>(
+	      e->template cast<T>());
+	});
       }
     });
   }
@@ -292,21 +294,23 @@ public:
             t, offset, *pin);
         ceph_assert(0 == "Should be impossible");
       }
-      auto ptracker = pin->get_parent_tracker();
-      ceph_assert(ptracker);
-      if (ptracker->is_empty()) {
+      auto &ptracker = pin->get_parent_tracker(t.get_trans_id());
+      if (ptracker.is_empty()) {
 	return this->pin_to_extent<T>(t, std::move(pin));
       } else {
-	auto e = ptracker->get_child(t, pin->get_parent().get());
+	auto e = ptracker.get_child(t);
+	SUBTRACET(seastore_tm, "got child {}", t, *e);
 	assert(e && e->is_valid());
 	if (!e->is_pending() ||
 	    (e->is_mutation_pending() &&
 	     e->get_mutated_by() != t.get_trans_id())) {
 	  t.add_to_read_set(e);
 	}
-	return read_extent_iertr::make_ready_future<
-	  TCachedExtentRef<T>>(
-	    e->template cast<T>());
+	return e->wait_io().then([e] {
+	  return seastar::make_ready_future<
+	    TCachedExtentRef<T>>(
+	      e->template cast<T>());
+	});
       }
     });
   }

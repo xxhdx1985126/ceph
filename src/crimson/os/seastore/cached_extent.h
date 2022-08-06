@@ -228,7 +228,9 @@ public:
    * Implentation may use this call to fixup the buffer
    * with the newly available absolute get_paddr().
    */
-  virtual void on_initial_write() {}
+  virtual void on_initial_write() {
+    mutated_by = 0;
+  }
 
   /**
    * on_clean_read
@@ -815,17 +817,45 @@ using PhysicalNodePinRef = std::unique_ptr<PhysicalNodePin<key_t, val_t>>;
 class ChildNodeTracker;
 std::ostream &operator<<(std::ostream &out, const ChildNodeTracker &rhs);
 class ChildNodeTracker {
+  using set_hook_t = boost::intrusive::set_member_hook<
+    boost::intrusive::link_mode<
+      boost::intrusive::auto_unlink>>;
+  set_hook_t set_hook;
+  using set_hook_options = boost::intrusive::member_hook<
+    ChildNodeTracker,
+    set_hook_t,
+    &ChildNodeTracker::set_hook>;
 public:
-  ChildNodeTracker() = default;
-  ChildNodeTracker(const ChildNodeTracker &, Transaction &);
+  struct cmp_t {
+    bool operator()(
+      const ChildNodeTracker &l,
+      const ChildNodeTracker &r) const {
+      return l.parent->get_mutated_by() < r.parent->get_mutated_by();
+    }
+    bool operator()(
+      const ChildNodeTracker &l,
+      const transaction_id_t r) const {
+      return l.parent->get_mutated_by() < r;
+    }
+    bool operator()(
+      const transaction_id_t l,
+      const ChildNodeTracker &r) const {
+      return l < r.parent->get_mutated_by();
+    }
+  };
+  using set_t = boost::intrusive::set<
+    ChildNodeTracker,
+    set_hook_options,
+    boost::intrusive::constant_time_size<false>,
+    boost::intrusive::compare<cmp_t>>;
+  ChildNodeTracker(CachedExtent* parent) : parent(parent) {}
+  ChildNodeTracker(const ChildNodeTracker &, CachedExtent*, Transaction &);
   ChildNodeTracker(const ChildNodeTracker&) = delete;
   ChildNodeTracker& operator=(ChildNodeTracker &&) = default;
   ChildNodeTracker& operator=(const ChildNodeTracker&) = delete;
 
-  CachedExtentRef get_child(
-    Transaction &t,
-    CachedExtent* parent = nullptr) const;
-  void add_child_per_trans(Transaction &t, CachedExtent* child);
+  CachedExtentRef get_child(Transaction &t) const;
+  void add_child_per_trans(CachedExtent* child);
   void update_child(CachedExtent* c) {
     child = c;
     // directly modify global child view, this should only happens
@@ -841,7 +871,10 @@ public:
   }
   void on_transaction_commit(Transaction &t);
   bool is_empty() const {
-    assert(child || (!child && !child_per_trans));
+    assert(child ||
+      (!child && 
+       (!child_per_trans ||
+	child_per_trans->empty())));
     return child == nullptr;
   }
   void remove_child(CachedExtent* c) {
@@ -854,8 +887,15 @@ public:
   CachedExtent* get_child_global_view() {
     return child;
   }
+  bool is_parent_mutated_by_me(transaction_id_t id) {
+    return parent->is_pending_by_me(id);
+  }
+  bool is_parent_pending() {
+    return parent->is_pending();
+  }
 private:
   CachedExtent* child = nullptr;
+  CachedExtent* parent = nullptr;
   // only the parent of an mutated extent should have this field initialized
   using trans_view_set_ref = std::unique_ptr<per_trans_view_t::trans_view_set_t>;
   trans_view_set_ref child_per_trans;
@@ -875,8 +915,11 @@ public:
   virtual key_t get_key() const = 0;
   virtual PhysicalNodePinRef<key_t, val_t> duplicate() const = 0;
   virtual bool has_been_invalidated() const = 0;
-  virtual ChildNodeTracker* get_parent_tracker() const = 0;
-  virtual void new_parent_tracker(ChildNodeTracker*) = 0;
+  virtual ChildNodeTracker& get_parent_tracker(transaction_id_t id) = 0;
+  virtual void new_parent_tracker(
+    ChildNodeTracker* pt,
+    bool drop_trans_views = false) = 0;
+  virtual void new_parent_tracker_trans_view(ChildNodeTracker*) = 0;
   virtual CachedExtentRef get_parent() = 0;
   virtual void unlink_from_parent() = 0;
 
@@ -1001,13 +1044,7 @@ public:
 
   std::ostream &print_detail(std::ostream &out) const final;
 
-  CachedExtentRef duplicate_for_write(Transaction &t) final {
-    auto ext = get_mutable_duplication(t);
-    auto ptracker = pin->get_parent_tracker();
-    ceph_assert(ptracker);
-    ptracker->add_child_per_trans(t, ext.get());
-    return ext;
-  }
+  CachedExtentRef duplicate_for_write(Transaction &t) final;
 
   void on_invalidated(Transaction &t) final {
     ceph_assert(!is_valid());
@@ -1027,6 +1064,8 @@ protected:
   }
 
   virtual void logical_on_delta_write() {}
+
+  void on_replace_extent(Transaction &t) override;
 
   void on_delta_write(paddr_t record_block_offset) final {
     assert(is_exist_mutation_pending() ||

@@ -435,6 +435,7 @@ class BtreeNodePin : public PhysicalNodePin<key_t, val_t> {
   btree_range_pin_t<key_t> pin;
 
   ChildNodeTracker* parent_tracker = nullptr;
+  ChildNodeTracker::set_t parent_tracker_trans_views;
 
 public:
   using val_type = val_t;
@@ -453,9 +454,17 @@ public:
     pin.set_range(std::move(meta));
   }
 
-  ChildNodeTracker* get_parent_tracker() const final {
+  ChildNodeTracker& get_parent_tracker(transaction_id_t id) final {
     ceph_assert(parent_tracker != nullptr);
-    return parent_tracker;
+    if (!id) {
+      return *parent_tracker;
+    }
+
+    auto it = parent_tracker_trans_views.find(id, ChildNodeTracker::cmp_t());
+    if (it != parent_tracker_trans_views.end()) {
+      return *it;
+    }
+    return *parent_tracker;
   }
 
   btree_range_pin_t<key_t>& get_range_pin() {
@@ -473,15 +482,37 @@ public:
 
   void link_extent(LogicalCachedExtent *ref) final {
     ceph_assert(parent_tracker != nullptr);
-    parent_tracker->update_child(ref);
+    if (ref->is_pending()) {
+      if (parent_tracker->is_parent_pending()) {
+	// the parent LBALeafNode being pending means
+	// that it belongs to the same transaction as the
+	// logical extent that's holding this pin
+	parent_tracker->update_child(ref);
+      } else {
+	parent_tracker->add_child_per_trans(ref);
+      }
+    } else {
+      parent_tracker->update_child(ref);
+    }
     pin.set_extent(ref);
     crimson::get_logger(ceph_subsys_seastore_fixedkv_tree
       ).debug("{}: link to parent tracker {}, extent: {}, parent: {}",
 	__func__, *parent_tracker, *ref, *parent);
   }
 
-  void new_parent_tracker(ChildNodeTracker* pt) final {
+  void new_parent_tracker(
+    ChildNodeTracker* pt,
+    bool drop_trans_views = false) final
+  {
+    assert(parent_tracker_trans_views.empty() || drop_trans_views);
     parent_tracker = pt;
+    if (drop_trans_views)
+      parent_tracker_trans_views.clear();
+  }
+
+  void new_parent_tracker_trans_view(ChildNodeTracker* pt) final {
+    ceph_assert(pt != parent_tracker);
+    parent_tracker_trans_views.insert(*pt);
   }
 
   extent_len_t get_length() const final {

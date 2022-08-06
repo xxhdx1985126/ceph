@@ -166,7 +166,8 @@ public:
     Transaction& t,
     laddr_t laddr,
     paddr_t prev_addr,
-    paddr_t paddr) = 0;
+    paddr_t paddr,
+    LogicalCachedExtentRef ref = {}) = 0;
 
   /**
    * update_mappings

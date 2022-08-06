@@ -131,7 +131,8 @@ public:
     Transaction& t,
     laddr_t laddr,
     paddr_t prev_addr,
-    paddr_t paddr) final;
+    paddr_t paddr,
+    LogicalCachedExtentRef ref = {}) final;
 
   get_physical_extent_if_live_ret get_physical_extent_if_live(
     Transaction &t,
@@ -190,7 +191,8 @@ private:
   _update_mapping_ret _update_mapping(
     Transaction &t,
     laddr_t addr,
-    update_func_t &&f);
+    update_func_t &&f,
+    LogicalCachedExtentRef ref = {});
 };
 using BtreeLBAManagerRef = std::unique_ptr<BtreeLBAManager>;
 

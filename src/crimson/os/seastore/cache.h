@@ -672,6 +672,7 @@ public:
               result.paddr,
               hint,
               result.gen);
+    ret->mutated_by = t.get_trans_id();
     t.add_fresh_extent(ret);
     SUBDEBUGT(seastore_cache,
               "allocated {} {}B extent at {}, hint={}, gen={} -- {}",

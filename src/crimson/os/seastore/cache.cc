@@ -1067,8 +1067,8 @@ record_t Cache::prepare_record(
     auto delta_bl = i->get_delta();
     auto delta_length = delta_bl.length();
     i->set_modify_time(commit_time);
-    DEBUGT("mutated extent with {}B delta -- {}",
-	   t, delta_length, *i);
+    DEBUGT("mutated extent with {}B delta crc32c {} -- {}",
+	   t, delta_length, delta_bl.crc32c(0), *i);
     if (!i->is_exist_mutation_pending()) {
       DEBUGT("commit replace extent ... -- {}, prior={}",
 	     t, *i, *i->prior_instance);
@@ -1687,8 +1687,8 @@ Cache::replay_delta(
 	return;
       }
 
-      DEBUG("replay extent delta at {} {} ... -- {}, prv_extent={}",
-            journal_seq, record_base, delta, *extent);
+      DEBUG("replay extent delta at {} {} ... -- {}, {}B, crc32c {}, prv_extent={}",
+            journal_seq, record_base, delta, delta.bl.length(), delta.bl.crc32c(0), *extent);
 
       assert(extent->version == delta.pversion);
 

@@ -402,7 +402,8 @@ BtreeLBAManager::update_mapping(
   Transaction& t,
   laddr_t laddr,
   paddr_t prev_addr,
-  paddr_t addr)
+  paddr_t addr,
+  LogicalCachedExtentRef ref)
 {
   LOG_PREFIX(BtreeLBAManager::update_mapping);
   TRACET("laddr={}, paddr {} => {}", t, laddr, prev_addr, addr);
@@ -416,7 +417,8 @@ BtreeLBAManager::update_mapping(
       ceph_assert(in.paddr == prev_addr);
       ret.paddr = addr;
       return ret;
-    }
+    },
+    ref
   ).si_then([&t, laddr, prev_addr, addr, FNAME](auto result) {
       DEBUGT("laddr={}, paddr {} => {} done -- {}",
              t, laddr, prev_addr, addr, result);
@@ -513,16 +515,17 @@ BtreeLBAManager::update_refcount_ret BtreeLBAManager::update_refcount(
 BtreeLBAManager::_update_mapping_ret BtreeLBAManager::_update_mapping(
   Transaction &t,
   laddr_t addr,
-  update_func_t &&f)
+  update_func_t &&f,
+  LogicalCachedExtentRef ref)
 {
   auto c = get_context(t);
   return with_btree_ret<LBABtree, lba_map_val_t>(
     cache,
     c,
-    [f=std::move(f), c, addr](auto &btree) mutable {
+    [f=std::move(f), c, addr, ref](auto &btree) mutable {
       return btree.lower_bound(
 	c, addr
-      ).si_then([&btree, f=std::move(f), c, addr](auto iter)
+      ).si_then([&btree, f=std::move(f), c, addr, ref](auto iter)
 		-> _update_mapping_ret {
 	if (iter.is_end() || iter.get_key() != addr) {
 	  LOG_PREFIX(BtreeLBAManager::_update_mapping);
@@ -543,7 +546,10 @@ BtreeLBAManager::_update_mapping_ret BtreeLBAManager::_update_mapping(
 	    c,
 	    iter,
 	    ret
-	  ).si_then([ret](auto) {
+	  ).si_then([ret, ref](auto iter) {
+	    if (ref) {
+	      ref->set_pin(iter.get_pin());
+	    }
 	    return ret;
 	  });
 	}

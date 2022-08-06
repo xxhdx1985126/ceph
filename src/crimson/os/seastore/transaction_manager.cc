@@ -487,7 +487,6 @@ TransactionManager::rewrite_logical_extent(
     lextent->get_length(),
     nlextent->get_bptr().c_str());
   nlextent->set_laddr(lextent->get_laddr());
-  nlextent->set_pin(lextent->get_pin().duplicate());
   nlextent->set_modify_time(lextent->get_modify_time());
 
   DEBUGT("rewriting logical extent -- {} to {}", t, *lextent, *nlextent);
@@ -500,7 +499,8 @@ TransactionManager::rewrite_logical_extent(
     t,
     lextent->get_laddr(),
     lextent->get_paddr(),
-    nlextent->get_paddr());
+    nlextent->get_paddr(),
+    nlextent);
 }
 
 TransactionManager::rewrite_extent_ret TransactionManager::rewrite_extent(
