@@ -1845,17 +1845,17 @@ private:
           riter,
           pivot,
           replacement_r->get_paddr());
+
+        if (donor_is_left) {
+          assert(parent_pos.pos > 0);
+          parent_pos.pos--;
+        }
         auto &l_tracker = parent_pos.node->get_child_tracker(parent_pos.pos);
         auto &r_tracker = parent_pos.node->get_child_tracker(parent_pos.pos + 1);
         l_tracker.update_child(replacement_l.get());
         r_tracker.update_child(replacement_r.get());
         replacement_l->parent_tracker = &l_tracker;
         replacement_r->parent_tracker = &r_tracker;
-
-        if (donor_is_left) {
-          assert(parent_pos.pos > 0);
-          parent_pos.pos--;
-        }
 
         auto orig_position = donor_is_left ?
           l->get_size() + pos.pos :
