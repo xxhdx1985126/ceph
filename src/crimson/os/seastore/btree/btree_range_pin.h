@@ -570,6 +570,11 @@ public:
 	).debug("{}: unlink from parent tracker {}, extent: {}",
 	  __func__, (void*)parent_tracker, (void*)&pin.get_extent());
       parent_tracker->remove_child(&pin.get_extent());
+      if (!parent_tracker_trans_views.empty()) {
+	for (auto &ptracker : parent_tracker_trans_views) {
+	  ptracker.remove_child(&pin.get_extent());
+	}
+      }
     }
   }
 };

@@ -69,14 +69,16 @@ struct FixedKVNode : CachedExtent {
     for (auto my_it = child_trackers.begin();
 	 my_it != child_trackers.end();
 	 my_it++) {
-      if (!(*my_it))
-	continue;
       if (my_it < my_mid_it) {
-	*l_it = std::make_unique<ChildNodeTracker>(**my_it, &left, t);
+	if (*my_it) {
+	  *l_it = std::make_unique<ChildNodeTracker>(**my_it, &left, t);
+	}
 	l_it++;
 	l_size++;
       } else {
-	*r_it = std::make_unique<ChildNodeTracker>(**my_it, &right, t);
+	if (*my_it) {
+	  *r_it = std::make_unique<ChildNodeTracker>(**my_it, &right, t);
+	}
 	r_it++;
 	r_size++;
       }
@@ -96,14 +98,14 @@ struct FixedKVNode : CachedExtent {
     //TODO: should avoid unnecessary copies, involve l/r_size;
     for (auto &tracker : child_trackers) {
       if (l_it != left.child_trackers.end()) {
-	if (!(*l_it))
-	  continue;
-	tracker = std::make_unique<ChildNodeTracker>(**l_it, this, t);
+	if (*l_it) {
+	  tracker = std::make_unique<ChildNodeTracker>(**l_it, this, t);
+	}
 	l_it++;
       } else if (r_it != right.child_trackers.end()) {
-	if (!(*r_it))
-	  continue;
-	tracker = std::make_unique<ChildNodeTracker>(**r_it, this, t);
+	if (*r_it) {
+	  tracker = std::make_unique<ChildNodeTracker>(**r_it, this, t);
+	}
 	r_it++;
       } else {
 	break;
@@ -135,40 +137,36 @@ struct FixedKVNode : CachedExtent {
     if (pivot_idx < l_size) {
       auto r_l_it = replacement_left.child_trackers.begin();
       auto end_it = left.child_trackers.begin() + pivot_idx;
-      for (auto it = left.child_trackers.begin(); it != end_it; it++) {
+      for (auto it = left.child_trackers.begin(); it != end_it; r_l_it++, it++) {
 	if (!(*it))
 	  continue;
 	*r_l_it = std::make_unique<ChildNodeTracker>(
 	  **it, &replacement_left, t);
-	r_l_it++;
       }
       auto r_r_it = replacement_right.child_trackers.begin();
       end_it = left.child_trackers.begin() + l_size;
-      for (auto it = end_it; it != end_it; it++) {
+      for (auto it = end_it; it != end_it; r_r_it++, it++) {
 	if (!(*it))
 	  continue;
 	*r_r_it = std::make_unique<ChildNodeTracker>(
 	  **it, &replacement_right, t);
-	r_r_it++;
       }
       end_it = right.child_trackers.begin() + r_size;
       for (auto it = right.child_trackers.begin();
-	   it != end_it; it++) {
+	   it != end_it; r_r_it++, it++) {
 	if (!(*it))
 	  continue;
 	*r_r_it = std::make_unique<ChildNodeTracker>(
 	  **it, &replacement_right, t);
-	r_r_it++;
       }
     } else {
       auto r_l_it = replacement_left.child_trackers.begin();
       auto end_it = left.child_trackers.begin() + l_size;
-      for (auto it = left.child_trackers.begin(); it != end_it; it++) {
+      for (auto it = left.child_trackers.begin(); it != end_it; r_l_it++, it++) {
 	if (!(*it))
 	  continue;
 	*r_l_it = std::make_unique<ChildNodeTracker>(
 	  **it, &replacement_left, t);
-	r_l_it++;
       }
       end_it = replacement_left.child_trackers.begin() + pivot_idx;
       for (auto it = right.child_trackers.begin();
@@ -182,12 +180,11 @@ struct FixedKVNode : CachedExtent {
       end_it = right.child_trackers.begin() + r_size;
       for (auto it = right.child_trackers.begin() + pivot_idx - l_size;
 	   it != end_it;
-	   it++) {
+	   r_r_it++, it++) {
 	if (!(*it))
 	  continue;
 	*r_r_it = std::make_unique<ChildNodeTracker>(
 	  **it, &replacement_right, t);
-	r_r_it++;
       }
     }
   }
@@ -237,10 +234,15 @@ struct FixedKVNode : CachedExtent {
 
   virtual fixed_kv_node_meta_t<node_key_t> get_node_meta() const = 0;
 
-  void on_invalidated(Transaction &t) {
+  void on_invalidated(Transaction &t) final {
+    LOG_PREFIX(FixedKVNode::on_invalidated);
     ceph_assert(!is_valid());
-    if (parent_tracker)
+    if (parent_tracker) {
+      SUBTRACET(seastore_fixedkv_tree,
+	"removing {} from {}",
+	t, *this, *parent_tracker);
       parent_tracker->remove_child(this);
+    }
   }
 
   virtual ~FixedKVNode() {
