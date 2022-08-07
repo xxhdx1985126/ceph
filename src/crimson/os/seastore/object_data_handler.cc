@@ -425,7 +425,7 @@ split_ret split_pin_left(context_t ctx, LBAPinRef &pin, const overwrite_plan_t &
     if (!overwrite_plan.split_left) {
       // Data, return up to offset to prepend
       auto to_prepend = overwrite_plan.data_begin - overwrite_plan.pin_begin;
-      return read_pin(ctx, pin->duplicate()
+      return read_pin(ctx, pin->duplicate(ctx.t.get_trans_id())
       ).si_then([to_prepend](auto extent) {
 	return get_iertr::make_ready_future<split_ret_bare>(
 	  std::nullopt,
@@ -448,7 +448,7 @@ split_ret split_pin_left(context_t ctx, LBAPinRef &pin, const overwrite_plan_t &
 	  std::nullopt);
       } else {
 	// not block_size aligned, split
-	return read_pin(ctx, pin->duplicate()
+	return read_pin(ctx, pin->duplicate(ctx.t.get_trans_id())
 	).si_then([prepend_len, extent_len, &overwrite_plan](auto extent) {
 	  return get_iertr::make_ready_future<split_ret_bare>(
 	    (extent_len == 0
@@ -490,7 +490,7 @@ split_ret split_pin_right(context_t ctx, LBAPinRef &pin, const overwrite_plan_t 
   } else {
     auto last_pin_begin = pin->get_key();
     if (!overwrite_plan.split_right) {
-      return read_pin(ctx, pin->duplicate()
+      return read_pin(ctx, pin->duplicate(ctx.t.get_trans_id())
       ).si_then([last_pin_begin, &overwrite_plan](auto extent) {
 	auto to_append = overwrite_plan.pin_end - overwrite_plan.data_end;
         return get_iertr::make_ready_future<split_ret_bare>(
@@ -515,7 +515,7 @@ split_ret split_pin_right(context_t ctx, LBAPinRef &pin, const overwrite_plan_t 
 	       extent_len))),
           std::nullopt);
       } else {
-	return read_pin(ctx, pin->duplicate()
+	return read_pin(ctx, pin->duplicate(ctx.t.get_trans_id())
 	).si_then([last_pin_begin, append_len, extent_len, &overwrite_plan](auto extent) {
 	  return get_iertr::make_ready_future<split_ret_bare>(
 	  (extent_len == 0
@@ -626,7 +626,7 @@ ObjectDataHandler::clear_ret ObjectDataHandler::trim_data_reservation(
 	   * and rewrite portion prior to size */
 	  return read_pin(
 	    ctx,
-	    pin.duplicate()
+	    pin.duplicate(ctx.t.get_trans_id())
 	  ).si_then([ctx, size, pin_offset, &pin, &object_data, &to_write](
 		     auto extent) {
 	    bufferlist bl;

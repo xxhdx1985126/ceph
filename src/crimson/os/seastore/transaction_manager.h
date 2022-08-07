@@ -327,7 +327,7 @@ public:
 	t,
 	*ref,
 	*ret);
-      ret->set_pin(ref->get_pin().duplicate());
+      ret->set_pin(ref->get_pin().duplicate(t.get_trans_id()));
     } else {
       SUBTRACET(seastore_tm,
 	"extent is already duplicated -- {}",

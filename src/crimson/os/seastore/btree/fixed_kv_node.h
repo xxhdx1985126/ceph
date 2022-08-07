@@ -58,10 +58,13 @@ struct FixedKVNode : CachedExtent {
     FixedKVNode &right,
     size_t size)
   {
+    LOG_PREFIX(FixedKVNode::split_child_trackers);
     auto split_pos = size / 2;
     auto l_it = left.child_trackers.begin();
     auto r_it = right.child_trackers.begin();
     auto my_mid_it = child_trackers.begin() + split_pos;
+    size_t l_size = 0;
+    size_t r_size = 0;
     //TODO: should avoid unnecessary copies, involve size;
     for (auto my_it = child_trackers.begin();
 	 my_it != child_trackers.end();
@@ -71,11 +74,16 @@ struct FixedKVNode : CachedExtent {
       if (my_it < my_mid_it) {
 	*l_it = std::make_unique<ChildNodeTracker>(**my_it, &left, t);
 	l_it++;
+	l_size++;
       } else {
 	*r_it = std::make_unique<ChildNodeTracker>(**my_it, &right, t);
 	r_it++;
+	r_size++;
       }
     }
+    SUBTRACET(seastore_fixedkv_tree,
+      "l_size: {}, {}; r_size: {}, {}",
+      t, l_size, left, r_size, right);
   }
 
   void merge_child_trackers(
@@ -609,6 +617,7 @@ struct FixedKVLeafNode
   CachedExtentRef duplicate_for_write(Transaction &t) override {
     assert(delta_buffer.empty());
     auto new_node = new node_type_t(*this);
+    new_node->mutated_by = t.get_trans_id();
     new_node->move_to_trans_view(t, *this, this->get_size());
     return CachedExtentRef(new_node);
   };

@@ -887,11 +887,17 @@ public:
   CachedExtent* get_child_global_view() {
     return child;
   }
-  bool is_parent_mutated_by_me(transaction_id_t id) {
+  bool is_parent_mutated_by_me(transaction_id_t id) const {
     return parent->is_pending_by_me(id);
   }
-  bool is_parent_pending() {
+  bool is_parent_pending() const {
     return parent->is_pending();
+  }
+  bool is_parent_valid() const {
+    return parent->is_valid();
+  }
+  transaction_id_t get_parent_mutated_by() {
+    return parent->get_mutated_by();
   }
 private:
   CachedExtent* child = nullptr;
@@ -913,7 +919,8 @@ public:
   virtual extent_types_t get_type() const = 0;
   virtual val_t get_val() const = 0;
   virtual key_t get_key() const = 0;
-  virtual PhysicalNodePinRef<key_t, val_t> duplicate() const = 0;
+  virtual PhysicalNodePinRef<key_t, val_t> duplicate(
+    transaction_id_t) = 0;
   virtual bool has_been_invalidated() const = 0;
   virtual ChildNodeTracker& get_parent_tracker(transaction_id_t id) = 0;
   virtual void new_parent_tracker(

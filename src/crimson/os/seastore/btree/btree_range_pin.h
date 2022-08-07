@@ -482,28 +482,34 @@ public:
 
   void link_extent(LogicalCachedExtent *ref) final {
     ceph_assert(parent_tracker != nullptr);
+    ceph_assert(parent_tracker->is_parent_valid());
+    auto &ptracker = get_parent_tracker(ref->get_mutated_by());
+    ceph_assert(ptracker.is_parent_valid());
     if (ref->is_pending()) {
-      if (parent_tracker->is_parent_pending()) {
+      if (ptracker.is_parent_pending()) {
 	// the parent LBALeafNode being pending means
 	// that it belongs to the same transaction as the
 	// logical extent that's holding this pin
-	parent_tracker->update_child(ref);
+	ptracker.update_child(ref);
       } else {
-	parent_tracker->add_child_per_trans(ref);
+	ptracker.add_child_per_trans(ref);
       }
     } else {
-      parent_tracker->update_child(ref);
+      ptracker.update_child(ref);
     }
     pin.set_extent(ref);
     crimson::get_logger(ceph_subsys_seastore_fixedkv_tree
-      ).debug("{}: link to parent tracker {}, extent: {}, parent: {}",
-	__func__, *parent_tracker, *ref, *parent);
+      ).debug("{}: link to parent tracker {}, extent: {}",
+	__func__, ptracker, *ref);
   }
 
   void new_parent_tracker(
     ChildNodeTracker* pt,
     bool drop_trans_views = false) final
   {
+    crimson::get_logger(ceph_subsys_seastore_fixedkv_tree
+      ).debug("{}: new parent tracker: {}, drop_trans_views: {}",
+	__func__, *pt, drop_trans_views);
     assert(parent_tracker_trans_views.empty() || drop_trans_views);
     parent_tracker = pt;
     if (drop_trans_views)
@@ -511,8 +517,14 @@ public:
   }
 
   void new_parent_tracker_trans_view(ChildNodeTracker* pt) final {
+    crimson::get_logger(ceph_subsys_seastore_fixedkv_tree
+      ).debug("{}: new parent tracker {} for trans {}",
+	__func__, *pt, pt->get_parent_mutated_by());
     ceph_assert(pt != parent_tracker);
-    parent_tracker_trans_views.insert(*pt);
+    auto [iter, inserted] = parent_tracker_trans_views.insert(*pt);
+    if (!inserted) {
+      parent_tracker_trans_views.replace_node(iter, *pt);
+    }
   }
 
   extent_len_t get_length() const final {
@@ -533,14 +545,14 @@ public:
     return pin.range.begin;
   }
 
-  PhysicalNodePinRef<key_t, val_t> duplicate() const final {
+  PhysicalNodePinRef<key_t, val_t> duplicate(transaction_id_t id) final {
     auto ret = std::unique_ptr<BtreeNodePin<key_t, val_t>>(
       new BtreeNodePin<key_t, val_t>);
     ret->pin.set_range(pin.range);
     ret->value = value;
     ret->parent = parent;
     ret->len = len;
-    ret->parent_tracker = parent_tracker;
+    ret->parent_tracker = &(get_parent_tracker(id));
     return ret;
   }
 
@@ -555,8 +567,8 @@ public:
   void unlink_from_parent() final {
     if (parent_tracker && pin.has_extent()) {
       crimson::get_logger(ceph_subsys_seastore_fixedkv_tree
-	).debug("{}: unlink from parent tracker {}, extent: {}, parent: {}",
-	  __func__, (void*)parent_tracker, (void*)&pin.get_extent(), *parent);
+	).debug("{}: unlink from parent tracker {}, extent: {}",
+	  __func__, (void*)parent_tracker, (void*)&pin.get_extent());
       parent_tracker->remove_child(&pin.get_extent());
     }
   }

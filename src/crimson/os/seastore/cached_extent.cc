@@ -166,6 +166,7 @@ ChildNodeTracker::ChildNodeTracker(
   if (other.is_empty())
     return;
   auto e = other.get_child(t);
+  update_child(e.get());
   if (e->is_pending_by_me(t.get_trans_id())) {
     if (is_lba_node(e->get_type())) {
       e->cast<lba_manager::btree::LBANode>()->parent_tracker = this;
@@ -182,7 +183,6 @@ ChildNodeTracker::ChildNodeTracker(
     auto &pin = l_e->get_pin();
     pin.new_parent_tracker_trans_view(this);
   }
-  update_child(e.get());
 }
 
 CachedExtentRef LogicalCachedExtent::duplicate_for_write(Transaction &t) {
@@ -207,6 +207,7 @@ void LogicalCachedExtent::on_replace_extent(Transaction &t) {
 std::ostream &operator<<(std::ostream &out, const ChildNodeTracker &rhs) {
   return out << "child_node_tracker(addr=" << (void*)&rhs
 	     << ", child=" << (void*)rhs.child
+	     << ", parent=" << (void*)rhs.parent
 	     << ", trans_views: "<< ((!rhs.child_per_trans)
 				     ? 0 :rhs.child_per_trans->size())
 	     << ")";
