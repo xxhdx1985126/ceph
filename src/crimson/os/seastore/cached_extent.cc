@@ -230,6 +230,27 @@ ChildNodeTracker::ChildNodeTracker(
   }
 }
 
+ChildNodeTracker::~ChildNodeTracker()
+{
+  logger().debug("{}: killing myself: {}", __func__, (void*)this);
+  if (child) {
+    if (is_lba_node(child->get_type())) {
+      auto lba_node = child->cast<lba_manager::btree::LBANode>();
+      if (lba_node->parent_tracker == this)
+	lba_node->parent_tracker = nullptr;
+    } else if (is_backref_node(child->get_type())) {
+      auto backref_node = child->cast<backref::BackrefNode>();
+      if (backref_node->parent_tracker == this)
+	backref_node->parent_tracker = nullptr;
+    } else {
+      ceph_assert(child->is_logical());
+      auto l_e = child->cast<LogicalCachedExtent>();
+      auto &pin = l_e->get_pin();
+      pin.remove_parent_tracker(this);
+    }
+  }
+}
+
 CachedExtentRef LogicalCachedExtent::duplicate_for_write(Transaction &t) {
   auto ext = get_mutable_duplication(t);
   ext->mutated_by = t.get_trans_id();

@@ -519,17 +519,12 @@ public:
 	__func__, ptracker, *ref);
   }
 
-  void new_parent_tracker(
-    ChildNodeTracker* pt,
-    bool drop_trans_views = false) final
+  void new_parent_tracker(ChildNodeTracker* pt) final
   {
+    ceph_assert(pt);
     crimson::get_logger(ceph_subsys_seastore_fixedkv_tree
-      ).debug("{}: new parent tracker: {}, drop_trans_views: {}",
-	__func__, *pt, drop_trans_views);
-    assert(parent_tracker_trans_views.empty() || drop_trans_views);
+      ).debug("{}: new parent tracker: {}", __func__, *pt);
     parent_tracker = pt;
-    if (drop_trans_views)
-      parent_tracker_trans_views.clear();
   }
 
   void remove_parent_tracker(ChildNodeTracker* pt) final {
@@ -586,9 +581,9 @@ public:
   }
 
   void unlink_from_parent() final {
-      crimson::get_logger(ceph_subsys_seastore_fixedkv_tree
-	).debug("{}: unlink from parent tracker {}, has_extent: {}",
-	  __func__, (void*)parent_tracker, pin.has_extent());
+    crimson::get_logger(ceph_subsys_seastore_fixedkv_tree
+      ).debug("{}: unlink from parent tracker {}, has_extent: {}",
+	__func__, (void*)parent_tracker, pin.has_extent());
     if (parent_tracker && pin.has_extent()) {
       crimson::get_logger(ceph_subsys_seastore_fixedkv_tree
 	).debug("{}: unlink from parent tracker {}, extent: {}",

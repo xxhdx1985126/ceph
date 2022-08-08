@@ -857,6 +857,8 @@ public:
   ChildNodeTracker& operator=(ChildNodeTracker &&) = default;
   ChildNodeTracker& operator=(const ChildNodeTracker&) = delete;
 
+  ~ChildNodeTracker();
+
   CachedExtentRef get_child(Transaction &t) const;
   void add_child_per_trans(CachedExtent* child);
   void update_child(CachedExtent* c) {
@@ -937,9 +939,7 @@ public:
   virtual bool has_been_invalidated() const = 0;
   virtual ChildNodeTracker& get_parent_tracker(transaction_id_t id) = 0;
   virtual ChildNodeTracker* get_parent_tracker() const = 0;
-  virtual void new_parent_tracker(
-    ChildNodeTracker* pt,
-    bool drop_trans_views = false) = 0;
+  virtual void new_parent_tracker(ChildNodeTracker* pt) = 0;
   virtual std::ostream &dump_parent_tracker_trans_views(std::ostream&) const = 0;
   virtual void new_parent_tracker_trans_view(ChildNodeTracker*) = 0;
   virtual void remove_parent_tracker(ChildNodeTracker* pt) = 0;
