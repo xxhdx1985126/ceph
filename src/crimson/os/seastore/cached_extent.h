@@ -101,7 +101,7 @@ using read_set_t = std::set<
   typename read_set_item_t<T>::cmp_t>;
 
 struct per_trans_view_t {
-  transaction_id_t mutated_by;
+  transaction_id_t mutated_by = 0;
 
   struct trans_view_compare_t {
     bool operator()(
@@ -250,16 +250,19 @@ public:
    * references in the the buffer with the passed
    * record_block_offset record location.
    */
-  virtual void on_delta_write(paddr_t record_block_offset) {}
+  void on_delta_write(paddr_t record_block_offset) {
+    on_delta_commit(record_block_offset);
+    mutated_by = 0;
+  }
+
+  virtual void on_delta_commit(paddr_t record_block_offset) {}
 
   /**
    * on_replace_extent
    *
    * Called when extents are replaced by their mutated counterpart
    */
-  virtual void on_replace_extent(Transaction &t) {
-    mutated_by = 0;
-  }
+  virtual void on_replace_extent(Transaction &t, CachedExtent &prev) {}
 
   virtual void on_invalidated(Transaction &t) {}
 
@@ -274,7 +277,7 @@ public:
     return false;
   }
 
-  transaction_id_t get_mutated_by() {
+  transaction_id_t get_mutated_by() const {
     return mutated_by;
   }
 
@@ -849,7 +852,7 @@ public:
     boost::intrusive::constant_time_size<false>,
     boost::intrusive::compare<cmp_t>>;
   ChildNodeTracker(CachedExtent* parent) : parent(parent) {}
-  ChildNodeTracker(const ChildNodeTracker &, CachedExtent*, Transaction &);
+  ChildNodeTracker(ChildNodeTracker &, CachedExtent*, Transaction &);
   ChildNodeTracker(const ChildNodeTracker&) = delete;
   ChildNodeTracker& operator=(ChildNodeTracker &&) = default;
   ChildNodeTracker& operator=(const ChildNodeTracker&) = delete;
@@ -887,6 +890,9 @@ public:
   CachedExtent* get_child_global_view() {
     return child;
   }
+  CachedExtent* get_child_global_view() const {
+    return child;
+  }
   bool is_parent_mutated_by_me(transaction_id_t id) const {
     return parent->is_pending_by_me(id);
   }
@@ -896,8 +902,15 @@ public:
   bool is_parent_valid() const {
     return parent->is_valid();
   }
-  transaction_id_t get_parent_mutated_by() {
+  transaction_id_t get_parent_mutated_by() const {
     return parent->get_mutated_by();
+  }
+  bool is_linked_to_child() {
+    return set_hook.is_linked();
+  }
+  void unlink_from_child() {
+    ceph_assert(set_hook.is_linked());
+    set_hook.unlink();
   }
 private:
   CachedExtent* child = nullptr;
@@ -923,10 +936,14 @@ public:
     transaction_id_t) = 0;
   virtual bool has_been_invalidated() const = 0;
   virtual ChildNodeTracker& get_parent_tracker(transaction_id_t id) = 0;
+  virtual ChildNodeTracker* get_parent_tracker() const = 0;
   virtual void new_parent_tracker(
     ChildNodeTracker* pt,
     bool drop_trans_views = false) = 0;
+  virtual std::ostream &dump_parent_tracker_trans_views(std::ostream&) const = 0;
   virtual void new_parent_tracker_trans_view(ChildNodeTracker*) = 0;
+  virtual void remove_parent_tracker(ChildNodeTracker* pt) = 0;
+  virtual ChildNodeTracker::set_t &get_parent_tracker_trans_views() = 0;
   virtual CachedExtentRef get_parent() = 0;
   virtual void unlink_from_parent() = 0;
 
@@ -996,7 +1013,7 @@ public:
     return out << ", RetiredExtentPlaceholder";
   }
 
-  void on_delta_write(paddr_t record_block_offset) final {
+  void on_delta_commit(paddr_t record_block_offset) final {
     ceph_assert(0 == "Should never happen for a placeholder");
   }
 };
@@ -1057,11 +1074,19 @@ public:
     ceph_assert(!is_valid());
     if (pin)
       pin->unlink_from_parent();
+    if (transaction_view_hook.is_linked())
+      transaction_view_hook.unlink();
   }
 
   virtual ~LogicalCachedExtent() {
-    if (is_valid() && pin)
-      pin->unlink_from_parent();
+    if (is_valid()) {
+      if (pin)
+	pin->unlink_from_parent();
+      if (transaction_view_hook.is_linked())
+	transaction_view_hook.unlink();
+    } else {
+      ceph_assert(!transaction_view_hook.is_linked());
+    }
   }
 protected:
   virtual CachedExtentRef get_mutable_duplication(Transaction&) = 0;
@@ -1072,9 +1097,9 @@ protected:
 
   virtual void logical_on_delta_write() {}
 
-  void on_replace_extent(Transaction &t) override;
+  void on_replace_extent(Transaction &t, CachedExtent &prev) override;
 
-  void on_delta_write(paddr_t record_block_offset) final {
+  void on_delta_commit(paddr_t record_block_offset) final {
     assert(is_exist_mutation_pending() ||
 	   get_prior_instance());
     if (get_prior_instance()) {

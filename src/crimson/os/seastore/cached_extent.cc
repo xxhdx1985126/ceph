@@ -94,8 +94,13 @@ std::ostream &LogicalCachedExtent::print_detail(std::ostream &out) const
 
 std::ostream &operator<<(std::ostream &out, const LBAPin &rhs)
 {
-  return out << "LBAPin(" << rhs.get_key() << "~" << rhs.get_length()
-	     << "->" << rhs.get_val();
+  out << "LBAPin(" << rhs.get_key() << "~" << rhs.get_length()
+     << "->" << rhs.get_val();
+  if (!rhs.get_parent_tracker())
+    out << ", parent_tracker=0x0";
+  else
+    out << ", parent_tracker=" << *rhs.get_parent_tracker();
+  return rhs.dump_parent_tracker_trans_views(out);
 }
 
 std::ostream &operator<<(std::ostream &out, const lba_pin_list_t &rhs)
@@ -155,19 +160,34 @@ void ChildNodeTracker::on_transaction_commit(Transaction &t) {
 }
 
 ChildNodeTracker::ChildNodeTracker(
-  const ChildNodeTracker &other,
+  ChildNodeTracker &other,
   CachedExtent* parent,
   Transaction &t)
   : parent(parent)
 {
+  // this constructor should only be called in the following four scenarios:
+  // 1. fixed-kv nodes get duplicated for mutation
+  // 2. fixed-kv nodes get splitted
+  // 3. fixed-kv nodes get merged
+  // 4. fixed-kv nodes get balanced
+  //
+  // so the new tracker must be within the view of a specific transaction
   ceph_assert(parent && other.parent);
   ceph_assert(parent != other.parent); // should only happens when allocating
 				       // new fixed kv nodes
   if (other.is_empty())
     return;
   auto e = other.get_child(t);
+  // point the new tracker to its child
   update_child(e.get());
   if (e->is_pending_by_me(t.get_trans_id())) {
+    // if the child is in the current transaction's view, there should be
+    // no relation between the child and its original parent after the
+    // construction of this new child tracker.
+
+    // the child points to the new tracker
+    assert(e.get() != other.get_child_global_view()
+      || other.is_parent_mutated_by_me(t.get_trans_id()));
     if (is_lba_node(e->get_type())) {
       e->cast<lba_manager::btree::LBANode>()->parent_tracker = this;
     } else if (is_backref_node(e->get_type())) {
@@ -178,10 +198,35 @@ ChildNodeTracker::ChildNodeTracker(
       auto &pin = l_e->get_pin();
       pin.new_parent_tracker(this);
     }
-  } else if (e->is_logical()) {
-    auto l_e = e->cast<LogicalCachedExtent>();
-    auto &pin = l_e->get_pin();
-    pin.new_parent_tracker_trans_view(this);
+
+    // break the tie between the child and its original parent
+    if (e.get() == other.get_child_global_view()) {
+      assert(e->get_mutated_by() == other.get_parent_mutated_by());
+      assert(!e->transaction_view_hook.is_linked());
+      other.remove_child(e.get());
+    } else {
+      assert(!other.is_parent_mutated_by_me(t.get_trans_id()));
+      assert(other.get_parent_mutated_by() == 0);
+      assert(e->transaction_view_hook.is_linked());
+      e->transaction_view_hook.unlink();
+    }
+  } else {
+    if (is_lba_node(e->get_type())) {
+      auto lba_node = e->cast<lba_manager::btree::LBANode>();
+      auto [iter, inserted] = lba_node->parent_tracker_trans_views.insert(*this);
+      if (!inserted)
+	lba_node->parent_tracker_trans_views.replace_node(iter, *this);
+    } else if (is_backref_node(e->get_type())) {
+      auto backref_node = e->cast<backref::BackrefNode>();
+      auto [iter, inserted] = backref_node->parent_tracker_trans_views.insert(*this);
+      if (!inserted)
+	backref_node->parent_tracker_trans_views.replace_node(iter, *this);
+    } else {
+      ceph_assert(e->is_logical());
+      auto l_e = e->cast<LogicalCachedExtent>();
+      auto &pin = l_e->get_pin();
+      pin.new_parent_tracker_trans_view(this);
+    }
   }
 }
 
@@ -197,11 +242,16 @@ CachedExtentRef LogicalCachedExtent::duplicate_for_write(Transaction &t) {
   return ext;
 }
 
-void LogicalCachedExtent::on_replace_extent(Transaction &t) {
+void LogicalCachedExtent::on_replace_extent(Transaction &t, CachedExtent& prev) {
   assert(pin);
+  assert(pin->get_parent_tracker_trans_views().empty());
   auto &ptracker = pin->get_parent_tracker(t.get_trans_id());
   ptracker.on_transaction_commit(t);
-  CachedExtent::on_replace_extent(t);
+  auto logical_prev = prev.cast<LogicalCachedExtent>();
+  auto &trans_views = logical_prev->get_pin().get_parent_tracker_trans_views();
+  for (auto &ptracker : trans_views) {
+    ptracker.update_child(this);
+  }
 }
 
 std::ostream &operator<<(std::ostream &out, const ChildNodeTracker &rhs) {

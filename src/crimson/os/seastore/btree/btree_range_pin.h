@@ -454,6 +454,18 @@ public:
     pin.set_range(std::move(meta));
   }
 
+  ChildNodeTracker::set_t &get_parent_tracker_trans_views() final {
+    return parent_tracker_trans_views;
+  }
+
+  std::ostream &dump_parent_tracker_trans_views(std::ostream &out) const final {
+    out << ", parent_tracker_trans_views(";
+    for (auto &ptracker : parent_tracker_trans_views) {
+      out << ptracker.get_parent_mutated_by() << "->" << ptracker << " ";
+    }
+    return out << ")";
+  }
+
   ChildNodeTracker& get_parent_tracker(transaction_id_t id) final {
     ceph_assert(parent_tracker != nullptr);
     if (!id) {
@@ -465,6 +477,10 @@ public:
       return *it;
     }
     return *parent_tracker;
+  }
+
+  ChildNodeTracker* get_parent_tracker() const final {
+    return parent_tracker;
   }
 
   btree_range_pin_t<key_t>& get_range_pin() {
@@ -516,6 +532,11 @@ public:
       parent_tracker_trans_views.clear();
   }
 
+  void remove_parent_tracker(ChildNodeTracker* pt) final {
+    if (parent_tracker == pt)
+      parent_tracker = nullptr;
+  }
+
   void new_parent_tracker_trans_view(ChildNodeTracker* pt) final {
     crimson::get_logger(ceph_subsys_seastore_fixedkv_tree
       ).debug("{}: new parent tracker {} for trans {}",
@@ -565,15 +586,18 @@ public:
   }
 
   void unlink_from_parent() final {
+      crimson::get_logger(ceph_subsys_seastore_fixedkv_tree
+	).debug("{}: unlink from parent tracker {}, has_extent: {}",
+	  __func__, (void*)parent_tracker, pin.has_extent());
     if (parent_tracker && pin.has_extent()) {
       crimson::get_logger(ceph_subsys_seastore_fixedkv_tree
 	).debug("{}: unlink from parent tracker {}, extent: {}",
 	  __func__, (void*)parent_tracker, (void*)&pin.get_extent());
       parent_tracker->remove_child(&pin.get_extent());
-      if (!parent_tracker_trans_views.empty()) {
-	for (auto &ptracker : parent_tracker_trans_views) {
-	  ptracker.remove_child(&pin.get_extent());
-	}
+    }
+    if (!parent_tracker_trans_views.empty() && pin.has_extent()) {
+      for (auto &ptracker : parent_tracker_trans_views) {
+	ptracker.remove_child(&pin.get_extent());
       }
     }
   }

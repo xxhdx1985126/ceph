@@ -795,8 +795,8 @@ void Cache::commit_replace_extent(
     add_to_dirty(next);
   }
 
+  next->on_replace_extent(t, *prev);
   invalidate_extent(t, *prev);
-  next->on_replace_extent(t);
 }
 
 void Cache::invalidate_extent(
@@ -1169,7 +1169,6 @@ record_t Cache::prepare_record(
       fresh_invalid_stat.increment(i->get_length());
       get_by_ext(efforts.fresh_invalid_by_ext,
                  i->get_type()).increment(i->get_length());
-      i->on_invalidated(t);
     } else {
       TRACET("fresh inline extent -- {}", t, *i);
     }

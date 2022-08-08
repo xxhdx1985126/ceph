@@ -70,9 +70,11 @@ struct RootBlock : CachedExtent {
   }
 
   /// Patches relative addrs in memory based on record commit addr
-  void on_delta_write(paddr_t record_block_offset) final {
+  void on_delta_commit(paddr_t record_block_offset) final {
     root.adjust_addrs_from_base(record_block_offset);
   }
+
+  void on_replace_extent(Transaction&, CachedExtent&) final {}
 
   complete_load_ertr::future<> complete_load() final {
     ceph_abort_msg("Root is only written via deltas");
