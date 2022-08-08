@@ -347,7 +347,8 @@ struct FixedKVInternalNode
       node_layout_t(this->get_bptr().c_str()) {}
 
   virtual ~FixedKVInternalNode() {
-    unlink_from_children();
+    if (this->is_valid())
+      unlink_from_children();
   }
 
   fixed_kv_node_meta_t<NODE_KEY> get_node_meta() const {
@@ -657,7 +658,8 @@ struct FixedKVLeafNode
       node_layout_t(this->get_bptr().c_str()) {}
 
   virtual ~FixedKVLeafNode() {
-    unlink_from_children();
+    if (this->is_valid())
+      unlink_from_children();
   }
 
   fixed_kv_node_meta_t<NODE_KEY> get_node_meta() const {

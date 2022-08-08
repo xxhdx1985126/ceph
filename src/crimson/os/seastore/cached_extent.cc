@@ -254,6 +254,7 @@ ChildNodeTracker::~ChildNodeTracker()
 CachedExtentRef LogicalCachedExtent::duplicate_for_write(Transaction &t) {
   auto ext = get_mutable_duplication(t);
   ext->mutated_by = t.get_trans_id();
+  //TODO: this might be duplicated with the operations in LBAPin::link_extent
   auto &ptracker = pin->get_parent_tracker(t.get_trans_id());
   if (ptracker.is_parent_mutated_by_me(t.get_trans_id())) {
     ptracker.update_child(ext.get());
@@ -270,8 +271,13 @@ void LogicalCachedExtent::on_replace_extent(Transaction &t, CachedExtent& prev) 
   ptracker.on_transaction_commit(t);
   auto logical_prev = prev.cast<LogicalCachedExtent>();
   auto &trans_views = logical_prev->get_pin().get_parent_tracker_trans_views();
-  for (auto &ptracker : trans_views) {
+  for (auto it = trans_views.begin();
+       it != trans_views.end();) {
+    auto &ptracker = *it;
     ptracker.update_child(this);
+    it = trans_views.erase(it);
+    if (ptracker.get_parent_mutated_by() != t.get_trans_id())
+      pin->new_parent_tracker_trans_view(&ptracker);
   }
 }
 
