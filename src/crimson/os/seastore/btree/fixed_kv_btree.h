@@ -1024,12 +1024,12 @@ private:
       ceph_assert(child->parent_tracker == &ptracker);
     } else {
       auto &ptracker = parent->get_child_tracker(parent_entry.pos);
-      SUBTRACET(seastore_fixedkv_tree,
-        "linking pending parent: {}, child: {}, by tracker: {}, at pos: {}",
-        t, *parent, *child, ptracker, parent_entry.pos);
       ptracker.update_child(child.get());
       ptracker.unlink_from_child();
       child->parent_tracker = &ptracker;
+      SUBTRACET(seastore_fixedkv_tree,
+        "linking pending parent: {}, child: {}, by tracker: {}, at pos: {}",
+        t, *parent, *child, ptracker, parent_entry.pos);
     }
   }
 
@@ -1062,11 +1062,32 @@ private:
       node.pin.set_range(fixed_kv_node_meta_t<node_key_t>{begin, end, depth});
       assert(!node.parent_tracker);
       if (parent_pos) {
+        //TODO: this code block can be reused by get_leaf_node,
+        //      extract it into dedicated a private method
         auto parent = parent_pos->node;
         auto &tracker = parent->get_child_tracker(parent_pos->pos);
         ceph_assert(tracker.is_empty());
         tracker.update_child(&node);
-        node.parent_tracker = &tracker;
+        if (parent->is_pending_by_me(c.trans.get_trans_id())) {
+          auto orig_node = tracker.get_prior_instance();
+          ceph_assert(orig_node);
+          auto orig_parent_node = orig_node->template cast<internal_node_t>();
+          auto cur_iter = parent->iter_idx(parent_pos->pos);
+          auto orig_iter = orig_parent_node->lower_bound(cur_iter.get_key());
+          auto &orig_ptracker = orig_parent_node->get_child_tracker(
+            orig_iter.get_offset());
+          if (orig_ptracker.is_empty()) {
+            orig_ptracker.update_child(&node);
+            node.parent_tracker = &orig_ptracker;
+          } else {
+            ceph_assert(orig_ptracker.get_child_global_view() == &node);
+            ceph_assert(node.parent_tracker == &orig_ptracker);
+          }
+          auto [it, inserted] = node.parent_tracker_trans_views.insert(tracker);
+          ceph_assert(inserted);
+        } else {
+          node.parent_tracker = &tracker;
+        }
       }
       if (c.pins) {
         c.pins->add_pin(node.pin);
@@ -1137,8 +1158,28 @@ private:
       if (parent_pos) {
         auto parent = parent_pos->node;
         auto &tracker = parent->get_child_tracker(parent_pos->pos);
+        ceph_assert(tracker.is_empty());
         tracker.update_child(&node);
-        node.parent_tracker = &tracker;
+        if (parent->is_pending_by_me(c.trans.get_trans_id())) {
+          auto orig_node = tracker.get_prior_instance();
+          ceph_assert(orig_node);
+          auto orig_parent_node = orig_node->template cast<leaf_node_t>();
+          auto cur_iter = parent->iter_idx(parent_pos->pos);
+          auto orig_iter = orig_parent_node->lower_bound(cur_iter->get_key());
+          auto &orig_ptracker = orig_parent_node->get_child_tracker(
+            orig_iter.get_offset());
+          if (orig_ptracker.is_empty()) {
+            orig_ptracker.update_child(&node);
+            node.parent_tracker = &orig_ptracker;
+          } else {
+            ceph_assert(orig_ptracker.get_child_global_view() == &node);
+            ceph_assert(node.parent_tracker == &orig_ptracker);
+          }
+          auto [it, inserted] = node.parent_tracker_trans_views.insert(tracker);
+          ceph_assert(inserted);
+        } else {
+          node.parent_tracker = &tracker;
+        }
         SUBTRACET(
           seastore_fixedkv_tree,
           "linked new leaf {} to parent {} on {}",
@@ -1755,7 +1796,8 @@ private:
     node_key_t end,
     std::optional<node_position_t<internal_node_t>> parent_pos) {
     assert(depth == 1);
-    return get_leaf_node<false>(c, addr, begin, end, std::move(parent_pos));
+    return get_leaf_node<false>(
+      c, addr, begin, end, std::move(parent_pos));
   }
 
   template <typename NodeType,
@@ -1767,7 +1809,8 @@ private:
     node_key_t begin,
     node_key_t end,
     std::optional<node_position_t<internal_node_t>> parent_pos) {
-    return get_internal_node<false>(c, depth, addr, begin, end, std::move(parent_pos));
+    return get_internal_node<false>(
+      c, depth, addr, begin, end, std::move(parent_pos));
   }
 
   template <typename NodeType>
@@ -1891,13 +1934,18 @@ private:
     assert(c.trans.get_extent(
       donor_iter.get_val().maybe_relative_to(parent_pos.node->get_paddr()),
       nullptr) == Transaction::get_extent_ret::ABSENT);
+    auto next_parent_pos = parent_pos;
+    if (donor_is_left)
+      next_parent_pos.pos--;
+    else
+      next_parent_pos.pos++;
     return get_node<NodeType>(
       c,
       depth,
       donor_iter.get_val().maybe_relative_to(parent_pos.node->get_paddr()),
       begin,
       end,
-      std::make_optional<node_position_t<internal_node_t>>(parent_pos)
+      std::make_optional<node_position_t<internal_node_t>>(std::move(next_parent_pos))
     ).si_then([c, iter, donor_iter, donor_is_left, &parent_pos,
       &pos, do_merge=std::move(do_merge)](typename NodeType::Ref donor) {
       return do_merge(donor);

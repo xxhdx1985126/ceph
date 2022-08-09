@@ -53,6 +53,14 @@ struct FixedKVNode : CachedExtent {
       parent_tracker(rhs.parent_tracker)
   {}
 
+  std::ostream &dump_parent_tracker_trans_views(std::ostream &out) const {
+    out << ", parent_tracker_trans_views(";
+    for (auto &ptracker : parent_tracker_trans_views) {
+      out << ptracker.get_parent_mutated_by() << "->" << ptracker << " ";
+    }
+    return out << ")";
+  }
+
   void split_child_trackers(
     Transaction &t,
     FixedKVNode &left,
@@ -386,19 +394,22 @@ struct FixedKVInternalNode
 	 it != this->child_trackers.begin() + this->get_size();
 	 it++) {
       auto &tracker = *it;
-      if (tracker && !tracker->is_empty()) {
-	auto child = tracker->get_child_global_view();
-	if (!child)
-	  continue;
-	SUBTRACE(seastore_fixedkv_tree,
-	  "adjust child {}, parent tracker: {}",
-	  *child, *tracker);
-	ceph_assert(child->is_fixed_kv_btree_node());
-	if (tracker->is_linked_to_child()) {
-	  tracker->unlink_from_child();
+      if (tracker) {
+	tracker->reset_prior_instance();
+	if (!tracker->is_empty()) {
+	  auto child = tracker->get_child_global_view();
+	  if (!child)
+	    continue;
+	  SUBTRACE(seastore_fixedkv_tree,
+	    "adjust child {}, parent tracker: {}",
+	    *child, *tracker);
+	  ceph_assert(child->is_fixed_kv_btree_node());
+	  if (tracker->is_linked_to_child()) {
+	    tracker->unlink_from_child();
+	  }
+	  child->template cast<base_t>()->parent_tracker =
+	    tracker.get();
 	}
-	child->template cast<base_t>()->parent_tracker =
-	  tracker.get();
       }
     }
   }
@@ -577,8 +588,14 @@ struct FixedKVInternalNode
 
   std::ostream &print_detail(std::ostream &out) const
   {
-    return out << ", size=" << this->get_size()
-	       << ", meta=" << this->get_meta();
+    out << ", size=" << this->get_size()
+       << ", meta=" << this->get_meta();
+    if (this->parent_tracker) {
+      out << ", parent_tracker=" << *this->parent_tracker;
+    } else {
+      out << ", parent_tracker=0x0";
+    }
+    return this->dump_parent_tracker_trans_views(out);
   }
 
   ceph::bufferlist get_delta() {
@@ -710,20 +727,23 @@ struct FixedKVLeafNode
 	 it != this->child_trackers.begin() + this->get_size();
 	 it++) {
       auto &tracker = *it;
-      if (tracker && !tracker->is_empty()) {
-	auto child = tracker->get_child_global_view();
-	if (!child)
-	  continue;
-	ceph_assert(child->is_logical());
-	SUBTRACE(seastore_fixedkv_tree,
-	  "adjust child {}, parent tracker: {}",
-	  *child, *tracker);
-	auto logical_child = child->template cast<LogicalCachedExtent>();
-	auto &pin = logical_child->get_pin();
-	if (tracker->is_linked_to_child()) {
-	  tracker->unlink_from_child();
+      if (tracker) {
+	tracker->reset_prior_instance();
+	if (!tracker->is_empty()) {
+	  auto child = tracker->get_child_global_view();
+	  if (!child)
+	    continue;
+	  ceph_assert(child->is_logical());
+	  SUBTRACE(seastore_fixedkv_tree,
+	    "adjust child {}, parent tracker: {}",
+	    *child, *tracker);
+	  auto logical_child = child->template cast<LogicalCachedExtent>();
+	  auto &pin = logical_child->get_pin();
+	  if (tracker->is_linked_to_child()) {
+	    tracker->unlink_from_child();
+	  }
+	  pin.new_parent_tracker(tracker.get());
 	}
-	pin.new_parent_tracker(tracker.get());
       }
     }
   }
@@ -824,8 +844,14 @@ struct FixedKVLeafNode
 
   std::ostream &print_detail(std::ostream &out) const
   {
-    return out << ", size=" << this->get_size()
-	       << ", meta=" << this->get_meta();
+    out << ", size=" << this->get_size()
+       << ", meta=" << this->get_meta();
+    if (this->parent_tracker) {
+      out << ", parent_tracker=" << *this->parent_tracker;
+    } else {
+      out << ", parent_tracker=0x0";
+    }
+    return this->dump_parent_tracker_trans_views(out);
   }
 
   constexpr static size_t get_min_capacity() {

@@ -175,6 +175,13 @@ ChildNodeTracker::ChildNodeTracker(
   ceph_assert(parent && other.parent);
   ceph_assert(parent != other.parent); // should only happens when allocating
 				       // new fixed kv nodes
+  auto pinstance = other.get_prior_instance();
+  if (pinstance) {
+    prior_instance = pinstance;
+  } else {
+    prior_instance = other.parent;
+  }
+
   if (other.is_empty())
     return;
   auto e = other.get_child(t);

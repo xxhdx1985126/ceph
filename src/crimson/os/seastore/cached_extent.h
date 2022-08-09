@@ -914,9 +914,16 @@ public:
     ceph_assert(trans_view_hook.is_linked());
     trans_view_hook.unlink();
   }
+  void reset_prior_instance() {
+    prior_instance.reset();
+  }
+  CachedExtentRef get_prior_instance() {
+    return prior_instance;
+  }
 private:
   CachedExtent* child = nullptr;
   CachedExtent* parent = nullptr;
+  CachedExtentRef prior_instance;
   // only the parent of an mutated extent should have this field initialized
   using trans_view_set_ref = std::unique_ptr<per_trans_view_t::trans_view_set_t>;
   trans_view_set_ref child_per_trans;
