@@ -24,6 +24,7 @@ using CachedExtentRef = boost::intrusive_ptr<CachedExtent>;
 class SegmentedAllocator;
 class TransactionManager;
 class ExtentPlacementManager;
+class ChildNodeTracker;
 
 // #define DEBUG_CACHED_EXTENT_REF
 #ifdef DEBUG_CACHED_EXTENT_REF
@@ -817,17 +818,16 @@ class PhysicalNodePin;
 template <typename key_t, typename val_t>
 using PhysicalNodePinRef = std::unique_ptr<PhysicalNodePin<key_t, val_t>>;
 
-class ChildNodeTracker;
 std::ostream &operator<<(std::ostream &out, const ChildNodeTracker &rhs);
 class ChildNodeTracker {
   using set_hook_t = boost::intrusive::set_member_hook<
     boost::intrusive::link_mode<
       boost::intrusive::auto_unlink>>;
-  set_hook_t set_hook;
+  set_hook_t trans_view_hook;
   using set_hook_options = boost::intrusive::member_hook<
     ChildNodeTracker,
     set_hook_t,
-    &ChildNodeTracker::set_hook>;
+    &ChildNodeTracker::trans_view_hook>;
 public:
   struct cmp_t {
     bool operator()(
@@ -908,11 +908,11 @@ public:
     return parent->get_mutated_by();
   }
   bool is_linked_to_child() {
-    return set_hook.is_linked();
+    return trans_view_hook.is_linked();
   }
   void unlink_from_child() {
-    ceph_assert(set_hook.is_linked());
-    set_hook.unlink();
+    ceph_assert(trans_view_hook.is_linked());
+    trans_view_hook.unlink();
   }
 private:
   CachedExtent* child = nullptr;

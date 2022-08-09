@@ -507,6 +507,9 @@ public:
 	// that it belongs to the same transaction as the
 	// logical extent that's holding this pin
 	ptracker.update_child(ref);
+	if (ptracker.is_linked_to_child()) {
+	  ptracker.unlink_from_child();
+	}
       } else {
 	ptracker.add_child_per_trans(ref);
       }

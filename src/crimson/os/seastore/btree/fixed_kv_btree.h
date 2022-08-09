@@ -1028,6 +1028,7 @@ private:
         "linking pending parent: {}, child: {}, by tracker: {}, at pos: {}",
         t, *parent, *child, ptracker, parent_entry.pos);
       ptracker.update_child(child.get());
+      ptracker.unlink_from_child();
       child->parent_tracker = &ptracker;
     }
   }

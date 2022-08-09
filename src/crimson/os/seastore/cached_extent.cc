@@ -189,8 +189,12 @@ ChildNodeTracker::ChildNodeTracker(
     assert(e.get() != other.get_child_global_view()
       || other.is_parent_mutated_by_me(t.get_trans_id()));
     if (is_lba_node(e->get_type())) {
+      logger().debug("LBANode, {}: new parent tracker {}",
+	__func__, *this);
       e->cast<lba_manager::btree::LBANode>()->parent_tracker = this;
     } else if (is_backref_node(e->get_type())) {
+      logger().debug("LBANode, {}: new parent tracker {}",
+	__func__, *this);
       e->cast<backref::BackrefNode>()->parent_tracker = this;
     } else {
       ceph_assert(e->is_logical());
@@ -212,11 +216,15 @@ ChildNodeTracker::ChildNodeTracker(
     }
   } else {
     if (is_lba_node(e->get_type())) {
+      logger().debug("LBANode, {}: new parent tracker {} for trans {}",
+	__func__, *this, get_parent_mutated_by());
       auto lba_node = e->cast<lba_manager::btree::LBANode>();
       auto [iter, inserted] = lba_node->parent_tracker_trans_views.insert(*this);
       if (!inserted)
 	lba_node->parent_tracker_trans_views.replace_node(iter, *this);
     } else if (is_backref_node(e->get_type())) {
+      logger().debug("BackrefNode, {}: new parent tracker {} for trans {}",
+	__func__, *this, get_parent_mutated_by());
       auto backref_node = e->cast<backref::BackrefNode>();
       auto [iter, inserted] = backref_node->parent_tracker_trans_views.insert(*this);
       if (!inserted)
@@ -256,6 +264,7 @@ CachedExtentRef LogicalCachedExtent::duplicate_for_write(Transaction &t) {
   ext->mutated_by = t.get_trans_id();
   //TODO: this might be duplicated with the operations in LBAPin::link_extent
   auto &ptracker = pin->get_parent_tracker(t.get_trans_id());
+  logger().debug("got parent tracker {} for trans {}", ptracker, t.get_trans_id());
   if (ptracker.is_parent_mutated_by_me(t.get_trans_id())) {
     ptracker.update_child(ext.get());
   } else {
@@ -274,10 +283,11 @@ void LogicalCachedExtent::on_replace_extent(Transaction &t, CachedExtent& prev) 
   for (auto it = trans_views.begin();
        it != trans_views.end();) {
     auto &ptracker = *it;
-    ptracker.update_child(this);
     it = trans_views.erase(it);
-    if (ptracker.get_parent_mutated_by() != t.get_trans_id())
+    if (ptracker.get_parent_mutated_by() != t.get_trans_id()) {
+      ptracker.update_child(this);
       pin->new_parent_tracker_trans_view(&ptracker);
+    }
   }
 }
 
