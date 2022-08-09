@@ -256,6 +256,7 @@ struct FixedKVNode : CachedExtent {
     for (auto& ptracker : parent_tracker_trans_views) {
       ptracker.remove_child(&pin.get_extent());
     }
+    parent_tracker_trans_views.clear();
     if (transaction_view_hook.is_linked()) {
       transaction_view_hook.unlink();
     }
@@ -269,6 +270,7 @@ struct FixedKVNode : CachedExtent {
       for (auto& ptracker : parent_tracker_trans_views) {
 	ptracker.remove_child(&pin.get_extent());
       }
+      parent_tracker_trans_views.clear();
       if (transaction_view_hook.is_linked()) {
 	transaction_view_hook.unlink();
       }

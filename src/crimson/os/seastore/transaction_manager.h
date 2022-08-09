@@ -252,11 +252,12 @@ public:
             t, offset, length, *pin);
         ceph_assert(0 == "Should be impossible");
       }
-      auto &ptracker = pin->get_parent_tracker(t.get_trans_id());
-      if (ptracker.is_empty()) {
+      auto ptracker = pin->get_parent_tracker(t.get_trans_id());
+      ceph_assert(ptracker);
+      if (ptracker->is_empty()) {
 	return this->pin_to_extent<T>(t, std::move(pin));
       } else {
-	auto e = ptracker.get_child(t);
+	auto e = ptracker->get_child(t);
 	SUBTRACET(seastore_tm, "got child {}", t, *e);
 	assert(e && e->is_valid());
 	if (!e->is_pending() ||
@@ -294,11 +295,12 @@ public:
             t, offset, *pin);
         ceph_assert(0 == "Should be impossible");
       }
-      auto &ptracker = pin->get_parent_tracker(t.get_trans_id());
-      if (ptracker.is_empty()) {
+      auto ptracker = pin->get_parent_tracker(t.get_trans_id());
+      ceph_assert(ptracker);
+      if (ptracker->is_empty()) {
 	return this->pin_to_extent<T>(t, std::move(pin));
       } else {
-	auto e = ptracker.get_child(t);
+	auto e = ptracker->get_child(t);
 	SUBTRACET(seastore_tm, "got child {}", t, *e);
 	assert(e && e->is_valid());
 	if (!e->is_pending() ||

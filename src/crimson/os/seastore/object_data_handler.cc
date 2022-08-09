@@ -26,8 +26,9 @@ get_iertr::future<TCachedExtentRef<ObjectDataBlock>>
 read_pin(
   context_t ctx,
   LBAPinRef pin) {
-  auto &ptracker = pin->get_parent_tracker(ctx.t.get_trans_id());
-  if (ptracker.is_empty()) {
+  auto ptracker = pin->get_parent_tracker(ctx.t.get_trans_id());
+  ceph_assert(ptracker);
+  if (ptracker->is_empty()) {
     return ctx.tm.pin_to_extent<ObjectDataBlock>(
       ctx.t,
       std::move(pin)
@@ -36,7 +37,7 @@ read_pin(
       crimson::ct_error::assert_all{ "read_pin: invalid error" }
     );
   } else {
-    auto e = ptracker.get_child(ctx.t);
+    auto e = ptracker->get_child(ctx.t);
     assert(e && e->is_valid());
     if (!e->is_pending() ||
 	(e->is_mutation_pending() &&
@@ -966,13 +967,14 @@ ObjectDataHandler::read_ret ObjectDataHandler::read(
 		      auto fut = TransactionManager::pin_to_extent_iertr::
 			make_ready_future<TCachedExtentRef<ObjectDataBlock>>(
 			  TCachedExtentRef<ObjectDataBlock>());
-		      auto &ptracker = pin->get_parent_tracker(ctx.t.get_trans_id());
-		      if (ptracker.is_empty()) {
+		      auto ptracker = pin->get_parent_tracker(ctx.t.get_trans_id());
+		      ceph_assert(ptracker);
+		      if (ptracker->is_empty()) {
 			fut = ctx.tm.pin_to_extent<ObjectDataBlock>(
 			  ctx.t,
 			  std::move(pin));
 		      } else {
-			auto e = ptracker.get_child(ctx.t);
+			auto e = ptracker->get_child(ctx.t);
 			assert(e && e->is_valid());
 			if (!e->is_pending() ||
 			    (e->is_mutation_pending() &&

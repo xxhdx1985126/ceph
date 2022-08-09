@@ -466,17 +466,17 @@ public:
     return out << ")";
   }
 
-  ChildNodeTracker& get_parent_tracker(transaction_id_t id) final {
+  ChildNodeTracker* get_parent_tracker(transaction_id_t id) final {
     ceph_assert(parent_tracker != nullptr);
     if (!id) {
-      return *parent_tracker;
+      return parent_tracker;
     }
 
     auto it = parent_tracker_trans_views.find(id, ChildNodeTracker::cmp_t());
     if (it != parent_tracker_trans_views.end()) {
-      return *it;
+      return &(*it);
     }
-    return *parent_tracker;
+    return parent_tracker;
   }
 
   ChildNodeTracker* get_parent_tracker() const final {
@@ -497,29 +497,33 @@ public:
   }
 
   void link_extent(LogicalCachedExtent *ref) final {
-    ceph_assert(parent_tracker != nullptr);
-    ceph_assert(parent_tracker->is_parent_valid());
-    auto &ptracker = get_parent_tracker(ref->get_mutated_by());
-    ceph_assert(ptracker.is_parent_valid());
-    if (ref->is_pending()) {
-      if (ptracker.is_parent_pending()) {
-	// the parent LBALeafNode being pending means
-	// that it belongs to the same transaction as the
-	// logical extent that's holding this pin
-	ptracker.update_child(ref);
-	if (ptracker.is_linked_to_child()) {
-	  ptracker.unlink_from_child();
+    ceph_assert(parent_tracker != nullptr
+      || parent_tracker_trans_views.empty());
+    ceph_assert(parent_tracker == nullptr
+      || parent_tracker->is_parent_valid());
+    auto ptracker = get_parent_tracker(ref->get_mutated_by());
+    if (ptracker) {
+      ceph_assert(ptracker->is_parent_valid());
+      if (ref->is_pending()) {
+	if (ptracker->is_parent_pending()) {
+	  // the parent LBALeafNode being pending means
+	  // that it belongs to the same transaction as the
+	  // logical extent that's holding this pin
+	  ptracker->update_child(ref);
+	  if (ptracker->is_linked_to_child()) {
+	    ptracker->unlink_from_child();
+	  }
+	} else {
+	  ptracker->add_child_per_trans(ref);
 	}
       } else {
-	ptracker.add_child_per_trans(ref);
+	ptracker->update_child(ref);
       }
-    } else {
-      ptracker.update_child(ref);
+      crimson::get_logger(ceph_subsys_seastore_fixedkv_tree
+	).debug("{}: link to parent tracker {}, extent: {}",
+	  __func__, *ptracker, *ref);
     }
     pin.set_extent(ref);
-    crimson::get_logger(ceph_subsys_seastore_fixedkv_tree
-      ).debug("{}: link to parent tracker {}, extent: {}",
-	__func__, ptracker, *ref);
   }
 
   void new_parent_tracker(ChildNodeTracker* pt) final
@@ -571,7 +575,7 @@ public:
     ret->value = value;
     ret->parent = parent;
     ret->len = len;
-    ret->parent_tracker = &(get_parent_tracker(id));
+    ret->parent_tracker = get_parent_tracker(id);
     return ret;
   }
 
@@ -597,6 +601,7 @@ public:
       for (auto &ptracker : parent_tracker_trans_views) {
 	ptracker.remove_child(&pin.get_extent());
       }
+      parent_tracker_trans_views.clear();
     }
   }
 };

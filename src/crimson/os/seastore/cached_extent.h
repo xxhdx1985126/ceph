@@ -944,7 +944,7 @@ public:
   virtual PhysicalNodePinRef<key_t, val_t> duplicate(
     transaction_id_t) = 0;
   virtual bool has_been_invalidated() const = 0;
-  virtual ChildNodeTracker& get_parent_tracker(transaction_id_t id) = 0;
+  virtual ChildNodeTracker* get_parent_tracker(transaction_id_t id) = 0;
   virtual ChildNodeTracker* get_parent_tracker() const = 0;
   virtual void new_parent_tracker(ChildNodeTracker* pt) = 0;
   virtual std::ostream &dump_parent_tracker_trans_views(std::ostream&) const = 0;

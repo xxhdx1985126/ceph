@@ -270,12 +270,17 @@ CachedExtentRef LogicalCachedExtent::duplicate_for_write(Transaction &t) {
   auto ext = get_mutable_duplication(t);
   ext->mutated_by = t.get_trans_id();
   //TODO: this might be duplicated with the operations in LBAPin::link_extent
-  auto &ptracker = pin->get_parent_tracker(t.get_trans_id());
-  logger().debug("got parent tracker {} for trans {}", ptracker, t.get_trans_id());
-  if (ptracker.is_parent_mutated_by_me(t.get_trans_id())) {
-    ptracker.update_child(ext.get());
+  auto ptracker = pin->get_parent_tracker(t.get_trans_id());
+  if (ptracker) {
+    logger().debug("got parent tracker {} for trans {}",
+      *ptracker, t.get_trans_id());
+    if (ptracker->is_parent_mutated_by_me(t.get_trans_id())) {
+      ptracker->update_child(ext.get());
+    } else {
+      ptracker->add_child_per_trans(ext.get());
+    }
   } else {
-    ptracker.add_child_per_trans(ext.get());
+    ceph_assert(pin->get_parent_tracker_trans_views().empty());
   }
   return ext;
 }
@@ -283,18 +288,21 @@ CachedExtentRef LogicalCachedExtent::duplicate_for_write(Transaction &t) {
 void LogicalCachedExtent::on_replace_extent(Transaction &t, CachedExtent& prev) {
   assert(pin);
   assert(pin->get_parent_tracker_trans_views().empty());
-  auto &ptracker = pin->get_parent_tracker(t.get_trans_id());
-  ptracker.on_transaction_commit(t);
-  auto logical_prev = prev.cast<LogicalCachedExtent>();
-  auto &trans_views = logical_prev->get_pin().get_parent_tracker_trans_views();
-  for (auto it = trans_views.begin();
-       it != trans_views.end();) {
-    auto &ptracker = *it;
-    it = trans_views.erase(it);
-    if (ptracker.get_parent_mutated_by() != t.get_trans_id()) {
-      ptracker.update_child(this);
-      pin->new_parent_tracker_trans_view(&ptracker);
+  auto ptracker = pin->get_parent_tracker(t.get_trans_id());
+  if (ptracker) {
+    ptracker->on_transaction_commit(t);
+    auto logical_prev = prev.cast<LogicalCachedExtent>();
+    auto &trans_views = logical_prev->get_pin().get_parent_tracker_trans_views();
+    for (auto it = trans_views.begin(); it != trans_views.end();) {
+      auto &trans_ptracker = *it;
+      it = trans_views.erase(it);
+      if (trans_ptracker.get_parent_mutated_by() != t.get_trans_id()) {
+	trans_ptracker.update_child(this);
+	pin->new_parent_tracker_trans_view(&trans_ptracker);
+      }
     }
+  } else {
+    ceph_assert(pin->get_parent_tracker_trans_views().empty());
   }
 }
 
