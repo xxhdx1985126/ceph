@@ -40,14 +40,14 @@ struct FixedKVNode : CachedExtent {
 
   virtual ~FixedKVNode() = default;
 
-  void on_delta_write(paddr_t record_block_offset) final {
+  void on_delta_commit(paddr_t record_block_offset) final {
     // All in-memory relative addrs are necessarily record-relative
     assert(get_prior_instance());
     pin.take_pin(get_prior_instance()->template cast<FixedKVNode>()->pin);
     resolve_relative_addrs(record_block_offset);
   }
 
-  void on_initial_write() final {
+  void on_initial_commit() final {
     // All in-memory relative addrs are necessarily block-relative
     resolve_relative_addrs(get_paddr());
   }
@@ -109,7 +109,7 @@ struct FixedKVInternalNode
 	    ? &delta_buffer : nullptr;
   }
 
-  CachedExtentRef duplicate_for_write() override {
+  CachedExtentRef get_mutable_replica(Transaction&) override {
     assert(delta_buffer.empty());
     return CachedExtentRef(new node_type_t(*this));
   };
@@ -338,7 +338,7 @@ struct FixedKVLeafNode
     return this->is_mutation_pending() ? &delta_buffer : nullptr;
   }
 
-  CachedExtentRef duplicate_for_write() override {
+  CachedExtentRef get_mutable_replica(Transaction&) override {
     assert(delta_buffer.empty());
     return CachedExtentRef(new node_type_t(*this));
   };

@@ -55,7 +55,7 @@ class DummyNodeExtent final: public NodeExtent {
     ceph_abort("impossible path"); }
   DeltaRecorder* get_recorder() const override {
     return nullptr; }
-  CachedExtentRef duplicate_for_write() override {
+  CachedExtentRef get_mutable_replica(Transaction&) override {
     ceph_abort("impossible path"); }
   extent_types_t get_type() const override {
     return extent_types_t::TEST_BLOCK; }

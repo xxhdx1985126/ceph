@@ -42,7 +42,7 @@ struct RootBlock : CachedExtent {
 
   RootBlock(const RootBlock &rhs) = default;
 
-  CachedExtentRef duplicate_for_write() final {
+  CachedExtentRef get_mutable_replica(Transaction&) final {
     return CachedExtentRef(new RootBlock(*this));
   };
 
@@ -70,7 +70,7 @@ struct RootBlock : CachedExtent {
   }
 
   /// Patches relative addrs in memory based on record commit addr
-  void on_delta_write(paddr_t record_block_offset) final {
+  void on_delta_commit(paddr_t record_block_offset) final {
     root.adjust_addrs_from_base(record_block_offset);
   }
 
@@ -78,7 +78,7 @@ struct RootBlock : CachedExtent {
     ceph_abort_msg("Root is only written via deltas");
   }
 
-  void on_initial_write() final {
+  void on_initial_commit() final {
     ceph_abort_msg("Root is only written via deltas");
   }
 

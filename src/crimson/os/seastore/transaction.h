@@ -72,6 +72,7 @@ struct version_stat_t {
  * - seastore_cache logs
  */
 class Transaction {
+  static transaction_id_t next_id;
 public:
   using Ref = std::unique_ptr<Transaction>;
   using on_destruct_func_t = std::function<void(Transaction&)>;
@@ -323,7 +324,8 @@ public:
   ) : weak(weak),
       handle(std::move(handle)),
       on_destruct(std::move(f)),
-      src(src)
+      src(src),
+      trans_id(++next_id)
   {}
 
   void invalidate_clear_write_set() {
@@ -449,6 +451,10 @@ public:
     return existing_block_stats;
   }
 
+  transaction_id_t get_trans_id() const {
+    return trans_id;
+  }
+
 private:
   friend class Cache;
   friend Ref make_test_transaction();
@@ -531,6 +537,8 @@ private:
   on_destruct_func_t on_destruct;
 
   const src_t src;
+
+  transaction_id_t trans_id = TRANS_ID_NULL;
 };
 using TransactionRef = Transaction::Ref;
 

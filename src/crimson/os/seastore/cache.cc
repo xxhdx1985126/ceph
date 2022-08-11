@@ -97,7 +97,8 @@ Cache::retire_extent_ret Cache::retire_extent_addr(
     ext->init(CachedExtent::extent_state_t::CLEAN,
               addr,
               PLACEMENT_HINT_NULL,
-              NULL_GENERATION);
+              NULL_GENERATION,
+	      t.get_trans_id());
     DEBUGT("retire {}~{} as placeholder, add extent -- {}",
            t, addr, length, *ext);
     const auto t_src = t.get_src();
@@ -1000,7 +1001,7 @@ CachedExtentRef Cache::duplicate_for_write(
     return i;
   }
 
-  auto ret = i->duplicate_for_write();
+  auto ret = i->duplicate_for_write(t);
   ret->prior_instance = i;
   t.add_mutated_extent(ret);
   if (ret->get_type() == extent_types_t::ROOT) {
@@ -1575,7 +1576,8 @@ void Cache::init()
   root->init(CachedExtent::extent_state_t::CLEAN,
              P_ADDR_ROOT,
              PLACEMENT_HINT_NULL,
-             NULL_GENERATION);
+             NULL_GENERATION,
+	     TRANS_ID_NULL);
   INFO("init root -- {}", *root);
   extents.insert(*root);
 }
