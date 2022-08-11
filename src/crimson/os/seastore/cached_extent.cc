@@ -2,6 +2,7 @@
 // vim: ts=8 sw=2 smarttab
 
 #include "crimson/os/seastore/cached_extent.h"
+#include "crimson/os/seastore/transaction.h"
 
 #include "crimson/common/log.h"
 
@@ -104,6 +105,12 @@ std::ostream &operator<<(std::ostream &out, const lba_pin_list_t &rhs)
     first = false;
   }
   return out << ']';
+}
+
+CachedExtentRef CachedExtent::duplicate_for_write(Transaction &t) {
+  auto ext = get_mutable_replica(t);
+  ext->touched_by = t.get_trans_id();
+  return ext;
 }
 
 }

@@ -59,7 +59,7 @@ class SeastoreNodeExtent final: public NodeExtent {
     return recorder.get();
   }
 
-  CachedExtentRef duplicate_for_write() override {
+  CachedExtentRef get_mutable_replica(Transaction&) override {
     return CachedExtentRef(new SeastoreNodeExtent(*this));
   }
   ceph::bufferlist get_delta() override {
