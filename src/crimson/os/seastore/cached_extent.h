@@ -76,9 +76,52 @@ using read_set_t = std::set<
   read_set_item_t<T>,
   typename read_set_item_t<T>::cmp_t>;
 
+struct trans_spec_view_t {
+  transaction_id_t touched_by = TRANS_ID_NULL;
+
+  struct cmp_t {
+    bool operator()(
+      const trans_spec_view_t &lhs,
+      const trans_spec_view_t &rhs) const
+    {
+      return lhs.touched_by < rhs.touched_by;
+    }
+    bool operator()(
+      const transaction_id_t &lhs,
+      const trans_spec_view_t &rhs) const
+    {
+      return lhs < rhs.touched_by;
+    }
+    bool operator()(
+      const trans_spec_view_t &lhs,
+      const transaction_id_t &rhs) const
+    {
+      return lhs.touched_by < rhs;
+    }
+  };
+
+  using trans_view_hook_t =
+    boost::intrusive::set_member_hook<
+      boost::intrusive::link_mode<
+        boost::intrusive::auto_unlink>>;
+  trans_view_hook_t child_trans_view_hook;
+
+  using trans_view_member_options =
+    boost::intrusive::member_hook<
+      trans_spec_view_t,
+      trans_view_hook_t,
+      &trans_spec_view_t::child_trans_view_hook>;
+  using trans_view_set_t = boost::intrusive::set<
+    trans_spec_view_t,
+    trans_view_member_options,
+    boost::intrusive::constant_time_size<false>,
+    boost::intrusive::compare<cmp_t>>;
+};
+
 class ExtentIndex;
 class CachedExtent : public boost::intrusive_ref_counter<
-  CachedExtent, boost::thread_unsafe_counter> {
+  CachedExtent, boost::thread_unsafe_counter>,
+		     public trans_spec_view_t {
   enum class extent_state_t : uint8_t {
     INITIAL_WRITE_PENDING, // In Transaction::write_set and fresh_block_list
     MUTATION_PENDING,      // In Transaction::write_set and mutated_block_list
@@ -117,11 +160,13 @@ public:
   void init(extent_state_t _state,
             paddr_t paddr,
             placement_hint_t hint,
-            reclaim_gen_t gen) {
+            reclaim_gen_t gen,
+	    transaction_id_t trans_id) {
     state = _state;
     set_paddr(paddr);
     user_hint = hint;
     reclaim_generation = gen;
+    touched_by = trans_id;
   }
 
   void set_modify_time(sea_time_point t) {
@@ -143,7 +188,9 @@ public:
    * structure which defers updating the actual buffer until
    * on_delta_write().
    */
-  virtual CachedExtentRef duplicate_for_write() = 0;
+  CachedExtentRef duplicate_for_write(Transaction &t);
+
+  virtual CachedExtentRef get_mutable_replica(Transaction &t) = 0;
 
   /**
    * prepare_write
@@ -161,7 +208,12 @@ public:
    * Implentation may use this call to fixup the buffer
    * with the newly available absolute get_paddr().
    */
-  virtual void on_initial_write() {}
+  void on_initial_write() {
+    touched_by = 0;
+    on_initial_commit();
+  }
+
+  virtual void on_initial_commit() {}
 
   /**
    * on_clean_read
@@ -181,7 +233,12 @@ public:
    * references in the the buffer with the passed
    * record_block_offset record location.
    */
-  virtual void on_delta_write(paddr_t record_block_offset) {}
+  void on_delta_write(paddr_t record_block_offset) {
+    touched_by = 0;
+    on_delta_commit(record_block_offset);
+  }
+
+  virtual void on_delta_commit(paddr_t record_block_offset) {}
 
   /**
    * get_type
@@ -768,7 +825,7 @@ public:
 
   extent_len_t get_length() const final { return length; }
 
-  CachedExtentRef duplicate_for_write() final {
+  CachedExtentRef get_mutable_replica(Transaction&) final {
     ceph_assert(0 == "Should never happen for a placeholder");
     return CachedExtentRef();
   }
@@ -796,7 +853,7 @@ public:
     return out << ", RetiredExtentPlaceholder";
   }
 
-  void on_delta_write(paddr_t record_block_offset) final {
+  void on_delta_commit(paddr_t record_block_offset) {
     ceph_assert(0 == "Should never happen for a placeholder");
   }
 };
@@ -858,7 +915,7 @@ protected:
 
   virtual void logical_on_delta_write() {}
 
-  void on_delta_write(paddr_t record_block_offset) final {
+  void on_delta_commit(paddr_t record_block_offset) final {
     assert(is_exist_mutation_pending() ||
 	   get_prior_instance());
     if (get_prior_instance()) {
