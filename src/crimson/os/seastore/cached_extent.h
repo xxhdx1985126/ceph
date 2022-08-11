@@ -113,7 +113,7 @@ struct trans_spec_view_t {
       trans_spec_view_t,
       trans_view_hook_t,
       &trans_spec_view_t::child_trans_view_hook>;
-  using trans_view_set_t = boost::intrusive::set<
+  using trans_view_set_t = boost::intrusive::multiset<
     trans_spec_view_t,
     trans_view_member_options,
     boost::intrusive::constant_time_size<false>,
@@ -237,15 +237,15 @@ public:
    * record_block_offset record location.
    */
   void on_delta_write(paddr_t record_block_offset) {
-    touched_by = 0;
     on_delta_commit(record_block_offset);
+    touched_by = 0;
   }
 
   virtual void on_delta_commit(paddr_t record_block_offset) {}
 
   virtual void on_replace_prior(Transaction &t) {}
 
-  virtual void on_invalidated(Transaction &t) {}
+  virtual void on_invalidated(Transaction &t, bool transaction_reset = false) {}
   /**
    * get_type
    *

@@ -807,6 +807,7 @@ void Cache::invalidate_extent(
   if (!extent.may_conflict()) {
     assert(extent.transactions.empty());
     extent.state = CachedExtent::extent_state_t::INVALID;
+    extent.on_invalidated(t);
     return;
   }
 
@@ -997,6 +998,7 @@ CachedExtentRef Cache::duplicate_for_write(
 
   if (i->is_exist_clean()) {
     i->version++;
+    i->touched_by = t.get_trans_id();
     i->state = CachedExtent::extent_state_t::EXIST_MUTATION_PENDING;
     i->last_committed_crc = i->get_crc32c();
     t.add_mutated_extent(i);
@@ -1027,6 +1029,7 @@ record_t Cache::prepare_record(
 {
   LOG_PREFIX(Cache::prepare_record);
   SUBTRACET(seastore_t, "enter", t);
+  t.committed = true;
 
   auto trans_src = t.get_src();
   assert(!t.is_weak());
@@ -1390,6 +1393,13 @@ record_t Cache::prepare_record(
     assert(rewrite_version_stats.is_clear());
   }
 
+  for (auto tracker : t.trackers_to_rm) {
+      SUBTRACET(seastore_t,
+	"delete tracker: {}", t, (void*)tracker);
+      delete tracker;
+  }
+  t.trackers_to_rm.clear();
+
   return record;
 }
 
@@ -1538,6 +1548,7 @@ void Cache::complete_commit(
   for (auto &i: t.existing_block_list) {
     if (i->is_valid()) {
       if (i->is_exist_clean()) {
+	i->touched_by = 0;
 	i->state = CachedExtent::extent_state_t::CLEAN;
       } else {
 	assert(i->state == CachedExtent::extent_state_t::DIRTY);
