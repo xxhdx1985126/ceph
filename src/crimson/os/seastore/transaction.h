@@ -150,6 +150,7 @@ public:
 
     auto [iter, inserted] = read_set.emplace(this, ref);
     ceph_assert(inserted);
+    //TODO: use insert_before
     if (it == ref->transactions.begin()) {
       ref->transactions.insert(
 	const_cast<read_set_item_t<Transaction>&>(*iter));

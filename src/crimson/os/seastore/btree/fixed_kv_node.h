@@ -71,7 +71,8 @@ struct child_trans_views_t {
     if (!v_by_t) {
       v_by_t = std::make_optional<std::map<transaction_id_t, CachedExtent*>>();
     }
-    v_by_t->emplace(child_tv.touched_by, &child_tv);
+    auto [iter, inserted] = v_by_t->emplace(child_tv.touched_by, &child_tv);
+    ceph_assert(inserted);
   }
 
   template <typename T>
@@ -196,6 +197,31 @@ struct FixedKVNode : CachedExtent {
       parent_tracker.reset();
     }
     this->child_trans_views.views_by_transaction.resize(capacity, std::nullopt);
+  }
+
+  void on_invalidated(Transaction &t) final {
+    if (child_trans_view_hook.is_linked()) {
+      ceph_assert(parent_tracker);
+      child_trans_view_hook.unlink();
+
+      auto parent = parent_tracker->parent;
+      ceph_assert(parent);
+      auto &parent_child_tvs = ((FixedKVNode*)parent)->child_trans_views;
+      auto &tv_map = parent_child_tvs.views_by_transaction[parent_tracker->pos];
+      // if the invalidation is caused by this extent's prior instance being
+      // replace, tv_map would be empty
+      if (tv_map) {
+	auto it = tv_map->find(touched_by);
+	if (it != tv_map->end()) {
+	  ceph_assert(it->second = this);
+	  tv_map->erase(it);
+	  if (tv_map->empty()) {
+	    tv_map.reset();
+	  }
+	}
+      }
+      parent_tracker.reset();
+    }
   }
 
   void on_initial_commit() final {
