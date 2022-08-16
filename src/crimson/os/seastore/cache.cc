@@ -996,6 +996,7 @@ CachedExtentRef Cache::duplicate_for_write(
 
   if (i->is_exist_clean()) {
     i->version++;
+    i->touched_by = t.get_trans_id();
     i->state = CachedExtent::extent_state_t::EXIST_MUTATION_PENDING;
     i->last_committed_crc = i->get_crc32c();
     t.add_mutated_extent(i);
@@ -1541,6 +1542,7 @@ void Cache::complete_commit(
   for (auto &i: t.existing_block_list) {
     if (i->is_valid()) {
       if (i->is_exist_clean()) {
+	i->touched_by = 0;
 	i->state = CachedExtent::extent_state_t::CLEAN;
       } else {
 	assert(i->state == CachedExtent::extent_state_t::DIRTY);

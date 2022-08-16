@@ -35,6 +35,75 @@ struct child_tracker_t {
 
 std::ostream& operator<<(std::ostream&, child_tracker_t&);
 
+struct child_trans_views_t {
+  child_trans_views_t() = default;
+  child_trans_views_t(size_t capacity)
+    : views_by_transaction(capacity, std::nullopt) {}
+
+  CachedExtent::trans_view_set_t trans_views;
+  std::vector<std::optional<std::map<transaction_id_t, CachedExtent*>>>
+  views_by_transaction;
+
+  CachedExtent* get_child_trans_view(Transaction &t, uint64_t pos) {
+    if (views_by_transaction.empty()) {
+      return nullptr;
+    }
+
+    auto &tv_map = views_by_transaction[pos];
+    if (!tv_map) {
+      return nullptr;
+    } else {
+      ceph_assert(!tv_map->empty());
+      auto it = tv_map->find(t.get_trans_id());
+      if (it == tv_map->end()) {
+	return nullptr;
+      } else {
+	return it->second;
+      }
+    }
+  }
+
+  void new_trans_view(CachedExtent &child_tv, uint64_t pos) {
+    ceph_assert(child_tv.touched_by);
+    ceph_assert(views_by_transaction.capacity());
+    trans_views.insert(child_tv);
+    auto &v_by_t = views_by_transaction[pos];
+    if (!v_by_t) {
+      v_by_t = std::make_optional<std::map<transaction_id_t, CachedExtent*>>();
+    }
+    v_by_t->emplace(child_tv.touched_by, &child_tv);
+  }
+
+  template <typename T>
+  std::list<std::pair<CachedExtent*, uint64_t>> remove_trans_view(Transaction &t) {
+    ceph_assert(views_by_transaction.capacity());
+    std::list<std::pair<CachedExtent*, uint64_t>> res;
+    auto tid = t.get_trans_id();
+    auto iter = trans_views.lower_bound(
+      tid,
+      trans_spec_view_t::cmp_t());
+    for (; iter->touched_by == tid;) {
+      auto &child_trans_view = *iter;
+      iter = trans_views.erase(iter);
+      auto child_pos = ((T&)child_trans_view).parent_tracker->pos;
+      auto &tv_map = views_by_transaction[child_pos];
+      ceph_assert(tv_map);
+      auto it = tv_map->find(tid);
+      ceph_assert(it != tv_map->end());
+      ceph_assert(it->second == &child_trans_view);
+      tv_map->erase(it);
+      if (tv_map->empty())
+	tv_map.reset();
+      res.push_back(std::make_pair((CachedExtent*)&child_trans_view, child_pos));
+    }
+    return res;
+  }
+
+  bool empty() {
+    return trans_views.empty();
+  }
+};
+
 struct parent_tracker_t {
   CachedExtent* parent;
   uint64_t pos;
@@ -64,14 +133,24 @@ struct FixedKVNode : CachedExtent {
   // 		pointers, as there must be at least one pending node that's
   // 		referencing the corresponding child trackers
   std::vector<child_tracker_t*> child_trackers;
-  trans_spec_view_t::trans_view_set_t child_trans_views;
+  child_trans_views_t child_trans_views;
   parent_tracker_ref parent_tracker;
   std::list<child_tracker_t*> trackers_to_rm;
+  size_t capacity = 0;
 
   FixedKVNode(size_t capacity, ceph::bufferptr &&ptr)
-    : CachedExtent(std::move(ptr)), pin(this), child_trackers(capacity, nullptr) {}
+    : CachedExtent(std::move(ptr)),
+      pin(this),
+      child_trackers(capacity, nullptr),
+      child_trans_views(capacity),
+      capacity(capacity)
+  {}
   FixedKVNode(const FixedKVNode &rhs)
-    : CachedExtent(rhs), pin(rhs.pin, this), child_trackers(rhs.child_trackers) {}
+    : CachedExtent(rhs),
+      pin(rhs.pin, this),
+      child_trackers(rhs.child_trackers),
+      capacity(rhs.capacity)
+  {}
 
   virtual fixed_kv_node_meta_t<node_key_t> get_node_meta() const = 0;
 
@@ -81,6 +160,7 @@ struct FixedKVNode : CachedExtent {
     LOG_PREFIX(FixedKVNode::on_delta_commit);
     // All in-memory relative addrs are necessarily record-relative
     assert(get_prior_instance());
+    ceph_assert(touched_by);
     pin.take_pin(get_prior_instance()->template cast<FixedKVNode>()->pin);
     resolve_relative_addrs(record_block_offset);
     for (auto tracker : trackers_to_rm) {
@@ -89,6 +169,10 @@ struct FixedKVNode : CachedExtent {
       delete tracker;
     }
     trackers_to_rm.clear();
+  }
+
+  void on_replace_prior(Transaction &t) final {
+    ceph_assert(touched_by == t.get_trans_id());
     if (parent_tracker) {
       // change my parent to point to me
       auto parent = parent_tracker->parent;
@@ -97,8 +181,21 @@ struct FixedKVNode : CachedExtent {
       ceph_assert(child_trans_view_hook.is_linked());
       child_trans_view_hook.unlink();
       tracker->child = weak_from_this();
+
+      auto &parent_child_tvs = ((FixedKVNode*)parent)->child_trans_views;
+      auto &tv_map = parent_child_tvs.views_by_transaction[parent_tracker->pos];
+#ifndef NDEBUG
+      auto it = tv_map->find(touched_by);
+      ceph_assert(it != tv_map->end());
+      ceph_assert(it->second = this);
+      tv_map.reset();
+#else
+      tv_map.reset();
+#endif
+
       parent_tracker.reset();
     }
+    this->child_trans_views.views_by_transaction.resize(capacity, std::nullopt);
   }
 
   void on_initial_commit() final {
@@ -195,7 +292,9 @@ struct FixedKVInternalNode
   }
 
   void add_child_trans_view(FixedKVNode<NODE_KEY> &child, uint64_t pos) {
-    this->child_trans_views.insert(child);
+    ceph_assert(pos < this->get_size());
+    this->child_trans_views.new_trans_view(child, pos);
+
     ceph_assert(!this->is_pending() && child.is_mutation_pending());
     ceph_assert(!child.parent_tracker);
     ceph_assert(this->child_trackers[pos]);
@@ -330,19 +429,29 @@ struct FixedKVInternalNode
     auto ext = new node_type_t(*this);
     auto tid = t.get_trans_id();
     ext->touched_by = tid;
-    auto iter = this->child_trans_views.lower_bound(
-      tid,
-      trans_spec_view_t::cmp_t());
-    for (; iter->touched_by == tid;) {
-      auto &child_trans_view = *iter;
-      iter = this->child_trans_views.erase(iter);
-      auto child_pos = ((base_t&)child_trans_view).parent_tracker->pos;
-      ext->child_trackers[child_pos] =
-	new child_tracker_t((CachedExtent*)&child_trans_view);
-      ((base_t&)child_trans_view).parent_tracker.reset();
+    auto children = this->child_trans_views.template remove_trans_view<base_t>(t);
+    for (auto [child, pos] : children) {
+      ext->child_trackers[pos] = new child_tracker_t(child);
+      ((base_t*)child)->parent_tracker.reset();
     }
     return ext;
-  };
+  }
+
+  template <typename T>
+  TCachedExtentRef<T> get_child(Transaction &t, uint16_t pos) {
+    static_assert(std::is_base_of_v<FixedKVNode<NODE_KEY>, T>);
+    ceph_assert(pos < this->get_size());
+    auto child_trans_view =
+      this->child_trans_views.get_child_trans_view(t, pos);
+    if (child_trans_view) {
+      ceph_assert(child_trans_view->get_type() == T::TYPE);
+      return (T*)child_trans_view;
+    }
+
+    auto tracker = this->child_trackers[pos];
+    assert(tracker);
+    return (T*)tracker->child.get();
+  }
 
   void update(
     internal_const_iterator_t iter,
