@@ -233,6 +233,7 @@ public:
    */
   virtual void on_delta_write(paddr_t record_block_offset) {}
 
+  virtual void on_replace_prior(Transaction &t) {}
   /**
    * get_type
    *
