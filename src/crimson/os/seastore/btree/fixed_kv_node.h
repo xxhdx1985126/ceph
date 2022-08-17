@@ -330,7 +330,10 @@ struct FixedKVInternalNode
     child.parent_tracker = std::make_unique<parent_tracker_t>(this, pos);
   }
 
-  void copy_child_trackers_out(FixedKVInternalNode &new_node) {
+  // this method should only be invoked to rewrite extents
+  void copy_child_trackers_out(
+    Transaction &t,
+    FixedKVInternalNode &new_node) {
     LOG_PREFIX(FixedKVInternalNode::copy_child_trackers_out);
     SUBTRACE(seastore_fixedkv_tree,
       "coping {} trackers from {} to {}",
@@ -345,6 +348,14 @@ struct FixedKVInternalNode
     }
 #endif
     std::memmove(n_data, data, this->get_size() * sizeof(child_tracker_t*));
+    if (!this->is_pending()) {
+      auto children = this->child_trans_views
+	.template remove_trans_view<base_t>(t);
+      for (auto [child, pos] : children) {
+	new_node.child_trackers[pos] = new child_tracker_t(child);
+	((base_t*)child)->parent_tracker.reset();
+      }
+    }
   }
 
   void split_child_trackers(
@@ -363,14 +374,17 @@ struct FixedKVInternalNode
     std::memmove(l_data, data, sizeof(child_tracker_t*) * l_size);
     std::memmove(r_data, data + pivot, sizeof(child_tracker_t*) * r_size);
 
-    auto children = this->child_trans_views.template remove_trans_view<base_t>(t);
-    for (auto [child, pos] : children) {
-      if (pos < pivot) {
-	left.child_trackers[pos] = new child_tracker_t(child);
-      } else {
-	right.child_trackers[pos] = new child_tracker_t(child);
+    if (!this->is_pending()) {
+      auto children = this->child_trans_views
+	.template remove_trans_view<base_t>(t);
+      for (auto [child, pos] : children) {
+	if (pos < pivot) {
+	  left.child_trackers[pos] = new child_tracker_t(child);
+	} else {
+	  right.child_trackers[pos] = new child_tracker_t(child);
+	}
+	((base_t*)child)->parent_tracker.reset();
       }
-      ((base_t*)child)->parent_tracker.reset();
     }
 
     SUBTRACET(seastore_fixedkv_tree,
@@ -396,16 +410,22 @@ struct FixedKVInternalNode
     std::memmove(data, l_data, l_size);
     std::memmove(data + l_size, r_data, r_size);
 
-    auto children = left.child_trans_views.template remove_trans_view<base_t>(t);
-    for (auto [child, pos] : children) {
-      this->child_trackers[pos] = new child_tracker_t(child);
-      ((base_t*)child)->parent_tracker.reset();
+    if (!left.is_pending()) {
+      auto children = left.child_trans_views
+	.template remove_trans_view<base_t>(t);
+      for (auto [child, pos] : children) {
+	this->child_trackers[pos] = new child_tracker_t(child);
+	((base_t*)child)->parent_tracker.reset();
+      }
     }
 
-    children = right.child_trans_views.template remove_trans_view<base_t>(t);
-    for (auto [child, pos] : children) {
-      this->child_trackers[l_size + pos] = new child_tracker_t(child);
-      ((base_t*)child)->parent_tracker.reset();
+    if (!right.is_pending()) {
+      auto children = right.child_trans_views
+	.template remove_trans_view<base_t>(t);
+      for (auto [child, pos] : children) {
+	this->child_trackers[l_size + pos] = new child_tracker_t(child);
+	((base_t*)child)->parent_tracker.reset();
+      }
     }
   }
 
@@ -448,22 +468,28 @@ struct FixedKVInternalNode
 	r_data,
 	r_size * sizeof(child_tracker_t*));
 
-      auto children = left.child_trans_views.template remove_trans_view<base_t>(t);
-      for (auto [child, pos] : children) {
-	if (pos < pivot_idx){
-	  replacement_left.child_trackers[pos] = new child_tracker_t(child);
-	} else {
-	  replacement_right.child_trackers[pos - pivot_idx] =
-	    new child_tracker_t(child);
+      if (!left.is_pending()) {
+	auto children = left.child_trans_views
+	  .template remove_trans_view<base_t>(t);
+	for (auto [child, pos] : children) {
+	  if (pos < pivot_idx){
+	    replacement_left.child_trackers[pos] = new child_tracker_t(child);
+	  } else {
+	    replacement_right.child_trackers[pos - pivot_idx] =
+	      new child_tracker_t(child);
+	  }
+	  ((base_t*)child)->parent_tracker.reset();
 	}
-	((base_t*)child)->parent_tracker.reset();
       }
 
-      children = right.child_trans_views.template remove_trans_view<base_t>(t);
-      for (auto [child, pos] : children) {
-	replacement_right.child_trackers[pos + l_size - pivot_idx] =
-	  new child_tracker_t(child);
-	((base_t*)child)->parent_tracker.reset();
+      if (!right.is_pending()) {
+	auto children = right.child_trans_views
+	  .template remove_trans_view<base_t>(t);
+	for (auto [child, pos] : children) {
+	  replacement_right.child_trackers[pos + l_size - pivot_idx] =
+	    new child_tracker_t(child);
+	  ((base_t*)child)->parent_tracker.reset();
+	}
       }
 
     } else {
@@ -473,22 +499,28 @@ struct FixedKVInternalNode
       std::memmove(rep_r_data, r_data + pivot_idx - l_size,
 	(r_size + l_size - pivot_idx) * sizeof(child_tracker_t*));
 
-      auto children = left.child_trans_views.template remove_trans_view<base_t>(t);
-      for (auto [child, pos] : children) {
-	replacement_left.child_trackers[pos] = new child_tracker_t(child);
-	((base_t*)child)->parent_tracker.reset();
+      if (!left.is_pending()) {
+	auto children = left.child_trans_views
+	  .template remove_trans_view<base_t>(t);
+	for (auto [child, pos] : children) {
+	  replacement_left.child_trackers[pos] = new child_tracker_t(child);
+	  ((base_t*)child)->parent_tracker.reset();
+	}
       }
 
-      children = right.child_trans_views.template remove_trans_view<base_t>(t);
-      for (auto [child, pos] : children) {
-	if (pos < pivot_idx) {
-	  replacement_left.child_trackers[pos + pivot_idx] =
-	    new child_tracker_t(child);
-	} else {
-	  replacement_right.child_trackers[pos - pivot_idx] =
-	    new child_tracker_t(child);
+      if (!right.is_pending()) {
+	auto children = right.child_trans_views
+	  .template remove_trans_view<base_t>(t);
+	for (auto [child, pos] : children) {
+	  if (pos < pivot_idx) {
+	    replacement_left.child_trackers[pos + pivot_idx] =
+	      new child_tracker_t(child);
+	  } else {
+	    replacement_right.child_trackers[pos - pivot_idx] =
+	      new child_tracker_t(child);
+	  }
+	  ((base_t*)child)->parent_tracker.reset();
 	}
-	((base_t*)child)->parent_tracker.reset();
       }
     }
   }

@@ -841,7 +841,7 @@ public:
       if constexpr (
         std::is_same_v<internal_node_t,
           std::remove_reference_t<decltype(fixed_kv_extent)>>) {
-        fixed_kv_extent.copy_child_trackers_out(*n_fixed_kv_extent);
+        fixed_kv_extent.copy_child_trackers_out(c.trans, *n_fixed_kv_extent);
       }
       
       /* This is a bit underhanded.  Any relative addrs here must necessarily
