@@ -128,7 +128,10 @@ struct FixedKVNode : CachedExtent {
   // 	2. new mapping is added
   // and are destroyed when:
   // 	1. the node is valid and evicted out of Cache
-  // 	2. the mapping is removed from the node or replaced
+  // 	2. TODO: the parent and child of the pointer are both
+  // 		 pending, and the parent got invalidated by
+  // 		 transaction reset
+  // 	3. the mapping is removed from the node or replaced
   //
   // NOTE THAT: invalidating a node doesn't need to destory these raw
   // 		pointers, as there must be at least one pending node that's
@@ -174,12 +177,12 @@ struct FixedKVNode : CachedExtent {
 
   void on_replace_prior(Transaction &t) final {
     ceph_assert(touched_by == t.get_trans_id());
-    if (parent_tracker) {
+    if (child_trans_view_hook.is_linked()) {
       // change my parent to point to me
+      ceph_assert(parent_tracker);
       auto parent = parent_tracker->parent;
       ceph_assert(parent);
       auto tracker = ((FixedKVNode*)parent)->child_trackers[parent_tracker->pos];
-      ceph_assert(child_trans_view_hook.is_linked());
       child_trans_view_hook.unlink();
       tracker->child = weak_from_this();
 
@@ -360,6 +363,16 @@ struct FixedKVInternalNode
     std::memmove(l_data, data, sizeof(child_tracker_t*) * l_size);
     std::memmove(r_data, data + pivot, sizeof(child_tracker_t*) * r_size);
 
+    auto children = this->child_trans_views.template remove_trans_view<base_t>(t);
+    for (auto [child, pos] : children) {
+      if (pos < pivot) {
+	left.child_trackers[pos] = new child_tracker_t(child);
+      } else {
+	right.child_trackers[pos] = new child_tracker_t(child);
+      }
+      ((base_t*)child)->parent_tracker.reset();
+    }
+
     SUBTRACET(seastore_fixedkv_tree,
       "l_size: {}, {}; r_size: {}, {}",
       t, l_size, left, r_size, right);
@@ -367,8 +380,9 @@ struct FixedKVInternalNode
 
   template <typename T1, typename T2>
   void merge_child_trackers(
-    const T1 &left,
-    const T2 &right)
+    Transaction &t,
+    T1 &left,
+    T2 &right)
   {
     static_assert(std::is_base_of_v<FixedKVNode<NODE_KEY>, T1>);
     static_assert(std::is_base_of_v<FixedKVNode<NODE_KEY>, T2>);
@@ -381,23 +395,35 @@ struct FixedKVInternalNode
 
     std::memmove(data, l_data, l_size);
     std::memmove(data + l_size, r_data, r_size);
+
+    auto children = left.child_trans_views.template remove_trans_view<base_t>(t);
+    for (auto [child, pos] : children) {
+      this->child_trackers[pos] = new child_tracker_t(child);
+      ((base_t*)child)->parent_tracker.reset();
+    }
+
+    children = right.child_trans_views.template remove_trans_view<base_t>(t);
+    for (auto [child, pos] : children) {
+      this->child_trackers[l_size + pos] = new child_tracker_t(child);
+      ((base_t*)child)->parent_tracker.reset();
+    }
   }
 
   template <typename T1, typename T2>
   static void balance_child_trackers(
     Transaction &t,
-    const T1 &left,
-    const T2 &right,
+    T1 &left,
+    T2 &right,
     bool prefer_left,
     T2 &replacement_left,
     T2 &replacement_right)
   {
     static_assert(std::is_base_of_v<FixedKVNode<NODE_KEY>, T1>);
     static_assert(std::is_base_of_v<FixedKVNode<NODE_KEY>, T2>);
-    auto l_size = left.get_size();
-    auto r_size = right.get_size();
-    auto total = l_size + r_size;
-    auto pivot_idx = (l_size + r_size) / 2;
+    size_t l_size = left.get_size();
+    size_t r_size = right.get_size();
+    size_t total = l_size + r_size;
+    size_t pivot_idx = (l_size + r_size) / 2;
     if (total % 2 && prefer_left) {
       pivot_idx++;
     }
@@ -417,13 +443,53 @@ struct FixedKVInternalNode
       std::memmove(rep_l_data, l_data, pivot_idx * sizeof(child_tracker_t*));
       std::memmove(rep_r_data, l_data + pivot_idx,
 	(l_size - pivot_idx) * sizeof(child_tracker_t*));
-      std::memmove(rep_r_data, r_data, r_size * sizeof(child_tracker_t*));
+      std::memmove(
+	rep_r_data + (l_size - pivot_idx),
+	r_data,
+	r_size * sizeof(child_tracker_t*));
+
+      auto children = left.child_trans_views.template remove_trans_view<base_t>(t);
+      for (auto [child, pos] : children) {
+	if (pos < pivot_idx){
+	  replacement_left.child_trackers[pos] = new child_tracker_t(child);
+	} else {
+	  replacement_right.child_trackers[pos - pivot_idx] =
+	    new child_tracker_t(child);
+	}
+	((base_t*)child)->parent_tracker.reset();
+      }
+
+      children = right.child_trans_views.template remove_trans_view<base_t>(t);
+      for (auto [child, pos] : children) {
+	replacement_right.child_trackers[pos + l_size - pivot_idx] =
+	  new child_tracker_t(child);
+	((base_t*)child)->parent_tracker.reset();
+      }
+
     } else {
       std::memmove(rep_l_data, l_data, l_size * sizeof(child_tracker_t*));
-      std::memmove(rep_l_data, r_data,
+      std::memmove(rep_l_data + l_size, r_data,
 	(pivot_idx - l_size) * sizeof(child_tracker_t*));
       std::memmove(rep_r_data, r_data + pivot_idx - l_size,
 	(r_size + l_size - pivot_idx) * sizeof(child_tracker_t*));
+
+      auto children = left.child_trans_views.template remove_trans_view<base_t>(t);
+      for (auto [child, pos] : children) {
+	replacement_left.child_trackers[pos] = new child_tracker_t(child);
+	((base_t*)child)->parent_tracker.reset();
+      }
+
+      children = right.child_trans_views.template remove_trans_view<base_t>(t);
+      for (auto [child, pos] : children) {
+	if (pos < pivot_idx) {
+	  replacement_left.child_trackers[pos + pivot_idx] =
+	    new child_tracker_t(child);
+	} else {
+	  replacement_right.child_trackers[pos - pivot_idx] =
+	    new child_tracker_t(child);
+	}
+	((base_t*)child)->parent_tracker.reset();
+      }
     }
   }
 
@@ -612,7 +678,7 @@ struct FixedKVInternalNode
     Ref &right) {
     auto replacement = c.cache.template alloc_new_extent<node_type_t>(
       c.trans, node_size, placement_hint_t::HOT, 0);
-    replacement->merge_child_trackers(*this, *right);
+    replacement->merge_child_trackers(c.trans, *this, *right);
     replacement->merge_from(*this, *right->template cast<node_type_t>());
     replacement->pin.set_range(replacement->get_meta());
     return replacement;
