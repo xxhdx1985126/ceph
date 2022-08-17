@@ -983,13 +983,15 @@ public:
           ceph_assert(0 == "impossible");
         }
 
-        CachedExtentRef mut = c.cache.duplicate_for_write(
-          c.trans,
-          parent.node
-        );
-        may_link_parent_child(iter, depth + 1, c.trans);
-        typename internal_node_t::Ref mparent = mut->cast<internal_node_t>();
-        mparent->update(piter, new_addr, new_node);
+        if (!parent.node->is_pending()) {
+          CachedExtentRef mut = c.cache.duplicate_for_write(
+            c.trans,
+            parent.node
+          );
+          parent.node = mut->cast<internal_node_t>();
+          may_link_parent_child(iter, depth + 1, c.trans);
+        }
+        parent.node->update(piter, new_addr, new_node);
 
         /* Note, iter is now invalid as we didn't udpate either the parent
          * node reference to the new mutable instance nor did we update the
