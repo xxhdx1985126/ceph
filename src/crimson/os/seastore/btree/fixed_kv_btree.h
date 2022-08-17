@@ -58,7 +58,7 @@ public:
   using iterator_fut = base_iertr::future<iterator>;
 
   using mapped_space_visitor_t = std::function<
-    void(paddr_t, extent_len_t, depth_t, extent_types_t)>;
+    void(paddr_t, node_key_t, extent_len_t, depth_t, extent_types_t)>;
 
   class iterator {
   public:
@@ -1168,6 +1168,7 @@ private:
 	iter.get_internal(root.get_depth()).node = root_node;
 	if (visitor) (*visitor)(
           root_node->get_paddr(),
+          root_node->get_node_meta().begin,
           root_node->get_length(),
           root.get_depth(),
           internal_node_t::TYPE);
@@ -1184,6 +1185,7 @@ private:
 	iter.leaf.node = root_node;
 	if (visitor) (*visitor)(
           root_node->get_paddr(),
+          root_node->get_node_meta().begin,
           root_node->get_length(),
           root.get_depth(),
           leaf_node_t::TYPE);
@@ -1217,6 +1219,7 @@ private:
       if (visitor)
         (*visitor)(
           node->get_paddr(),
+          node->get_node_meta().begin,
           node->get_length(),
           depth,
           node->get_type());
@@ -1286,6 +1289,7 @@ private:
       if (visitor)
         (*visitor)(
           node->get_paddr(),
+          node->get_node_meta().begin,
           node->get_length(),
           1,
           node->get_type());
