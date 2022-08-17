@@ -1233,7 +1233,7 @@ private:
     auto parent = parent_entry.node;
 
     auto on_found =
-      [depth, visitor, &iter, &f](InternalNodeRef node) {
+      [depth, visitor, &iter, &f](InternalNodeRef &node) {
         auto &entry = iter.get_internal(depth);
         entry.node = node;
         auto node_iter = f(*node);
@@ -1263,7 +1263,8 @@ private:
       if (!child->is_pending_in_trans(c.trans.get_trans_id())) {
         c.trans.add_to_read_set(child);
       }
-      return child->wait_io().then([child, on_found=std::move(on_found)] {
+      return child->wait_io().then(
+        [child, on_found=std::move(on_found)]() mutable {
         return on_found(child);
       });
     }
@@ -1328,7 +1329,8 @@ private:
       if (!child->is_pending_in_trans(c.trans.get_trans_id())) {
         c.trans.add_to_read_set(child);
       }
-      return child->wait_io().then([child, on_found=std::move(on_found)] {
+      return child->wait_io().then(
+        [child, on_found=std::move(on_found)]() mutable {
         return on_found(child);
       });
     }
@@ -1346,17 +1348,8 @@ private:
       begin,
       end,
       std::make_optional<node_position_t<internal_node_t>>(parent_entry)
-    ).si_then([visitor, &iter, &f](LeafNodeRef node) {
-      iter.leaf.node = node;
-      auto node_iter = f(*node);
-      iter.leaf.pos = node_iter->get_offset();
-      if (visitor)
-        (*visitor)(
-          node->get_paddr(),
-          node->get_length(),
-          1,
-          node->get_type());
-      return seastar::now();
+    ).si_then([on_found=std::move(on_found)](LeafNodeRef node) {
+      return on_found(node);
     });
   }
 
