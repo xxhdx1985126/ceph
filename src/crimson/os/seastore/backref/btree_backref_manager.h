@@ -112,7 +112,10 @@ public:
     Cache::backref_extent_entry_query_set_t &&backref_extents,
     std::vector<CachedExtentRef> &extents) final;
 
-  void cache_new_backref_extent(paddr_t paddr, extent_types_t type) final;
+  void cache_new_backref_extent(
+    paddr_t paddr,
+    paddr_t key,
+    extent_types_t type) final;
 
 private:
   Cache &cache;

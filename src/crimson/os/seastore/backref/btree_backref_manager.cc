@@ -298,7 +298,7 @@ BtreeBackrefManager::scan_mapped_space(
     auto block_size = cache.get_block_size();
     BackrefBtree::mapped_space_visitor_t f =
       [&scan_visitor, block_size, FNAME, c](
-        paddr_t paddr, extent_len_t len,
+        paddr_t paddr, paddr_t key, extent_len_t len,
         depth_t depth, extent_types_t type) {
       TRACET("tree node {}~{} {}, depth={} used",
              c.trans, paddr, len, type, depth);
@@ -306,7 +306,7 @@ BtreeBackrefManager::scan_mapped_space(
       ceph_assert(len > 0 && len % block_size == 0);
       ceph_assert(depth >= 1);
       ceph_assert(is_backref_node(type));
-      return scan_visitor(paddr, len, type, L_ADDR_NULL);
+      return scan_visitor(paddr, key, len, type, L_ADDR_NULL);
     };
     return seastar::do_with(
       std::move(f),
@@ -341,7 +341,8 @@ BtreeBackrefManager::scan_mapped_space(
             ceph_assert(!is_backref_node(pos.get_val().type));
             ceph_assert(pos.get_val().laddr != L_ADDR_NULL);
             scan_visitor(
-                pos.get_key(),
+		pos.get_key(),
+		P_ADDR_NULL,
                 pos.get_val().len,
                 pos.get_val().type,
                 pos.get_val().laddr);
@@ -377,6 +378,7 @@ BtreeBackrefManager::scan_mapped_space(
         ceph_assert(!is_backref_node(backref_entry.type));
         scan_visitor(
             backref_entry.paddr,
+	    P_ADDR_NULL,
             backref_entry.len,
             backref_entry.type,
             backref_entry.laddr);
@@ -515,9 +517,10 @@ BtreeBackrefManager::get_cached_backref_extents_in_range(
 
 void BtreeBackrefManager::cache_new_backref_extent(
   paddr_t paddr,
+  paddr_t key,
   extent_types_t type)
 {
-  return cache.add_backref_extent(paddr, type);
+  return cache.add_backref_extent(paddr, key, type);
 }
 
 BtreeBackrefManager::retrieve_backref_extents_ret
@@ -526,21 +529,51 @@ BtreeBackrefManager::retrieve_backref_extents(
   Cache::backref_extent_entry_query_set_t &&backref_extents,
   std::vector<CachedExtentRef> &extents)
 {
-  return trans_intr::parallel_for_each(
-    backref_extents,
-    [this, &extents, &t](auto &ent) {
-    // only the gc fiber which is single can rewrite backref extents,
-    // so it must be alive
-    assert(is_backref_node(ent.type));
-    LOG_PREFIX(BtreeBackrefManager::retrieve_backref_extents);
-    DEBUGT("getting backref extent of type {} at {}",
-      t,
-      ent.type,
-      ent.paddr);
-    return cache.get_extent_by_type(
-      t, ent.type, ent.paddr, L_ADDR_NULL, BACKREF_NODE_SIZE
-    ).si_then([&extents](auto ext) {
-      extents.emplace_back(std::move(ext));
+  return seastar::do_with(
+    std::move(backref_extents),
+    [this, &extents, &t](auto &backref_extents) {
+    return trans_intr::parallel_for_each(
+      backref_extents,
+      [this, &extents, &t](auto &ent) {
+      // only the gc fiber which is single can rewrite backref extents,
+      // so it must be alive
+      assert(is_backref_node(ent.type));
+      LOG_PREFIX(BtreeBackrefManager::retrieve_backref_extents);
+      DEBUGT("getting backref extent of type {} at {}, key {}",
+	t,
+	ent.type,
+	ent.paddr,
+	ent.key);
+
+      auto c = get_context(t);
+      return with_btree_ret<BackrefBtree, CachedExtentRef>(
+	cache,
+	c,
+	[c, &ent](auto &btree) {
+	if (ent.type == extent_types_t::BACKREF_INTERNAL) {
+	  return btree.get_internal_if_live(
+	    c, ent.paddr, ent.key, BACKREF_NODE_SIZE);
+	} else {
+	  assert(ent.type == extent_types_t::BACKREF_LEAF);
+	  return btree.get_leaf_if_live(
+	    c, ent.paddr, ent.key, BACKREF_NODE_SIZE);
+	}
+      }).si_then([&extents, &t, &ent](auto ext) {
+#ifndef NDEBUG
+	LOG_PREFIX(BtreeBackrefManager::retrieve_backref_extents);
+	if (!ext) {
+	  ERRORT("unexpected empty backref extent, paddr {}, key {}, type {}",
+	    t, ent.paddr, ent.key, ent.type);
+	}
+#endif
+	ceph_assert(ext);
+	extents.emplace_back(std::move(ext));
+      });
+  /*    return cache.get_extent_by_type(
+	t, ent.type, ent.paddr, L_ADDR_NULL, BACKREF_NODE_SIZE
+      ).si_then([&extents](auto ext) {
+	extents.emplace_back(std::move(ext));
+      });*/
     });
   });
 }
