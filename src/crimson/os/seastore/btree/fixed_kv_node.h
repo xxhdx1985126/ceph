@@ -381,7 +381,7 @@ struct FixedKVInternalNode
 	if (pos < pivot) {
 	  left.child_trackers[pos] = new child_tracker_t(child);
 	} else {
-	  right.child_trackers[pos] = new child_tracker_t(child);
+	  right.child_trackers[pos - pivot] = new child_tracker_t(child);
 	}
 	((base_t*)child)->parent_tracker.reset();
       }
