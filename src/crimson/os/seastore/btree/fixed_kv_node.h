@@ -131,7 +131,9 @@ struct FixedKVNode : CachedExtent {
   // 	2. TODO: the parent and child of the pointer are both
   // 		 pending, and the parent got invalidated by
   // 		 transaction reset
-  // 	3. the mapping is removed from the node or replaced
+  // 	3. the mapping is removed from the node or replaced,
+  // 	   TODO: remove them if the extent is invalidated but
+  // 	   	 the transaction is committed
   //
   // NOTE THAT: invalidating a node doesn't need to destory these raw
   // 		pointers, as there must be at least one pending node that's
@@ -407,8 +409,8 @@ struct FixedKVInternalNode
     auto r_size = right.get_size();
     ceph_assert(l_size + r_size <= CAPACITY);
 
-    std::memmove(data, l_data, l_size);
-    std::memmove(data + l_size, r_data, r_size);
+    std::memmove(data, l_data, l_size * sizeof(child_tracker_t*));
+    std::memmove(data + l_size, r_data, r_size * sizeof(child_tracker_t*));
 
     if (!left.is_pending()) {
       auto children = left.child_trans_views
@@ -657,6 +659,8 @@ struct FixedKVInternalNode
     void* src = this->child_trackers.data() + iter.get_offset() + 1;
     void* dest = this->child_trackers.data() + iter.get_offset();
     std::memmove(dest, src, count);
+    // remove the entry outside this->get_size()
+    this->child_trackers[this->get_size() - 1] = nullptr;
 
     return this->journal_remove(
       iter,
