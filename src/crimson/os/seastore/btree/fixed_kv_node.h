@@ -514,11 +514,11 @@ struct FixedKVInternalNode
 	auto children = right.child_trans_views
 	  .template remove_trans_view<base_t>(t);
 	for (auto [child, pos] : children) {
-	  if (pos < pivot_idx) {
-	    replacement_left.child_trackers[pos + pivot_idx] =
+	  if (pos < pivot_idx - l_size) {
+	    replacement_left.child_trackers[pos + l_size] =
 	      new child_tracker_t(child);
 	  } else {
-	    replacement_right.child_trackers[pos - pivot_idx] =
+	    replacement_right.child_trackers[pos + l_size - pivot_idx] =
 	      new child_tracker_t(child);
 	  }
 	  ((base_t*)child)->parent_tracker.reset();
