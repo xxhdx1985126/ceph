@@ -55,6 +55,8 @@ struct child_trans_views_t {
 };
 
 struct parent_tracker_t {
+  parent_tracker_t(CachedExtent* parent, uint64_t pos)
+    : parent(parent), pos(pos) {}
   CachedExtent* parent;
   uint64_t pos;
 };
