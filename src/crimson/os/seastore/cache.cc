@@ -1433,15 +1433,15 @@ void Cache::complete_commit(
 
   std::vector<backref_entry_ref> backref_list;
   t.for_each_fresh_block([&](const CachedExtentRef &i) {
-    bool is_inline = false;
-    if (i->is_inline()) {
-      is_inline = true;
-      i->set_paddr(final_block_start.add_relative(i->get_paddr()));
-    }
-    i->last_committed_crc = i->get_crc32c();
-    i->on_initial_write();
-
     if (i->is_valid()) {
+      bool is_inline = false;
+      if (i->is_inline()) {
+	is_inline = true;
+	i->set_paddr(final_block_start.add_relative(i->get_paddr()));
+      }
+      i->last_committed_crc = i->get_crc32c();
+      i->on_initial_write();
+
       i->state = CachedExtent::extent_state_t::CLEAN;
       DEBUGT("add extent as fresh, inline={} -- {}",
              t, is_inline, *i);
