@@ -106,6 +106,9 @@ using read_set_t = std::set<
   read_set_item_t<T>,
   typename read_set_item_t<T>::cmp_t>;
 
+template <typename T>
+using read_list_t = std::list<read_set_item_t<T>>;
+
 struct trans_spec_view_t {
   transaction_id_t touched_by = TRANS_ID_NULL;
 

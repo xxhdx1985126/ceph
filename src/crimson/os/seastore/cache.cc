@@ -847,6 +847,9 @@ void Cache::mark_transaction_conflicted(
   for (auto &i: t.read_set) {
     read_stat.increment(i.ref->get_length());
   }
+  for (auto &i: t.read_list) {
+    read_stat.increment(i.ref->get_length());
+  }
   efforts.read.increment_stat(read_stat);
 
   if (t.get_src() != Transaction::src_t::READ) {
@@ -922,6 +925,9 @@ void Cache::on_transaction_destruct(Transaction& t)
       t.conflicted == false) {
     io_stat_t read_stat;
     for (auto &i: t.read_set) {
+      read_stat.increment(i.ref->get_length());
+    }
+    for (auto &i: t.read_list) {
       read_stat.increment(i.ref->get_length());
     }
     SUBDEBUGT(seastore_t, "done {} read", t, read_stat);
@@ -1049,7 +1055,18 @@ record_t Cache::prepare_record(
                i.ref->get_type()).increment(i.ref->get_length());
     read_stat.increment(i.ref->get_length());
   }
+  for (auto &i: t.read_list) {
+    if (!i.ref->is_valid()) {
+      SUBERRORT(seastore_t,
+          "read_set got invalid extent, aborting -- {}", t, *i.ref);
+      ceph_abort("no invalid extent allowed in transactions' read_set");
+    }
+    get_by_ext(efforts.read_by_ext,
+               i.ref->get_type()).increment(i.ref->get_length());
+    read_stat.increment(i.ref->get_length());
+  }
   t.read_set.clear();
+  t.read_list.clear();
   t.write_set.clear();
 
   record_t record(trans_src);

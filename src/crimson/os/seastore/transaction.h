@@ -145,14 +145,19 @@ public:
   void add_to_read_set(CachedExtentRef ref) {
     if (is_weak()) return;
 
+    auto [iter, inserted] = read_set.emplace(this, ref);
+    ceph_assert(inserted);
+  }
+
+  void add_to_read_list(CachedextentRef ref) {
+    if (is_weak()) return;
+
     auto it = ref->transactions.lower_bound(
       this, read_set_item_t<Transaction>::trans_cmp_t());
     if (it != ref->transactions.end() && it->t == this) return;
 
-    auto [iter, inserted] = read_set.emplace(this, ref);
-    ceph_assert(inserted);
-    ref->transactions.insert_before(
-      it, const_cast<read_set_item_t<Transaction>&>(*iter));
+    auto &item = read_list.emplace_back(this, ref);
+    ref->transactions.insert_before(it, item);
   }
 
   void add_fresh_extent(
@@ -375,6 +380,7 @@ public:
     offset = 0;
     delayed_temp_offset = 0;
     read_set.clear();
+    read_list.clear();
     fresh_backref_extents = 0;
     invalidate_clear_write_set();
     mutated_block_list.clear();
@@ -528,6 +534,10 @@ private:
    * invalidate *this.
    */
   read_set_t<Transaction> read_set; ///< set of extents read by paddr
+
+  read_list_t<Transaction> read_list;	///< list of extents accessed by
+					//   this transaction, and won't
+					//   be queried directly by paddr
 
   uint64_t fresh_backref_extents = 0; // counter of new backref extents
 
