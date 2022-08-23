@@ -191,15 +191,6 @@ struct lba_btree_test : btree_test_base {
     });
   }
 
-  void update_if_dirty(Transaction &t, LBABtree &btree, RootBlockRef croot) {
-    if (btree.is_root_dirty()) {
-      auto mut_croot = cache->duplicate_for_write(
-	t, croot
-      )->cast<RootBlock>();
-      mut_croot->root.lba_root = btree.get_root_undirty();
-    }
-  }
-
   template <typename F>
   auto lba_btree_update(F &&f) {
     auto tref = cache->create_transaction(
@@ -212,14 +203,11 @@ struct lba_btree_test : btree_test_base {
 	  t
 	).si_then([this, f=std::move(f), &t](RootBlockRef croot) {
 	  return seastar::do_with(
-	    LBABtree(croot->root.lba_root),
+	    LBABtree(croot),
 	    [this, croot, f=std::move(f), &t](auto &btree) mutable {
 	      return std::invoke(
 		std::move(f), btree, t
-	      ).si_then([this, croot, &t, &btree] {
-		update_if_dirty(t, btree, croot);
-		return seastar::now();
-	      });
+	      );
 	    });
 	}).si_then([this, tref=std::move(tref)]() mutable {
 	  return submit_transaction(std::move(tref));
@@ -238,7 +226,7 @@ struct lba_btree_test : btree_test_base {
 	  t
 	).si_then([f=std::move(f), &t](RootBlockRef croot) mutable {
 	  return seastar::do_with(
-	    LBABtree(croot->root.lba_root),
+	    LBABtree(croot),
 	    [f=std::move(f), &t](auto &btree) mutable {
 	      return std::invoke(
 		std::move(f), btree, t

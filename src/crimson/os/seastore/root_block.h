@@ -4,6 +4,7 @@
 #pragma once
 
 #include "crimson/os/seastore/cached_extent.h"
+#include "crimson/os/seastore/btree_child_tracker.h"
 
 namespace crimson::os::seastore {
 
@@ -38,13 +39,58 @@ struct RootBlock : CachedExtent {
 
   root_t root;
 
-  RootBlock() : CachedExtent(0) {}
+  child_tracker_t* lba_root_node = nullptr;
+  CachedExtent::trans_view_set_t lba_root_trans_views;
 
-  RootBlock(const RootBlock &rhs) = default;
+  child_tracker_t* backref_root_node = nullptr;
+  CachedExtent::trans_view_set_t backref_root_trans_views;
 
-  CachedExtentRef get_mutable_replica(Transaction&) final {
-    return CachedExtentRef(new RootBlock(*this));
-  };
+  RootBlock() : CachedExtent(0) {
+    lba_root_node = new child_tracker_t();
+    backref_root_node = new child_tracker_t();
+  }
+
+  RootBlock(const RootBlock &rhs)
+    : CachedExtent(rhs),
+      root(rhs.root),
+      lba_root_node(rhs.lba_root_node),
+      backref_root_node(rhs.backref_root_node)
+  {}
+
+  template <typename T>
+  CachedExtentRef get_phy_root_node(Transaction &t);
+
+  template <typename T>
+  child_tracker_t* get_phy_root_tracker() {
+    static_assert(std::is_same_v<T, laddr_t>
+      || std::is_same_v<T, paddr_t>);
+    if constexpr (std::is_same_v<T, laddr_t>) {
+      return lba_root_node;
+    } else {
+      return backref_root_node;
+    }
+  }
+
+  template <typename T>
+  void link_root_node(CachedExtent &root_node) {
+    static_assert(std::is_same_v<T, laddr_t>
+      || std::is_same_v<T, paddr_t>);
+    if constexpr (std::is_same_v<T, laddr_t>) {
+      ceph_assert(lba_root_node->child.get() != &root_node);
+      lba_root_node->child = root_node.weak_from_this();
+    } else {
+      ceph_assert(backref_root_node->child.get() != &root_node);
+      backref_root_node->child = root_node.weak_from_this();
+    }
+  }
+
+  template <typename T>
+  void new_fixedkv_root(CachedExtent &node, Transaction &t);
+
+  template <typename T>
+  void add_fixedkv_root_trans_view(CachedExtent &node);
+
+  CachedExtentRef get_mutable_replica(Transaction &t);
 
   static constexpr extent_types_t TYPE = extent_types_t::ROOT;
   extent_types_t get_type() const final {
