@@ -199,6 +199,16 @@ public:
     laddr_t laddr,
     seastore_off_t len) = 0;
 
+  using pre_rewrite_func_t = std::function<
+    bool(CachedExtentRef)>;
+  virtual rewrite_extent_ret rewrite_extent_if_live(
+    Transaction &t,
+    extent_types_t type,
+    paddr_t addr,
+    laddr_t laddr,
+    seastore_off_t len,
+    pre_rewrite_func_t &&) = 0;
+
   virtual void add_pin(LBAPin &pin) = 0;
 
   virtual ~LBAManager() {}

@@ -455,6 +455,30 @@ BtreeLBAManager::get_physical_extent_if_live(
     });
 }
 
+BtreeLBAManager::rewrite_extent_ret
+BtreeLBAManager::rewrite_extent_if_live(
+  Transaction &t,
+  extent_types_t type,
+  paddr_t paddr,
+  laddr_t laddr,
+  seastore_off_t len,
+  pre_rewrite_func_t &&pre_rewrite)
+{
+  LOG_PREFIX(BtreeLBAManager::rewrite_extent_if_live);
+  DEBUGT("{}, laddr={}, paddr={}, length={}",
+         t, type, laddr, paddr, len);
+  ceph_assert(is_lba_node(type));
+  auto c = get_context(t);
+  return with_btree<LBABtree>(
+    cache,
+    c,
+    [pr=std::move(pre_rewrite), c, type,
+     paddr, laddr, len](auto &btree) mutable {
+    return btree.rewrite_extent_if_live(
+      c, type, paddr, laddr, len, std::move(pr));
+  });
+}
+
 BtreeLBAManager::BtreeLBAManager(Cache &cache)
   : cache(cache)
 {

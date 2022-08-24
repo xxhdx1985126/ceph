@@ -140,6 +140,14 @@ public:
     laddr_t laddr,
     seastore_off_t len) final;
 
+  rewrite_extent_ret rewrite_extent_if_live(
+    Transaction &t,
+    extent_types_t type,
+    paddr_t addr,
+    laddr_t laddr,
+    seastore_off_t len,
+    pre_rewrite_func_t &&) final;
+
   void add_pin(LBAPin &pin) final {
     auto *bpin = reinterpret_cast<BtreeLBAPin*>(&pin);
     pin_set.add_pin(bpin->get_range_pin());

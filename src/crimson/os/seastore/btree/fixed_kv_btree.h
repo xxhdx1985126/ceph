@@ -794,6 +794,128 @@ public:
     });
   }
 
+  using pre_rewrite_func_t = std::function<
+    bool(CachedExtentRef)>;
+
+  using rewrite_extent_iertr = base_iertr;
+  using rewrite_extent_ret = rewrite_extent_iertr::future<>;
+  rewrite_extent_ret rewrite_extent_if_live(
+    op_context_t<node_key_t> c,
+    extent_types_t type,
+    paddr_t paddr,
+    laddr_t laddr,
+    seastore_off_t len,
+    pre_rewrite_func_t &&pre_rewrite)
+  {
+    return lower_bound(
+      c, laddr
+    ).si_then([this, c, paddr, laddr, pre_rewrite=std::move(pre_rewrite),
+               len, type](auto iter) {
+      LOG_PREFIX(FixedKVBtree::rewrite_extent_if_live);
+      auto do_rewrite = [&](auto &fixed_kv_extent) {
+        auto n_fixed_kv_extent = c.cache.template alloc_new_extent<
+          std::remove_reference_t<decltype(fixed_kv_extent)>
+          >(
+          c.trans,
+          fixed_kv_extent.get_length(),
+          fixed_kv_extent.get_user_hint(),
+          fixed_kv_extent.get_reclaim_generation());
+        fixed_kv_extent.get_bptr().copy_out(
+          0,
+          fixed_kv_extent.get_length(),
+          n_fixed_kv_extent->get_bptr().c_str());
+        n_fixed_kv_extent->set_modify_time(fixed_kv_extent.get_modify_time());
+        n_fixed_kv_extent->pin.set_range(n_fixed_kv_extent->get_node_meta());
+
+        /* This is a bit underhanded.  Any relative addrs here must necessarily
+         * be record relative as we are rewriting a dirty extent.  Thus, we
+         * are using resolve_relative_addrs with a (likely negative) block
+         * relative offset to correct them to block-relative offsets adjusted
+         * for our new transaction location.
+         *
+         * Upon commit, these now block relative addresses will be interpretted
+         * against the real final address.
+         */
+        n_fixed_kv_extent->resolve_relative_addrs(
+          make_record_relative_paddr(0).block_relative_to(
+            n_fixed_kv_extent->get_paddr()));
+
+        SUBTRACET(
+          seastore_fixedkv_tree,
+          "rewriting {} into {}",
+          c.trans,
+          fixed_kv_extent,
+          *n_fixed_kv_extent);
+
+        update_internal_mapping(
+          c,
+          n_fixed_kv_extent->get_node_meta().depth,
+          n_fixed_kv_extent->get_node_meta().begin,
+          fixed_kv_extent.get_paddr(),
+          n_fixed_kv_extent->get_paddr(),
+          iter
+        );
+        c.cache.retire_extent(c.trans, CachedExtentRef(&fixed_kv_extent));
+      };
+
+      if (type == internal_node_t::TYPE) {
+        for (depth_t d = 2; d <= iter.get_depth(); ++d) {
+          auto &node = iter.get_internal(d).node;
+          if (node->get_paddr() == paddr) {
+            SUBTRACET(
+              seastore_fixedkv_tree,
+              "extent laddr {} addr {}~{} found: {}",
+              c.trans,
+              laddr,
+              paddr,
+              len,
+              *node);
+            assert(node->get_node_meta().begin == laddr);
+            if (pre_rewrite(node)) {
+              return;
+            }
+            do_rewrite(*node);
+            return;
+          } else {
+            SUBTRACET(
+              seastore_fixedkv_tree,
+              "extent laddr {} addr {}~{} not live, skipped",
+              c.trans,
+              laddr,
+              paddr,
+              len);
+            return;
+          }
+        }
+      } else {
+        assert(type == leaf_node_t::TYPE);
+        if (iter.leaf.node->get_paddr() == paddr) {
+          SUBTRACET(
+            seastore_fixedkv_tree,
+            "extent laddr {} addr {}~{} found: {}",
+            c.trans,
+            laddr,
+            paddr,
+            len,
+            *iter.leaf.node);
+          if (pre_rewrite(iter.leaf.node)) {
+            return;
+          }
+          do_rewrite(*iter.leaf.node);
+        } else {
+          SUBTRACET(
+            seastore_fixedkv_tree,
+            "extent laddr {} addr {}~{} not live, skipped",
+            c.trans,
+            laddr,
+            paddr,
+            len);
+          return;
+        }
+      }
+      return;
+    });
+  }
 
   /**
    * rewrite_extent
@@ -801,8 +923,6 @@ public:
    * Rewrites a fresh copy of extent into transaction and updates internal
    * references.
    */
-  using rewrite_extent_iertr = base_iertr;
-  using rewrite_extent_ret = rewrite_extent_iertr::future<>;
   rewrite_extent_ret rewrite_extent(
     op_context_t<node_key_t> c,
     CachedExtentRef e) {
@@ -866,6 +986,103 @@ public:
       assert(e->get_type() == leaf_node_t::TYPE);
       auto lleaf = e->cast<leaf_node_t>();
       return do_rewrite(*lleaf);
+    }
+  }
+
+  void update_internal_mapping(
+    op_context_t<node_key_t> c,
+    depth_t depth,
+    node_key_t laddr,
+    paddr_t old_addr,
+    paddr_t new_addr,
+    iterator &iter)
+  {
+    LOG_PREFIX(FixedKVBtree::update_internal_mapping);
+    assert(iter.get_depth() >= depth);
+    if (depth == iter.get_depth()) {
+      SUBTRACET(seastore_fixedkv_tree, "update at root", c.trans);
+
+      if (laddr != min_max_t<node_key_t>::min) {
+        SUBERRORT(
+          seastore_fixedkv_tree,
+          "updating root laddr {} at depth {} from {} to {},"
+          "laddr is not 0",
+          c.trans,
+          laddr,
+          depth,
+          old_addr,
+          new_addr,
+          root.get_location());
+        ceph_assert(0 == "impossible");
+      }
+
+      if (root.get_location() != old_addr) {
+        SUBERRORT(
+          seastore_fixedkv_tree,
+          "updating root laddr {} at depth {} from {} to {},"
+          "root addr {} does not match",
+          c.trans,
+          laddr,
+          depth,
+          old_addr,
+          new_addr,
+          root.get_location());
+        ceph_assert(0 == "impossible");
+      }
+
+      root.set_location(new_addr);
+      root_dirty = true;
+    } else {
+      auto &parent = iter.get_internal(depth + 1);
+      assert(parent.node);
+      assert(parent.pos < parent.node->get_size());
+      auto piter = parent.node->iter_idx(parent.pos);
+
+      if (piter->get_key() != laddr) {
+        SUBERRORT(
+          seastore_fixedkv_tree,
+          "updating laddr {} at depth {} from {} to {},"
+          "node {} pos {} val pivot addr {} does not match",
+          c.trans,
+          laddr,
+          depth,
+          old_addr,
+          new_addr,
+          *(parent.node),
+          parent.pos,
+          piter->get_key());
+        ceph_assert(0 == "impossible");
+      }
+
+
+      if (piter->get_val() != old_addr) {
+        SUBERRORT(
+          seastore_fixedkv_tree,
+          "updating laddr {} at depth {} from {} to {},"
+          "node {} pos {} val addr {} does not match",
+          c.trans,
+          laddr,
+          depth,
+          old_addr,
+          new_addr,
+          *(parent.node),
+          parent.pos,
+          piter->get_val());
+        ceph_assert(0 == "impossible");
+      }
+
+      CachedExtentRef mut = c.cache.duplicate_for_write(
+        c.trans,
+        parent.node
+      );
+      typename internal_node_t::Ref mparent = mut->cast<internal_node_t>();
+      mparent->update(piter, new_addr);
+
+      /* Note, iter is now invalid as we didn't udpate either the parent
+       * node reference to the new mutable instance nor did we update the
+       * child pointer to the new node.  Not a problem as we'll now just
+       * destruct it.
+       */
     }
   }
 
