@@ -398,6 +398,52 @@ BtreeLBAManager::rewrite_extent_ret BtreeLBAManager::rewrite_extent(
 }
 
 BtreeLBAManager::update_mapping_ret
+BtreeLBAManager::_update_mapping(
+  Transaction &t,
+  laddr_t laddr,
+  LBABtree::iterator &iter,
+  update_func_t &&f)
+{
+  auto c = get_context(t);
+  return with_btree<LBABtree>(
+    cache,
+    c,
+    [c, f=std::move(f), laddr, &iter](auto &btree) {
+    assert(!iter.is_end() && iter.get_key() == laddr);
+    auto ret = f(iter.get_val());
+    btree.update(c, iter, ret);
+    return seastar::now();
+  });
+}
+
+BtreeLBAManager::update_mapping_ret
+BtreeLBAManager::update_mapping(
+  Transaction &t,
+  laddr_t laddr,
+  paddr_t prev_addr,
+  paddr_t addr,
+  LBAPin &pin)
+{
+  LOG_PREFIX(BtreeLBAManager::update_mapping);
+  TRACET("laddr={}, paddr {} => {}", t, laddr, prev_addr, addr);
+
+  auto &iter = (LBABtree::iterator&)((BtreeLBAPin&)pin).get_btree_iterator();
+  return _update_mapping(
+    t,
+    laddr,
+    iter,
+    [prev_addr, addr](
+      const lba_map_val_t &in) {
+      assert(!addr.is_null());
+      lba_map_val_t ret = in;
+      ceph_assert(in.paddr == prev_addr);
+      ret.paddr = addr;
+      return ret;
+    }
+  );
+}
+
+BtreeLBAManager::update_mapping_ret
 BtreeLBAManager::update_mapping(
   Transaction& t,
   laddr_t laddr,

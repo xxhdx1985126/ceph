@@ -168,6 +168,13 @@ public:
     paddr_t prev_addr,
     paddr_t paddr) = 0;
 
+  virtual update_mapping_ret update_mapping(
+    Transaction &t,
+    laddr_t laddr,
+    paddr_t prev_addr,
+    paddr_t addr,
+    LBAPin &pin) = 0;
+
   /**
    * update_mappings
    *

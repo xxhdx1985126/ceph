@@ -133,6 +133,13 @@ public:
     paddr_t prev_addr,
     paddr_t paddr) final;
 
+  update_mapping_ret update_mapping(
+    Transaction &t,
+    laddr_t laddr,
+    paddr_t prev_addr,
+    paddr_t addr,
+    LBAPin &pin) final;
+
   get_physical_extent_if_live_ret get_physical_extent_if_live(
     Transaction &t,
     extent_types_t type,
@@ -198,6 +205,12 @@ private:
   _update_mapping_ret _update_mapping(
     Transaction &t,
     laddr_t addr,
+    update_func_t &&f);
+
+  update_mapping_ret _update_mapping(
+    Transaction &t,
+    laddr_t laddr,
+    LBABtree::iterator &iter,
     update_func_t &&f);
 };
 using BtreeLBAManagerRef = std::unique_ptr<BtreeLBAManager>;
