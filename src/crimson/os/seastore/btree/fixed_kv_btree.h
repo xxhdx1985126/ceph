@@ -60,7 +60,7 @@ public:
   using mapped_space_visitor_t = std::function<
     void(paddr_t, extent_len_t, depth_t, extent_types_t)>;
 
-  class iterator {
+  class iterator : public BtreeIterator {
   public:
     iterator(const iterator &rhs) noexcept :
       internal(rhs.internal), leaf(rhs.leaf) {}
@@ -201,7 +201,8 @@ public:
       return std::make_unique<pin_t>(
 	leaf.node,
 	val,
-	fixed_kv_node_meta_t<node_key_t>{ key, key + val.len, 0 });
+	fixed_kv_node_meta_t<node_key_t>{ key, key + val.len, 0 },
+        BtreeIteratorRef(new iterator(std::move(*this))));
     }
 
     typename leaf_node_t::Ref get_leaf_node() {

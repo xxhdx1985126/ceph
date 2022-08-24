@@ -728,6 +728,7 @@ public:
   virtual val_t get_val() const = 0;
   virtual key_t get_key() const = 0;
   virtual PhysicalNodePinRef<key_t, val_t> duplicate() const = 0;
+  virtual void on_stable() = 0;
   virtual bool has_been_invalidated() const = 0;
 
   virtual ~PhysicalNodePin() {}
@@ -849,6 +850,11 @@ public:
     return true;
   }
 
+  void on_initial_write() final {
+    assert(pin);
+    pin->on_stable();
+  }
+
   std::ostream &print_detail(std::ostream &out) const final;
 protected:
   virtual void apply_delta(const ceph::bufferlist &bl) = 0;
@@ -864,6 +870,7 @@ protected:
     if (get_prior_instance()) {
       pin->take_pin(*(get_prior_instance()->cast<LogicalCachedExtent>()->pin));
     }
+    pin->on_stable();
     logical_on_delta_write();
   }
 

@@ -31,12 +31,14 @@ public:
   BtreeLBAPin(
     CachedExtentRef parent,
     lba_map_val_t &val,
-    lba_node_meta_t &&meta)
+    lba_node_meta_t &&meta,
+    BtreeIteratorRef &&iter)
     : BtreeNodePin(
 	parent,
 	val.paddr,
 	val.len,
-	std::forward<lba_node_meta_t>(meta))
+	std::forward<lba_node_meta_t>(meta),
+	std::move(iter))
   {}
 };
 

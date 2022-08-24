@@ -12,6 +12,11 @@
 
 namespace crimson::os::seastore {
 
+struct BtreeIterator : public boost::intrusive_ref_counter<
+  CachedExtent, boost::thread_unsafe_counter>
+{};
+using BtreeIteratorRef = boost::intrusive_ptr<BtreeIterator>;
+
 template <typename T>
 struct min_max_t {};
 
@@ -429,6 +434,7 @@ class BtreeNodePin : public PhysicalNodePin<key_t, val_t> {
   val_t value;
   extent_len_t len;
   btree_range_pin_t<key_t> pin;
+  BtreeIteratorRef btree_iter;
 
 public:
   using val_type = val_t;
@@ -438,8 +444,13 @@ public:
     CachedExtentRef parent,
     val_t &value,
     extent_len_t len,
-    fixed_kv_node_meta_t<key_t> &&meta)
-    : parent(parent), value(value), len(len) {
+    fixed_kv_node_meta_t<key_t> &&meta,
+    BtreeIteratorRef &&iter)
+    : parent(parent),
+      value(value),
+      len(len),
+      btree_iter(std::move(iter))
+  {
     pin.set_range(std::move(meta));
   }
 
@@ -453,6 +464,10 @@ public:
 
   void set_parent(CachedExtentRef pin) {
     parent = pin;
+  }
+
+  void on_stable() final {
+    btree_iter.reset();
   }
 
   void link_extent(LogicalCachedExtent *ref) final {
@@ -484,6 +499,7 @@ public:
     ret->value = value;
     ret->parent = parent;
     ret->len = len;
+    ret->btree_iter = btree_iter;
     return ret;
   }
 

@@ -18,12 +18,14 @@ public:
   BtreeBackrefPin(
     CachedExtentRef parent,
     backref_map_val_t &val,
-    backref_node_meta_t &&meta)
+    backref_node_meta_t &&meta,
+    BtreeIteratorRef &&iter)
     : BtreeNodePin(
 	parent,
 	val.laddr,
 	val.len,
-	std::forward<backref_node_meta_t>(meta)),
+	std::forward<backref_node_meta_t>(meta),
+	std::move(iter)),
       type(val.type)
   {}
   extent_types_t get_type() const final {
