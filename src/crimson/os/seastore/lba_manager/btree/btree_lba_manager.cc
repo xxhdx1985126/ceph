@@ -563,13 +563,8 @@ BtreeLBAManager::_update_mapping_ret BtreeLBAManager::_update_mapping(
 	    return ret;
 	  });
 	} else {
-	  return btree.update(
-	    c,
-	    iter,
-	    ret
-	  ).si_then([ret](auto) {
-	    return ret;
-	  });
+	  btree.update(c, iter, ret);
+	  return _update_mapping_iertr::make_ready_future<lba_map_val_t>(ret);
 	}
       });
     });

@@ -563,11 +563,9 @@ public:
    * @param val [in] val with which to update
    * @return iterator to newly updated element
    */
-  using update_iertr = base_iertr;
-  using update_ret = update_iertr::future<iterator>;
-  update_ret update(
+  void update(
     op_context_t<node_key_t> c,
-    iterator iter,
+    iterator &iter,
     node_val_t val)
   {
     LOG_PREFIX(FixedKVBtree::update);
@@ -586,9 +584,6 @@ public:
     iter.leaf.node->update(
       iter.leaf.node->iter_idx(iter.leaf.pos),
       val);
-    return update_ret(
-      interruptible::ready_future_marker{},
-      iter);
   }
 
 
