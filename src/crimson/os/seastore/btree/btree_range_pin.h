@@ -14,7 +14,9 @@ namespace crimson::os::seastore {
 
 struct BtreeIterator : public boost::intrusive_ref_counter<
   CachedExtent, boost::thread_unsafe_counter>
-{};
+{
+  virtual ~BtreeIterator() {}
+};
 using BtreeIteratorRef = boost::intrusive_ptr<BtreeIterator>;
 
 template <typename T>

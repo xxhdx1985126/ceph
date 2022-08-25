@@ -24,7 +24,7 @@ class SegmentedAllocator;
 class TransactionManager;
 class ExtentPlacementManager;
 
-// #define DEBUG_CACHED_EXTENT_REF
+#define DEBUG_CACHED_EXTENT_REF
 #ifdef DEBUG_CACHED_EXTENT_REF
 
 void intrusive_ptr_add_ref(CachedExtent *);
