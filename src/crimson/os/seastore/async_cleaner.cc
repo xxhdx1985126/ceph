@@ -848,7 +848,7 @@ AsyncCleaner::gc_trim_dirty()
           return trans_intr::do_for_each(
             dirty_list,
             [this, &t](auto &e) {
-            return ecb->rewrite_extent(t, e, DIRTY_GENERATION, NULL_TIME);
+            return ecb->rewrite_live_extent(t, e, DIRTY_GENERATION, NULL_TIME);
           });
         });
       }).si_then([this, &t] {
@@ -940,7 +940,7 @@ AsyncCleaner::do_reclaim_space(
             [this, modify_time, &t, &reclaimed](auto ext)
           {
             reclaimed += ext->get_length();
-            return ecb->rewrite_extent(
+            return ecb->rewrite_live_extent(
                 t, ext, reclaim_state->target_generation, modify_time);
           });
         });

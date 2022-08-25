@@ -432,9 +432,57 @@ TransactionManager::get_next_dirty_extents(
 }
 
 TransactionManager::rewrite_extent_ret
+TransactionManager::rewrite_logical_extent_if_live(
+  Transaction &t,
+  extent_types_t type,
+  paddr_t paddr,
+  laddr_t laddr,
+  seastore_off_t len,
+  reclaim_gen_t target_generation,
+  sea_time_point modify_time)
+{
+  return lba_manager->get_mappings(
+    t,
+    laddr,
+    len
+  ).si_then([=, this, &t](lba_pin_list_t pin_list) {
+    auto paddr_seg_id = paddr.as_seg_paddr().get_segment_id();
+    return trans_intr::parallel_for_each(
+      pin_list,
+      [=, this, &t](
+        LBAPinRef &pin) -> Cache::get_extent_iertr::future<>
+    {
+      auto pin_paddr = pin->get_val();
+      auto &pin_seg_paddr = pin_paddr.as_seg_paddr();
+      auto pin_paddr_seg_id = pin_seg_paddr.get_segment_id();
+      auto pin_len = pin->get_length();
+      if (pin_paddr_seg_id != paddr_seg_id) {
+        return seastar::now();
+      }
+      // Only extent split can happen during the lookup
+      ceph_assert(pin_seg_paddr >= paddr &&
+                  pin_seg_paddr.add_offset(pin_len) <= paddr.add_offset(len));
+      LBAPinRef dup_pin = pin->duplicate();
+      return pin_to_extent_by_type(t, std::move(pin), type
+      ).si_then([this, pin=std::move(dup_pin), &t,
+                 target_generation, modify_time](auto ret) mutable {
+        if (pre_rewrite(t, ret, target_generation, modify_time)) {
+          return rewrite_extent_iertr::now();
+        }
+        return rewrite_logical_extent(
+          t, ret, std::make_optional<LBAPinRef>(std::move(pin)));
+      });
+    });
+  }).handle_error_interruptible(
+    crimson::ct_error::enoent::pass_further{},
+    crimson::ct_error::pass_further_all{});
+}
+
+TransactionManager::rewrite_extent_ret
 TransactionManager::rewrite_logical_extent(
   Transaction& t,
-  LogicalCachedExtentRef extent)
+  LogicalCachedExtentRef extent,
+  std::optional<LBAPinRef> pin)
 {
   LOG_PREFIX(TransactionManager::rewrite_logical_extent);
   if (extent->has_been_invalidated()) {
@@ -456,7 +504,11 @@ TransactionManager::rewrite_logical_extent(
     lextent->get_length(),
     nlextent->get_bptr().c_str());
   nlextent->set_laddr(lextent->get_laddr());
-  nlextent->set_pin(lextent->get_pin().duplicate());
+  if (pin) {
+    nlextent->set_pin(std::move(*pin));
+  } else {
+    nlextent->set_pin(lextent->get_pin().duplicate());
+  }
   nlextent->set_modify_time(lextent->get_modify_time());
 
   DEBUGT("rewriting logical extent -- {} to {}", t, *lextent, *nlextent);
@@ -465,26 +517,66 @@ TransactionManager::rewrite_logical_extent(
    * extents since we're going to do it again once we either do the ool write
    * or allocate a relative inline addr.  TODO: refactor AsyncCleaner to
    * avoid this complication. */
-  return lba_manager->update_mapping(
-    t,
-    lextent->get_laddr(),
-    lextent->get_paddr(),
-    nlextent->get_paddr());
+  if (pin) {
+    return lba_manager->update_mapping(
+      t,
+      lextent->get_laddr(),
+      lextent->get_paddr(),
+      nlextent->get_paddr(),
+      nlextent->get_pin());
+  } else {
+    return lba_manager->update_mapping(
+      t,
+      lextent->get_laddr(),
+      lextent->get_paddr(),
+      nlextent->get_paddr());
+  }
 }
 
-TransactionManager::rewrite_extent_ret TransactionManager::rewrite_extent(
+TransactionManager::rewrite_extent_ret
+TransactionManager::rewrite_extent(
+  Transaction &t,
+  extent_types_t type,
+  paddr_t paddr,
+  laddr_t laddr,
+  seastore_off_t len,
+  reclaim_gen_t target_generation,
+  sea_time_point modify_time)
+{
+  return cache->get_extent_if_cached(t, paddr, type
+  ).si_then([=, this, &t](auto extent) {
+    LOG_PREFIX(TransactionManager::rewrite_extent);
+    if (extent && extent->get_length() == (extent_len_t)len) {
+      DEBUGT("{} {}~{} {} is live in cache -- {}",
+             t, type, laddr, len, paddr, *extent);
+      return rewrite_live_extent(t, extent, target_generation, modify_time);
+    } else {
+      if (is_logical_type(type)) {
+        return rewrite_logical_extent_if_live(
+          t, type, paddr, laddr, len, target_generation, modify_time);
+      } else {
+        return lba_manager->rewrite_extent_if_live(
+          t, type, paddr, laddr, len,
+          [this, &t, target_generation, modify_time](auto extent) {
+          return pre_rewrite(t, extent, target_generation, modify_time);
+        });
+      }
+    }
+  });
+}
+
+bool TransactionManager::pre_rewrite(
   Transaction &t,
   CachedExtentRef extent,
   reclaim_gen_t target_generation,
   sea_time_point modify_time)
 {
-  LOG_PREFIX(TransactionManager::rewrite_extent);
-
+  LOG_PREFIX(TransactionManager::pre_rewrite);
   {
     auto updated = cache->update_extent_from_transaction(t, extent);
     if (!updated) {
       DEBUGT("extent is already retired, skipping -- {}", t, *extent);
-      return rewrite_extent_iertr::now();
+      return true;
     }
     extent = updated;
     ceph_assert(!extent->is_pending_io());
@@ -500,6 +592,20 @@ TransactionManager::rewrite_extent_ret TransactionManager::rewrite_extent(
   }
 
   t.get_rewrite_version_stats().increment(extent->get_version());
+  return false;
+}
+
+TransactionManager::rewrite_extent_ret TransactionManager::rewrite_live_extent(
+  Transaction &t,
+  CachedExtentRef extent,
+  reclaim_gen_t target_generation,
+  sea_time_point modify_time)
+{
+  LOG_PREFIX(TransactionManager::rewrite_extent);
+
+  if (pre_rewrite(t, extent, target_generation, modify_time)) {
+    return rewrite_extent_iertr::now();
+  }
 
   if (is_backref_node(extent->get_type())) {
     DEBUGT("rewriting backref extent -- {}", t, *extent);

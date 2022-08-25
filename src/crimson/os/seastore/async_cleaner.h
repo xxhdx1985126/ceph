@@ -659,7 +659,7 @@ public:
       >;
 
     /**
-     * rewrite_extent
+     * rewrite_live_extent
      *
      * Updates t with operations moving the passed extents to a new
      * segment.  extent may be invalid, implementation must correctly
@@ -668,9 +668,18 @@ public:
      */
     using rewrite_extent_iertr = extent_mapping_iertr;
     using rewrite_extent_ret = rewrite_extent_iertr::future<>;
-    virtual rewrite_extent_ret rewrite_extent(
+    virtual rewrite_extent_ret rewrite_live_extent(
       Transaction &t,
       CachedExtentRef extent,
+      reclaim_gen_t target_generation,
+      sea_time_point modify_time) = 0;
+
+    virtual rewrite_extent_ret rewrite_extent(
+      Transaction &t,
+      extent_types_t type,
+      paddr_t paddr,
+      laddr_t laddr,
+      seastore_off_t len,
       reclaim_gen_t target_generation,
       sea_time_point modify_time) = 0;
 

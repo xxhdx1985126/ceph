@@ -470,6 +470,10 @@ public:
     btree_iter.reset();
   }
 
+  BtreeIterator& get_btree_iterator() {
+    return *btree_iter;
+  }
+
   void link_extent(LogicalCachedExtent *ref) final {
     pin.set_extent(ref);
   }

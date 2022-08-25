@@ -484,9 +484,18 @@ public:
     size_t max_bytes) final;
 
   using AsyncCleaner::ExtentCallbackInterface::rewrite_extent_ret;
-  rewrite_extent_ret rewrite_extent(
+  rewrite_extent_ret rewrite_live_extent(
     Transaction &t,
     CachedExtentRef extent,
+    reclaim_gen_t target_generation,
+    sea_time_point modify_time) final;
+
+  rewrite_extent_ret rewrite_extent(
+    Transaction &t,
+    extent_types_t type,
+    paddr_t paddr,
+    laddr_t laddr,
+    seastore_off_t len,
     reclaim_gen_t target_generation,
     sea_time_point modify_time) final;
 
@@ -636,8 +645,23 @@ private:
 
   rewrite_extent_ret rewrite_logical_extent(
     Transaction& t,
-    LogicalCachedExtentRef extent);
+    LogicalCachedExtentRef extent,
+    std::optional<LBAPinRef> pin = std::nullopt);
 
+  bool pre_rewrite(
+    Transaction &t,
+    CachedExtentRef extent,
+    reclaim_gen_t target_generation,
+    sea_time_point modify_time);
+
+  rewrite_extent_ret rewrite_logical_extent_if_live(
+    Transaction &t,
+    extent_types_t type,
+    paddr_t paddr,
+    laddr_t laddr,
+    seastore_off_t len,
+    reclaim_gen_t target_generation,
+    sea_time_point modify_time);
 public:
   // Testing interfaces
   auto get_epm() {
