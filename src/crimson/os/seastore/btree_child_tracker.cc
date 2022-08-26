@@ -47,8 +47,10 @@ child_trans_views_t::remove_trans_view(Transaction &t) {
     ceph_assert(it != tv_map->end());
     ceph_assert(it->second == &child_trans_view);
     tv_map->erase(it);
-    if (tv_map->empty())
-      tv_map.reset();
+    if (tv_map->empty()) {
+      delete tv_map;
+      tv_map = nullptr;
+    }
     res.push_back(std::make_pair((CachedExtent*)&child_trans_view, child_pos));
   }
   return res;

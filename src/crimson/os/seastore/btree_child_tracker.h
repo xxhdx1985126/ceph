@@ -26,10 +26,10 @@ std::ostream& operator<<(std::ostream&, child_tracker_t&);
 struct child_trans_views_t {
   child_trans_views_t() = default;
   child_trans_views_t(size_t capacity)
-    : views_by_transaction(capacity, std::nullopt) {}
+    : views_by_transaction(capacity, nullptr) {}
 
   CachedExtent::trans_view_mset_t trans_views;
-  std::vector<std::optional<std::map<transaction_id_t, CachedExtent*>>>
+  std::vector<std::map<transaction_id_t, CachedExtent*>*>
   views_by_transaction;
 
   CachedExtent* get_child_trans_view(Transaction &t, uint64_t pos);
@@ -40,7 +40,7 @@ struct child_trans_views_t {
     trans_views.insert(child_tv);
     auto &v_by_t = views_by_transaction[pos];
     if (!v_by_t) {
-      v_by_t = std::make_optional<std::map<transaction_id_t, CachedExtent*>>();
+      v_by_t = new std::map<transaction_id_t, CachedExtent*>;
     }
     auto [iter, inserted] = v_by_t->emplace(child_tv.touched_by, &child_tv);
     ceph_assert(inserted);

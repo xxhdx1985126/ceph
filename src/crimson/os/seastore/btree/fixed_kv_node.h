@@ -101,15 +101,17 @@ struct FixedKVNode : CachedExtent {
 	auto it = tv_map->find(touched_by);
 	ceph_assert(it != tv_map->end());
 	ceph_assert(it->second == this);
-	tv_map.reset();
+	delete tv_map;
+	tv_map = nullptr;
 #else
-	tv_map.reset();
+	delete tv_map;
+	tv_map = nullptr;
 #endif
       }
 
       parent_tracker.reset();
     }
-    this->child_trans_views.views_by_transaction.resize(capacity, std::nullopt);
+    this->child_trans_views.views_by_transaction.resize(capacity, nullptr);
   }
 
   void on_invalidated(Transaction &t, bool transaction_reset = false) final {
@@ -130,7 +132,8 @@ struct FixedKVNode : CachedExtent {
 	    ceph_assert(it->second = this);
 	    tv_map->erase(it);
 	    if (tv_map->empty()) {
-	      tv_map.reset();
+	      delete tv_map;
+	      tv_map = nullptr;
 	    }
 	  }
 	}
