@@ -79,7 +79,7 @@ public:
   using iterator_fut = base_iertr::future<iterator>;
 
   using mapped_space_visitor_t = std::function<
-    void(paddr_t, node_key_t, extent_len_t, depth_t, extent_types_t)>;
+    void(paddr_t, node_key_t, extent_len_t, depth_t, extent_types_t, iterator&)>;
 
   class iterator {
   public:
@@ -485,8 +485,6 @@ public:
     return upper_bound(c, min_max_t<node_key_t>::max);
   }
 
-<<<<<<< HEAD
-=======
   template <typename child_node_t, typename node_t>
   void check_node(
     op_context_t<node_key_t> c,
@@ -633,7 +631,6 @@ public:
     });
   }
 
->>>>>>> 8feb3f2f43f (fixup! crimson/os/seastore/lba_manager: link lba leaf nodes with logical extents by pointers)
   using iterate_repeat_ret_inner = base_iertr::future<
     seastar::stop_iteration>;
   template <typename F>
@@ -1390,7 +1387,8 @@ private:
           root_node->get_node_meta().begin,
           root_node->get_length(),
           get_root().get_depth(),
-          internal_node_t::TYPE);
+          internal_node_t::TYPE,
+          iter);
 	return lookup_root_iertr::now();
       };
 
@@ -1421,7 +1419,8 @@ private:
           root_node->get_node_meta().begin,
           root_node->get_length(),
           get_root().get_depth(),
-          leaf_node_t::TYPE);
+          leaf_node_t::TYPE,
+          iter);
 	return lookup_root_iertr::now();
       };
 
@@ -1473,7 +1472,8 @@ private:
           node->get_node_meta().begin,
           node->get_length(),
           depth,
-          node->get_type());
+          node->get_type(),
+          iter);
       return seastar::now();
     };
 
@@ -1547,7 +1547,8 @@ private:
           node->get_node_meta().begin,
           node->get_length(),
           1,
-          node->get_type());
+          node->get_type(),
+          iter);
       return seastar::now();
     };
 
