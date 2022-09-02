@@ -411,6 +411,15 @@ public:
   bool is_inline() const {
     return poffset.is_relative();
   }
+
+  seastar::future<> wait_io() {
+    if (!io_wait_promise) {
+      return seastar::now();
+    } else {
+      return io_wait_promise->get_shared_future();
+    }
+  }
+
 private:
   template <typename T>
   friend class read_set_item_t;
@@ -473,14 +482,6 @@ private:
     ceph_assert(io_wait_promise);
     io_wait_promise->set_value();
     io_wait_promise = std::nullopt;
-  }
-
-  seastar::future<> wait_io() {
-    if (!io_wait_promise) {
-      return seastar::now();
-    } else {
-      return io_wait_promise->get_shared_future();
-    }
   }
 
   read_set_item_t<Transaction>::list transactions;
