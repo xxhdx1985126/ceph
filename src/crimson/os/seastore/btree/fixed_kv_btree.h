@@ -1450,6 +1450,10 @@ private:
         *left,
         *right);
       c.cache.retire_extent(c.trans, pos.node);
+      if (left->is_leaf()) {
+        c.trans.link_fixedkv_leaf_node(left);
+        c.trans.link_fixedkv_leaf_node(right);
+      }
 
       get_tree_stats<self_type>(c.trans).extents_num_delta++;
       return std::make_pair(left, right);
@@ -1678,6 +1682,9 @@ private:
         SUBTRACET(seastore_fixedkv_tree, "l: {}, r: {}, replacement: {}", c.trans, *l, *r, *replacement);
         c.cache.retire_extent(c.trans, l);
         c.cache.retire_extent(c.trans, r);
+        if (replacement->is_leaf()) {
+          c.trans.link_fixedkv_leaf_node(replacement);
+        }
         get_tree_stats<self_type>(c.trans).extents_num_delta--;
       } else {
         LOG_PREFIX(FixedKVBtree::merge_level);
@@ -1718,6 +1725,10 @@ private:
           c.trans, *l, *r, *replacement_l, *replacement_r);
         c.cache.retire_extent(c.trans, l);
         c.cache.retire_extent(c.trans, r);
+        if (replacement_l->is_leaf()) {
+          c.trans.link_fixedkv_leaf_node(replacement_l);
+          c.trans.link_fixedkv_leaf_node(replacement_r);
+        }
       }
 
       return seastar::now();

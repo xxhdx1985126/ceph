@@ -1387,6 +1387,9 @@ record_t Cache::prepare_record(
     assert(rewrite_version_stats.is_clear());
   }
 
+  t.pending_lba_nodes.clear();
+  t.pending_backref_nodes.clear();
+
   return record;
 }
 

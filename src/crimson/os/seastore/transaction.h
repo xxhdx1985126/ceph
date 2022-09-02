@@ -13,11 +13,14 @@
 #include "crimson/os/seastore/seastore_types.h"
 #include "crimson/os/seastore/cached_extent.h"
 #include "crimson/os/seastore/root_block.h"
+#include "crimson/os/seastore/btree/btree_range_pin.h"
 
 namespace crimson::os::seastore {
 
 class SeaStore;
 class Transaction;
+template <typename node_bound_t>
+struct pins_t;
 
 struct io_stat_t {
   uint64_t num = 0;
@@ -119,12 +122,15 @@ public:
       existing_block_stats.dec(ref);
       ref->state = CachedExtent::extent_state_t::INVALID;
       write_set.erase(*ref);
+      may_remove_linked_fixedkv_pin(ref);
     } else if (ref->is_initial_pending()) {
       ref->state = CachedExtent::extent_state_t::INVALID;
       write_set.erase(*ref);
+      may_remove_linked_fixedkv_pin(ref);
     } else if (ref->is_mutation_pending()) {
       ref->state = CachedExtent::extent_state_t::INVALID;
       write_set.erase(*ref);
+      may_remove_linked_fixedkv_pin(ref);
       assert(ref->prior_instance);
       retired_set.insert(ref->prior_instance);
       assert(read_set.count(ref->prior_instance->get_paddr()));
@@ -165,9 +171,12 @@ public:
       fresh_block_stats.increment(ref->get_length());
     }
     write_set.insert(*ref);
-    if (is_backref_node(ref->get_type()))
+    if (is_backref_node(ref->get_type())) {
       fresh_backref_extents++;
+    }
   }
+
+  void link_fixedkv_leaf_node(CachedExtentRef ref);
 
   uint64_t get_num_fresh_backref() const {
     return fresh_backref_extents;
@@ -197,6 +206,7 @@ public:
     mutated_block_list.push_back(ref);
     if (!ref->is_exist_mutation_pending()) {
       write_set.insert(*ref);
+      may_link_fixedkv_pin(ref);
     } else {
       assert(write_set.find_offset(ref->get_paddr()) !=
 	     write_set.end());
@@ -312,17 +322,14 @@ public:
     journal_seq_t initiated_after,
     on_destruct_func_t&& f
   ) : weak(weak),
+      pending_backref_nodes(2),
+      pending_lba_nodes(2),
       handle(std::move(handle)),
       on_destruct(std::move(f)),
       src(src)
   {}
 
-  void invalidate_clear_write_set() {
-    for (auto &&i: write_set) {
-      i.state = CachedExtent::extent_state_t::INVALID;
-    }
-    write_set.clear();
-  }
+  void invalidate_clear_write_set();
 
   ~Transaction() {
     on_destruct(*this);
@@ -439,6 +446,11 @@ public:
     return existing_block_stats;
   }
 
+  template <typename node_key_t, typename T>
+  TCachedExtentRef<T> may_get_fixedkv_leaf_node(
+    extent_types_t type,
+    node_key_t key);
+
 private:
   friend class Cache;
   friend Ref make_test_transaction();
@@ -453,6 +465,12 @@ private:
 
   seastore_off_t offset = 0; ///< relative offset of next block
   seastore_off_t delayed_temp_offset = 0;
+
+  pins_t<paddr_t> pending_backref_nodes;
+  pins_t<laddr_t> pending_lba_nodes;
+
+  void may_link_fixedkv_pin(CachedExtentRef &ref);
+  void may_remove_linked_fixedkv_pin(CachedExtentRef &ref);
 
   /**
    * read_set
