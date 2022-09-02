@@ -39,6 +39,10 @@ struct fixed_kv_node_meta_t {
       (end > other.begin);
   }
 
+  bool is_within_range(const bound_t key) const {
+    return begin <= key && end > key;
+  }
+
   std::pair<fixed_kv_node_meta_t, fixed_kv_node_meta_t> split_into(bound_t pivot) const {
     return std::make_pair(
       fixed_kv_node_meta_t{begin, pivot, depth},
@@ -216,6 +220,18 @@ public:
     }
   };
 
+  struct node_bound_cmp_t {
+    bool operator()(
+      const btree_range_pin_t &lhs, const node_bound_t &key) const {
+      return lhs.range.begin < key;
+    }
+
+    bool operator()(
+      const node_bound_t &key, const btree_range_pin_t &rhs) const {
+      return key < rhs.range.begin;
+    }
+  };
+
   friend std::ostream &operator<<(
     std::ostream &lhs,
     const btree_range_pin_t<node_bound_t> &rhs) {
@@ -229,6 +245,7 @@ public:
 
   template <typename, typename>
   friend class BtreeNodePin;
+  friend class Transaction;
   ~btree_range_pin_t()
   {
     ceph_assert(!pins == !is_linked());
@@ -245,8 +262,14 @@ public:
 
 template <typename node_bound_t>
 struct pins_t {
-  pins_t(size_t max_depth) : pin_layers(max_depth) {}
   std::vector<typename btree_range_pin_t<node_bound_t>::index_t> pin_layers;
+
+  pins_t(size_t max_depth) : pin_layers(max_depth) {}
+  void clear() {
+    for (auto &layer : pin_layers) {
+      layer.clear();
+    }
+  }
 };
 
 /**
@@ -359,6 +382,35 @@ class btree_pin_set_t {
 
 public:
   btree_pin_set_t() : pins(8) {}
+
+  template <typename T>
+  TCachedExtentRef<T> maybe_get_leaf_node(node_bound_t key) {
+    auto &layer = pins.pin_layers[1];
+    if (layer.empty()) {
+      return nullptr;
+    }
+    auto iter = layer.lower_bound(
+      key,
+      typename btree_range_pin_t<node_bound_t>::node_bound_cmp_t());
+    if (iter == layer.begin()) {
+      return (iter->range.is_within_range(key))
+	? (T*)&(iter->get_extent())
+	: nullptr;
+    }
+    if (iter == layer.end()) {
+      iter--;
+      return (iter->range.is_within_range(key))
+	? (T*)&(iter->get_extent())
+	: nullptr;
+    }
+    if (iter->range.is_within_range(key)
+	|| (--iter)->range.is_within_range(key)) {
+      return (T*)&(iter->get_extent());
+    } else {
+      return nullptr;
+    }
+  }
+
   /// Adds pin to set, assumes set is consistent
   void add_pin(btree_range_pin_t<node_bound_t> &pin)
   {

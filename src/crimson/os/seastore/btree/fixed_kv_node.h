@@ -139,6 +139,8 @@ struct FixedKVNode : CachedExtent {
     }
   }
 
+  virtual bool is_leaf() { return false; }
+
   void on_initial_commit() final {
     // All in-memory relative addrs are necessarily block-relative
     resolve_relative_addrs(get_paddr());
@@ -1058,6 +1060,10 @@ struct FixedKVLeafNode
   bool below_min_capacity() const {
     assert(this->get_size() >= (get_min_capacity() - 1));
     return this->get_size() < get_min_capacity();
+  }
+
+  bool is_leaf() final {
+    return true;
   }
 };
 
