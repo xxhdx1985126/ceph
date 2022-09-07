@@ -151,6 +151,10 @@ public:
   btree_range_pin_t(const btree_range_pin_t &rhs, CachedExtent *extent)
     : range(rhs.range), extent(extent) {}
 
+  const fixed_kv_node_meta_t<node_bound_t>& get_range() {
+    return range;
+  }
+
   bool has_ref() const {
     return !!ref;
   }
@@ -409,6 +413,35 @@ public:
     } else {
       return nullptr;
     }
+  }
+
+  template <typename T>
+  std::list<TCachedExtentRef<T>> get_leaves_in_range(
+    node_bound_t key, extent_len_t length)
+  {
+    std::list<TCachedExtentRef<T>> leaves;
+
+    auto &layer = pins.pin_layers[1];
+    if (layer.empty()) {
+      return leaves;
+    }
+    auto iter = layer.lower_bound(
+      key,
+      typename btree_range_pin_t<node_bound_t>::node_bound_cmp_t());
+
+    if (iter != layer.begin() &&
+	(iter == layer.end() || iter->range.begin != key)) {
+      --iter;
+    }
+
+    for (; iter != layer.end()
+	    && iter->range.begin < key + length
+	    && iter->range.end > key;
+	iter++) {
+      leaves.push_back((T*)&(iter->get_extent()));
+    }
+
+    return leaves;
   }
 
   /// Adds pin to set, assumes set is consistent
