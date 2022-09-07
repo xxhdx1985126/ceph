@@ -93,6 +93,9 @@ BtreeLBAManager::get_mappings(
 	hole.first, hole.second);
       if (!lvs.empty()) {
 	for (auto &lv : lvs) {
+	  if (!lv->is_valid()) {
+	    continue;
+	  }
 #ifndef NDEBUG
 	  if (lv->pin.get_range().begin < hole.first) {
 	    assert(hole.first == offset);
@@ -160,11 +163,11 @@ BtreeLBAManager::get_mappings(
 	    f(*(it2++));
 	  }
 	}
-	if (it1 == leaves.end()) {
-	  f(*it2);
-	} else {
+	if (it1 != leaves.end()) {
 	  assert(it2 == leaves2.end());
 	  f(*it1);
+	} else if (it2 != leaves2.end()) {
+	  f(*it2);
 	}
 	return get_mappings_iertr::make_ready_future<
 	  lba_pin_list_t>(
