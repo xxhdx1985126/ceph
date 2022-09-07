@@ -60,6 +60,150 @@ BtreeLBAManager::get_mappings(
 {
   LOG_PREFIX(BtreeLBAManager::get_mappings);
   TRACET("{}~{}", t, offset, length);
+  auto leaves = t.get_fixedkv_leaves_in_range<laddr_t, LBALeafNode>(
+    offset, length);
+  std::list<std::pair<laddr_t, extent_len_t>> holes;
+  laddr_t tail = offset;
+  bool need_query_btree = false;
+  if (!leaves.empty()) {
+    for (auto &leaf : leaves) {
+      TRACET("found in t leaf node: {}", t, *leaf);
+      auto range = leaf->pin.get_range();
+      ceph_assert((range.begin < tail) ? (tail == offset) : true);
+      if (range.begin > tail) {
+	holes.emplace_back(tail, leaf->pin.get_range().begin - tail);
+      }
+      tail = range.end;
+    }
+    /*auto first_start = leaves.front()->pin.get_range().begin;
+    if (first_start > offset) {
+      holes.emplace_front(offset, first_start - offset);
+    }*/
+    auto last_end = leaves.back()->pin.get_range().end;
+    if (last_end < offset + length) {
+      holes.emplace_back(last_end, length - (last_end - offset));
+    }
+  } else {
+    holes.emplace_back(offset, length);
+  }
+
+  std::list<LBALeafNodeRef> leaves2;
+  if (!holes.empty()) {
+    TRACET("have holes", t);
+    for (auto &hole : holes) {
+      TRACET("hole {}~{}", t, hole.first, hole.second);
+      tail = hole.first;
+      auto lvs = pin_set.get_leaves_in_range<LBALeafNode>(
+	hole.first, hole.second);
+      if (!lvs.empty()) {
+	for (auto &lv : lvs) {
+	  TRACET("found in cache leaf node: {}", t, *lv);
+	  if (!lv->is_valid()) {
+	    need_query_btree = true;
+	    continue;
+	  }
+	  auto range = lv->pin.get_range();
+	  if (range.begin > tail) {
+	    need_query_btree = true;
+	    break;
+	  }
+	  ceph_assert((range.begin < hole.first) ? (hole.first == offset) : true);
+	  tail = lv->pin.get_range().end;
+	  leaves2.emplace_back(lv);
+	}
+	auto last_end = lvs.back()->pin.get_range().end;
+	if (last_end < offset + length) {
+	  need_query_btree = true;
+	}
+      } else {
+	need_query_btree = true;
+      }
+      if (need_query_btree) {
+	break;
+      }
+    }
+  }
+
+  if (!need_query_btree) {
+    TRACET("all in cache", t);
+    return seastar::do_with(
+      std::move(leaves),
+      std::move(leaves2),
+      [&t, offset, length](auto &leaves, auto &leaves2) {
+      return trans_intr::parallel_for_each(
+	leaves2,
+	[&t, offset, length](auto &leaf) -> get_mappings_iertr::future<> {
+	return leaf->wait_io();
+      }).si_then([&t, &leaves, &leaves2, offset, length] {
+	LOG_PREFIX(BtreeLBAManager::get_mappings);
+	lba_pin_list_t ret;
+
+	auto it1 = leaves.begin();
+	auto it2 = leaves2.begin();
+	bool first_round = true;
+
+	auto f = [offset, length, &ret, &first_round](auto &leaf) {
+	  auto leaf_it = first_round
+	    ? leaf->lower_bound(offset)
+	    : leaf->begin();
+
+	  if (first_round) {
+	    if (leaf_it != leaf->begin()) {
+	      leaf_it--;
+	      if (leaf_it->get_key() + leaf_it->get_val().len <= offset) {
+		leaf_it++;
+	      }
+	    }
+	  }
+	  first_round = false;
+	  for (;leaf_it != leaf->end() && leaf_it->get_key() < offset + length;
+		leaf_it++) {
+	    auto val = leaf_it->get_val();
+	    auto key = leaf_it->get_key();
+	    ret.push_back(
+	      std::make_unique<BtreeLBAPin>(
+		leaf,
+		val,
+		lba_node_meta_t(key, key + val.len, 0)));
+	  }
+	};
+
+	while (it1 != leaves.end() && it2 != leaves2.end()) {
+	  auto &leaf1 = *it1;
+	  auto &leaf2 = *it2;
+	  if (leaf1->pin.get_range().begin < leaf2->pin.get_range().begin) {
+	    f(*(it1++));
+	  } else {
+	    assert(leaf2->pin.get_range().begin < leaf1->pin.get_range().begin);
+	    f(*(it2++));
+	  }
+	}
+	while (it1 != leaves.end()) {
+	  assert(it2 == leaves2.end());
+	  f(*(it1++));
+	}
+	while (it2 != leaves2.end()) {
+	  assert(it1 == leaves.end());
+	  f(*(it2++));
+	}
+	return get_mappings_iertr::make_ready_future<
+	  lba_pin_list_t>(
+	    std::move(ret));
+      });
+    });
+  } else {
+    return _get_mappings(t, offset, length);
+  }
+}
+
+BtreeLBAManager::get_mappings_ret
+BtreeLBAManager::_get_mappings(
+  Transaction &t,
+  laddr_t offset,
+  extent_len_t length)
+{
+  LOG_PREFIX(BtreeLBAManager::_get_mappings);
+  TRACET("{}~{}", t, offset, length);
   auto c = get_context(t);
   return with_btree_state<LBABtree, lba_pin_list_t>(
     cache,
@@ -71,13 +215,13 @@ BtreeLBAManager::get_mappings(
 	[&ret, offset, length, c, FNAME](auto &pos) {
 	  if (pos.is_end() || pos.get_key() >= (offset + length)) {
 	    TRACET("{}~{} done with {} results",
-	           c.trans, offset, length, ret.size());
+		   c.trans, offset, length, ret.size());
 	    return LBABtree::iterate_repeat_ret_inner(
 	      interruptible::ready_future_marker{},
 	      seastar::stop_iteration::yes);
 	  }
 	  TRACET("{}~{} got {}, {}, repeat ...",
-	         c.trans, offset, length, pos.get_key(), pos.get_val());
+		 c.trans, offset, length, pos.get_key(), pos.get_val());
 	  ceph_assert((pos.get_key() + pos.get_val().len) > offset);
 	  ret.push_back(pos.get_pin());
 	  return LBABtree::iterate_repeat_ret_inner(
@@ -86,7 +230,6 @@ BtreeLBAManager::get_mappings(
 	});
     });
 }
-
 
 BtreeLBAManager::get_mappings_ret
 BtreeLBAManager::get_mappings(
@@ -127,7 +270,10 @@ BtreeLBAManager::get_mapping(
   }
   if (extent && extent->is_valid()) {
     auto it = extent->lower_bound(offset);
-    assert(it.get_key() == offset);
+    if (it.get_key() != offset) {
+      ERRORT("laddr={} doesn't exist, leaf node {}", t, offset, *extent);
+      return crimson::ct_error::enoent::make();
+    }
     auto val = it.get_val();
     val.paddr = val.paddr.maybe_relative_to(extent->get_paddr());
     DEBUGT("got lba leaf {}", t, *extent);
