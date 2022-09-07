@@ -60,6 +60,130 @@ BtreeLBAManager::get_mappings(
 {
   LOG_PREFIX(BtreeLBAManager::get_mappings);
   TRACET("{}~{}", t, offset, length);
+  auto leaves = t.get_fixedkv_leaves_in_range<laddr_t, LBALeafNode>(
+    offset, length);
+  std::list<std::pair<laddr_t, extent_len_t>> holes;
+  laddr_t tail = offset;
+  bool need_query_btree = false;
+  if (!leaves.empty()) {
+    for (auto &leaf : leaves) {
+      if (leaf->pin.get_range().begin == tail) {
+	tail = leaf->pin.get_range().end;
+	continue;
+      }
+      holes.emplace_back(tail, leaf->pin.get_range().begin - tail);
+    }
+    auto first_start = leaves.front()->pin.get_range().begin;
+    if (first_start > offset) {
+      holes.emplace_front(offset, first_start - offset);
+    }
+    auto last_end = leaves.back()->pin.get_range().end;
+    if (last_end < offset + length) {
+      holes.emplace_back(last_end, length - (last_end - offset));
+    }
+  } else {
+    holes.emplace_back(offset, length);
+  }
+
+  std::list<LBALeafNodeRef> leaves2;
+  if (!holes.empty()) {
+    for (auto &hole : holes) {
+      tail = hole.first;
+      auto lvs = pin_set.get_leaves_in_range<LBALeafNode>(
+	hole.first, hole.second);
+      if (!lvs.empty()) {
+	for (auto &lv : lvs) {
+#ifndef NDEBUG
+	  if (lv->pin.get_range().begin < hole.first) {
+	    assert(hole.first == offset);
+	  }
+#endif
+	  if (lv->pin.get_range().begin == tail) {
+	    tail = lv->pin.get_range().end;
+	    leaves2.emplace_back(lv);
+	    continue;
+	  }
+	  need_query_btree = true;
+	  break;
+	}
+	auto last_end = lvs.back()->pin.get_range().end;
+	if (last_end < offset + length) {
+	  need_query_btree = true;
+	}
+      } else {
+	need_query_btree = true;
+      }
+      if (need_query_btree) {
+	break;
+      }
+    }
+  }
+
+  if (!need_query_btree) {
+    return seastar::do_with(
+      std::move(leaves),
+      std::move(leaves2),
+      [offset, length](auto &leaves, auto &leaves2) {
+      return trans_intr::parallel_for_each(
+	leaves2,
+	[offset, length](auto &leaf) -> get_mappings_iertr::future<> {
+	return leaf->wait_io();
+      }).si_then([&leaves, &leaves2, offset, length] {
+	lba_pin_list_t ret;
+
+	auto it1 = leaves.begin();
+	auto it2 = leaves2.begin();
+	bool first_round = true;
+
+	auto f = [offset, length, &ret, &first_round](auto &leaf) {
+	  auto leaf_it = first_round ? leaf->lower_bound(offset) : leaf->begin();
+	  first_round = false;
+	  for (;leaf_it != leaf->end() && leaf_it->get_key() < offset + length;
+		leaf_it++) {
+	    auto val = leaf_it->get_val();
+	    auto key = leaf_it->get_key();
+	    ret.push_back(
+	      std::make_unique<BtreeLBAPin>(
+		leaf,
+		val,
+		lba_node_meta_t(key, key + val.len, 0)));
+	  }
+	};
+
+	while (it1 != leaves.end() && it2 != leaves2.end()) {
+	  auto &leaf1 = *it1;
+	  auto &leaf2 = *it2;
+	  if (leaf1->pin.get_range().begin < leaf2->pin.get_range().begin) {
+	    f(*(it1++));
+	  } else {
+	    assert(leaf2->pin.get_range().begin < leaf1->pin.get_range().begin);
+	    f(*(it2++));
+	  }
+	}
+	if (it1 == leaves.end()) {
+	  f(*it2);
+	} else {
+	  assert(it2 == leaves2.end());
+	  f(*it1);
+	}
+	return get_mappings_iertr::make_ready_future<
+	  lba_pin_list_t>(
+	    std::move(ret));
+      });
+    });
+  } else {
+    return _get_mappings(t, offset, length);
+  }
+}
+
+BtreeLBAManager::get_mappings_ret
+BtreeLBAManager::_get_mappings(
+  Transaction &t,
+  laddr_t offset,
+  extent_len_t length)
+{
+  LOG_PREFIX(BtreeLBAManager::get_mappings);
+  TRACET("{}~{}", t, offset, length);
   auto c = get_context(t);
   return with_btree_state<LBABtree, lba_pin_list_t>(
     cache,
@@ -71,13 +195,13 @@ BtreeLBAManager::get_mappings(
 	[&ret, offset, length, c, FNAME](auto &pos) {
 	  if (pos.is_end() || pos.get_key() >= (offset + length)) {
 	    TRACET("{}~{} done with {} results",
-	           c.trans, offset, length, ret.size());
+		   c.trans, offset, length, ret.size());
 	    return LBABtree::iterate_repeat_ret_inner(
 	      interruptible::ready_future_marker{},
 	      seastar::stop_iteration::yes);
 	  }
 	  TRACET("{}~{} got {}, {}, repeat ...",
-	         c.trans, offset, length, pos.get_key(), pos.get_val());
+		 c.trans, offset, length, pos.get_key(), pos.get_val());
 	  ceph_assert((pos.get_key() + pos.get_val().len) > offset);
 	  ret.push_back(pos.get_pin());
 	  return LBABtree::iterate_repeat_ret_inner(
@@ -86,7 +210,6 @@ BtreeLBAManager::get_mappings(
 	});
     });
 }
-
 
 BtreeLBAManager::get_mappings_ret
 BtreeLBAManager::get_mappings(
