@@ -67,6 +67,12 @@ BtreeLBAManager::get_mappings(
   {
     auto lvs = pin_set.maybe_get_continuous_leaves_in_range<LBALeafNode>(
       hole_offset, hole_len);
+    if (lvs) {
+      if (LBALeafNodeRef &first_lv = *lvs->begin();
+	  !first_lv->should_contain(hole_offset)) {
+	return std::optional<std::list<LBALeafNodeRef>>();
+      }
+    }
     return lvs;
   };
 
@@ -75,6 +81,11 @@ BtreeLBAManager::get_mappings(
   std::list<std::pair<laddr_t, extent_len_t>> holes;
   laddr_t tail = offset;
   if (!leaves.empty()) {
+    auto &first_leave = *leaves.begin();
+    if (!first_leave->should_contain(offset)) {
+      return _get_mappings(t, offset, length);
+    }
+
     for (auto it = leaves.begin() ; it != leaves.end(); it++) {
       auto &leaf = *it;
       TRACET("found in t leaf node: {}", t, *leaf);
@@ -225,7 +236,7 @@ BtreeLBAManager::get_mapping(
   if (!extent) {
     extent = pin_set.maybe_get_leaf_node<LBALeafNode>(offset);
   }
-  if (extent && extent->is_valid()) {
+  if (extent && extent->is_valid() && extent->should_contain(offset)) {
     auto it = extent->lower_bound(offset);
     if (it.get_key() != offset) {
       ERRORT("laddr={} doesn't exist, leaf node {}", t, offset, *extent);
