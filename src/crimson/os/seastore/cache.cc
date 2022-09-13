@@ -97,7 +97,8 @@ Cache::retire_extent_ret Cache::retire_extent_addr(
     ext->init(CachedExtent::extent_state_t::CLEAN,
               addr,
               PLACEMENT_HINT_NULL,
-              NULL_GENERATION);
+              NULL_GENERATION,
+	      t.get_trans_id());
     DEBUGT("retire {}~{} as placeholder, add extent -- {}",
            t, addr, length, *ext);
     const auto t_src = t.get_src();
@@ -1008,6 +1009,7 @@ CachedExtentRef Cache::duplicate_for_write(
   }
 
   auto ret = i->duplicate_for_write();
+  ret->pending_for_transaction = t.get_trans_id();
   ret->prior_instance = i;
   // duplicate_for_write won't occur after ool write finished
   assert(!i->prior_poffset);
@@ -1442,6 +1444,7 @@ void Cache::complete_commit(
       i->set_paddr(final_block_start.add_relative(i->get_paddr()));
     }
     i->last_committed_crc = i->get_crc32c();
+    i->pending_for_transaction = TRANS_ID_NULL;
     i->on_initial_write();
 
     i->state = CachedExtent::extent_state_t::CLEAN;
@@ -1483,6 +1486,7 @@ void Cache::complete_commit(
     assert(i->is_exist_mutation_pending() ||
 	   i->prior_instance);
     i->on_delta_write(final_block_start);
+    i->pending_for_transaction = TRANS_ID_NULL;
     i->prior_instance = CachedExtentRef();
     i->state = CachedExtent::extent_state_t::DIRTY;
     assert(i->version > 0);
@@ -1587,7 +1591,8 @@ void Cache::init()
   root->init(CachedExtent::extent_state_t::CLEAN,
              P_ADDR_ROOT,
              PLACEMENT_HINT_NULL,
-             NULL_GENERATION);
+             NULL_GENERATION,
+	     TRANS_ID_NULL);
   INFO("init root -- {}", *root);
   extents.insert(*root);
 }
