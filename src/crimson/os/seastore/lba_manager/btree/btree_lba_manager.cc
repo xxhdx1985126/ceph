@@ -238,7 +238,7 @@ BtreeLBAManager::get_mapping(
   }
   if (extent && extent->is_valid() && extent->should_contain(offset)) {
     auto it = extent->lower_bound(offset);
-    if (it.get_key() != offset) {
+    if (it == extent->end() || it.get_key() != offset) {
       ERRORT("laddr={} doesn't exist, leaf node {}", t, offset, *extent);
       return crimson::ct_error::enoent::make();
     }
