@@ -645,7 +645,8 @@ struct FixedKVInternalNode
       (void*)old_tracker,
       (void*)tracker,
       *new_node,
-      *this);
+      *this,
+      (void*)((base_t&)*new_node).back_tracker.get());
 
     return this->journal_update(
       iter,
