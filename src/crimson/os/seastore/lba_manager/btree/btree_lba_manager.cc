@@ -126,6 +126,9 @@ BtreeLBAManager::get_mappings(
     return trans_intr::parallel_for_each(
       leaves,
       [&t, offset, length](auto &leaf) -> get_mappings_iertr::future<> {
+      if (!leaf->is_pending_in_trans(t.get_trans_id())) {
+	t.add_to_read_set(leaf);
+      }
       return leaf->wait_io();
     }).si_then([&t, &leaves, offset, length] {
       lba_pin_list_t ret;
