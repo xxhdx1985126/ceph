@@ -82,6 +82,8 @@ struct FixedKVNode : CachedExtent {
 
   virtual fixed_kv_node_meta_t<node_key_t> get_node_meta() const = 0;
 
+  virtual uint16_t get_node_size() const = 0;
+
   virtual ~FixedKVNode() = default;
 
   void on_delta_write(paddr_t record_block_offset) final {
@@ -128,7 +130,7 @@ struct FixedKVNode : CachedExtent {
     }
     parent_tracker.reset();
 
-    this->child_trans_views.views_by_transaction.resize(capacity, std::nullopt);
+    child_trans_views.views_by_transaction.resize(capacity, std::nullopt);
   }
 
   void on_invalidated(Transaction &t, bool transaction_reset = false) final {
@@ -171,8 +173,339 @@ struct FixedKVNode : CachedExtent {
     init_child_trackers();
   }
 
-  virtual void init_child_trackers() = 0;
   virtual void resolve_relative_addrs(paddr_t base) = 0;
+
+  void adjust_child_back_trackers() {
+    LOG_PREFIX(FixedKVInternalNode::adjust_child_back_trackers);
+    for (auto it = child_trackers.begin();
+	 it != child_trackers.begin() + get_node_size();
+	 it++) {
+      auto tracker = *it;
+      if (tracker && tracker->child) {
+	if (!back_tracker_to_me) {
+	  back_tracker_to_me = new back_tracker_t<node_key_t>(this);
+	  SUBTRACE(seastore_fixedkv_tree, "new back_tracker: {}, this: {}",
+	    (void*)back_tracker_to_me, *this);
+	}
+	auto &child = (FixedKVNode&)*tracker->child;
+	child.back_tracker = back_tracker_to_me;
+      }
+    }
+  }
+
+  void prepare_commit() final {
+    if (is_initial_pending()) {
+      adjust_child_back_trackers();
+    }
+  }
+
+  void init_child_trackers() {
+    LOG_PREFIX(FixedKVInternalNode::init_child_trackers);
+    for (auto it = child_trackers.begin();
+	 it != child_trackers.begin() + get_node_size();
+	 it++) {
+      *it = new child_tracker_t();
+      SUBTRACE(seastore_fixedkv_tree,
+	"init tracker: {}, this: {}", (void*)(*it), *this);
+    }
+  }
+
+  void link_child(CachedExtent &child, uint64_t pos) {
+    auto tracker = child_trackers[pos];
+    ceph_assert(tracker != nullptr);
+    ceph_assert(!tracker->child);
+    //ceph_assert((!is_pending() && !child.is_pending())
+    //  || (child.is_pending() && is_pending()));
+    tracker->child = child.weak_from_this();
+  }
+
+  void new_child(Transaction &t, CachedExtent &child, uint64_t pos) {
+    LOG_PREFIX(FixedKVInternalNode::new_child);
+    auto &tracker = child_trackers[pos];
+    assert(tracker != nullptr);
+    ceph_assert(child.is_mutation_pending() && is_pending());
+    t.trackers_to_rm.push_back(tracker);
+    tracker = new child_tracker_t(&child);
+    t.new_pending_trackers.push_back(tracker);
+    SUBTRACET(seastore_fixedkv_tree,
+      "new tracker: {}, this: {}, child: {}",
+      t, (void*)tracker, *this, child);
+  }
+
+  void add_child_trans_view(FixedKVNode<node_key_t> &child, uint64_t pos) {
+    ceph_assert(pos < get_node_size());
+    child_trans_views.new_trans_view(child, pos);
+
+    ceph_assert(!is_pending() && child.is_mutation_pending());
+    ceph_assert(!child.parent_tracker);
+    ceph_assert(child_trackers[pos]);
+    child.parent_tracker = std::make_unique<parent_tracker_t>(this, pos);
+  }
+
+  // this method should only be invoked to rewrite extents
+  void copy_child_trackers_out(
+    Transaction &t,
+    FixedKVNode &new_node) {
+    LOG_PREFIX(FixedKVNode::copy_child_trackers_out);
+    SUBTRACET(seastore_fixedkv_tree,
+      "coping {} trackers from {} to {}",
+      t, get_node_size(), *this, new_node);
+
+    ceph_assert(get_type() == new_node.get_type());
+    auto data = child_trackers.data();
+    auto n_data = new_node.child_trackers.data();
+#ifndef NDEBUG
+    for (int i = 0; i < get_node_size(); i++) {
+      assert(child_trackers[i]);
+    }
+#endif
+    std::memmove(n_data, data, get_node_size() * sizeof(child_tracker_t*));
+    if (!is_pending()) {
+      auto children = child_trans_views
+	.template remove_trans_view<FixedKVNode>(t);
+      for (auto [child, pos] : children) {
+	auto &tracker = new_node.child_trackers[pos];
+	tracker = new child_tracker_t(child);
+	((FixedKVNode*)child)->parent_tracker.reset();
+	t.new_pending_trackers.push_back(tracker);
+	t.trackers_to_rm.push_back(child_trackers[pos]);
+	SUBTRACET(seastore_fixedkv_tree,
+	  "new tracker: {}, this: {}, child: {}",
+	  t, (void*)new_node.child_trackers[pos], new_node, *child);
+      }
+    }
+  }
+
+  template <typename T1, typename T2>
+  void split_child_trackers(
+    Transaction &t,
+    T1 &left,
+    T2 &right)
+  {
+    ceph_assert(left.get_size() > 0);
+    ceph_assert(right.get_size() > 0);
+    LOG_PREFIX(FixedKVNode::split_child_trackers);
+    size_t pivot = get_node_size() / 2;
+    child_tracker_t** l_data = left.child_trackers.data();
+    child_tracker_t** r_data = right.child_trackers.data();
+    child_tracker_t** data = child_trackers.data();
+    size_t l_size = pivot;
+    size_t r_size = get_node_size() - pivot;
+
+    std::memmove(l_data, data, sizeof(child_tracker_t*) * l_size);
+    std::memmove(r_data, data + pivot, sizeof(child_tracker_t*) * r_size);
+
+    if (!is_pending()) {
+      auto children = child_trans_views
+	.template remove_trans_view<FixedKVNode>(t);
+      for (auto [child, pos] : children) {
+	if (pos < pivot) {
+	  auto &tracker = left.child_trackers[pos];
+	  tracker = new child_tracker_t(child);
+	  t.new_pending_trackers.push_back(tracker);
+	  SUBTRACET(seastore_fixedkv_tree,
+	    "new tracker: {}, this: {}, child: {}",
+	    t, (void*)tracker, left, *child);
+	} else {
+	  auto &tracker = right.child_trackers[pos - pivot];
+	  tracker = new child_tracker_t(child);
+	  t.new_pending_trackers.push_back(tracker);
+	  SUBTRACET(seastore_fixedkv_tree,
+	    "new tracker: {}, this: {}, child: {}",
+	    t, (void*)tracker, right, *child);
+	}
+	t.trackers_to_rm.push_back(child_trackers[pos]);
+	((FixedKVNode*)child)->parent_tracker.reset();
+      }
+    }
+
+    SUBTRACET(seastore_fixedkv_tree,
+      "l_size: {}, {}; r_size: {}, {}",
+      t, l_size, left, r_size, right);
+  }
+
+  template <typename T1, typename T2>
+  void merge_child_trackers(
+    Transaction &t,
+    T1 &left,
+    T2 &right)
+  {
+    LOG_PREFIX(FixedKVInternalNode::merge_child_trackers);
+    static_assert(std::is_base_of_v<FixedKVNode<node_key_t>, T1>);
+    static_assert(std::is_base_of_v<FixedKVNode<node_key_t>, T2>);
+    auto l_data = left.child_trackers.data();
+    auto r_data = right.child_trackers.data();
+    auto data = child_trackers.data();
+    auto l_size = left.get_size();
+    auto r_size = right.get_size();
+    ceph_assert(l_size + r_size <= capacity);
+
+    std::memmove(data, l_data, l_size * sizeof(child_tracker_t*));
+    std::memmove(data + l_size, r_data, r_size * sizeof(child_tracker_t*));
+
+    if (!left.is_pending()) {
+      auto children = left.child_trans_views
+	.template remove_trans_view<FixedKVNode>(t);
+      for (auto [child, pos] : children) {
+	auto &tracker = child_trackers[pos];
+	tracker = new child_tracker_t(child);
+	((FixedKVNode*)child)->parent_tracker.reset();
+	t.new_pending_trackers.push_back(tracker);
+	t.trackers_to_rm.push_back(left.child_trackers[pos]);
+	SUBTRACET(seastore_fixedkv_tree,
+	  "new tracker: {}, this: {}, child: {}",
+	  t, (void*)child_trackers[pos], *this, *child);
+      }
+    }
+
+    if (!right.is_pending()) {
+      auto children = right.child_trans_views
+	.template remove_trans_view<FixedKVNode>(t);
+      for (auto [child, pos] : children) {
+	auto &tracker = child_trackers[l_size + pos];
+	tracker = new child_tracker_t(child);
+	((FixedKVNode*)child)->parent_tracker.reset();
+	t.new_pending_trackers.push_back(tracker);
+	t.trackers_to_rm.push_back(right.child_trackers[pos]);
+	SUBTRACET(seastore_fixedkv_tree,
+	  "new tracker: {}, this: {}, child: {}",
+	  t, (void*)child_trackers[l_size + pos], *this, *child);
+      }
+    }
+  }
+
+  template <typename T1, typename T2>
+  static void balance_child_trackers(
+    Transaction &t,
+    T1 &left,
+    T2 &right,
+    bool prefer_left,
+    T2 &replacement_left,
+    T2 &replacement_right)
+  {
+    ceph_assert(replacement_left.get_size() > 0);
+    ceph_assert(replacement_right.get_size() > 0);
+    static_assert(std::is_base_of_v<FixedKVNode<node_key_t>, T1>);
+    static_assert(std::is_base_of_v<FixedKVNode<node_key_t>, T2>);
+    size_t l_size = left.get_size();
+    size_t r_size = right.get_size();
+    size_t total = l_size + r_size;
+    size_t pivot_idx = (l_size + r_size) / 2;
+    if (total % 2 && prefer_left) {
+      pivot_idx++;
+    }
+    LOG_PREFIX(FixedKVNode::balance_child_trackers);
+    SUBTRACE(seastore_fixedkv_tree,
+      "l_size: {}, r_size: {}, pivot_idx: {}",
+      l_size,
+      r_size,
+      pivot_idx);
+
+    auto l_data = left.child_trackers.data();
+    auto r_data = right.child_trackers.data();
+    auto rep_l_data = replacement_left.child_trackers.data();
+    auto rep_r_data = replacement_right.child_trackers.data();
+
+    if (pivot_idx < l_size) {
+      std::memmove(rep_l_data, l_data, pivot_idx * sizeof(child_tracker_t*));
+      std::memmove(rep_r_data, l_data + pivot_idx,
+	(l_size - pivot_idx) * sizeof(child_tracker_t*));
+      std::memmove(
+	rep_r_data + (l_size - pivot_idx),
+	r_data,
+	r_size * sizeof(child_tracker_t*));
+
+      if (!left.is_pending()) {
+	auto children = left.child_trans_views
+	  .template remove_trans_view<FixedKVNode>(t);
+	for (auto [child, pos] : children) {
+	  if (pos < pivot_idx){
+	    auto &tracker = replacement_left.child_trackers[pos];
+	    tracker = new child_tracker_t(child);
+	    t.new_pending_trackers.push_back(tracker);
+	    SUBTRACET(seastore_fixedkv_tree,
+	      "new tracker: {}, this: {}, child: {}",
+	      t, (void*)replacement_left.child_trackers[pos],
+	      replacement_left, *child);
+	  } else {
+	    auto &tracker = replacement_right.child_trackers[pos - pivot_idx];
+	    tracker = new child_tracker_t(child);
+	    t.new_pending_trackers.push_back(tracker);
+	    SUBTRACET(seastore_fixedkv_tree,
+	      "new tracker: {}, this: {}, child: {}",
+	      t, (void*)replacement_right.child_trackers[pos - pivot_idx],
+	      replacement_right, *child);
+	  }
+	  t.trackers_to_rm.push_back(left.child_trackers[pos]);
+	  ((FixedKVNode*)child)->parent_tracker.reset();
+	}
+      }
+
+      if (!right.is_pending()) {
+	auto children = right.child_trans_views
+	  .template remove_trans_view<FixedKVNode>(t);
+	for (auto [child, pos] : children) {
+	  auto &tracker = replacement_right.child_trackers[pos + l_size - pivot_idx];
+	  tracker = new child_tracker_t(child);
+	  t.new_pending_trackers.push_back(tracker);
+	  t.trackers_to_rm.push_back(right.child_trackers[pos]);
+	  ((FixedKVNode*)child)->parent_tracker.reset();
+	  SUBTRACET(seastore_fixedkv_tree,
+	    "new tracker: {}, this: {}, child: {}",
+	    t, (void*)replacement_right.child_trackers[pos + l_size - pivot_idx],
+	    replacement_right, *child);
+	}
+      }
+    } else {
+      std::memmove(rep_l_data, l_data, l_size * sizeof(child_tracker_t*));
+      std::memmove(rep_l_data + l_size, r_data,
+	(pivot_idx - l_size) * sizeof(child_tracker_t*));
+      std::memmove(rep_r_data, r_data + pivot_idx - l_size,
+	(r_size + l_size - pivot_idx) * sizeof(child_tracker_t*));
+
+      if (!left.is_pending()) {
+	auto children = left.child_trans_views
+	  .template remove_trans_view<FixedKVNode>(t);
+	for (auto [child, pos] : children) {
+	  auto &tracker = replacement_left.child_trackers[pos];
+	  tracker = new child_tracker_t(child);
+	  t.new_pending_trackers.push_back(tracker);
+	  t.trackers_to_rm.push_back(left.child_trackers[pos]);
+	  ((FixedKVNode*)child)->parent_tracker.reset();
+	  SUBTRACET(seastore_fixedkv_tree,
+	    "new tracker: {}, this: {}, child: {}",
+	    t, (void*)replacement_left.child_trackers[pos],
+	    replacement_left, *child);
+	}
+      }
+
+      if (!right.is_pending()) {
+	auto children = right.child_trans_views
+	  .template remove_trans_view<FixedKVNode>(t);
+	for (auto [child, pos] : children) {
+	  if (pos < pivot_idx - l_size) {
+	    auto &tracker = replacement_left.child_trackers[pos + l_size];
+	    tracker = new child_tracker_t(child);
+	    t.new_pending_trackers.push_back(tracker);
+	    SUBTRACET(seastore_fixedkv_tree,
+	      "new tracker: {}, this: {}, child: {}",
+	      t, (void*)replacement_left.child_trackers[pos + l_size],
+	      replacement_left, *child);
+	  } else {
+	    auto &tracker = replacement_right.child_trackers[pos + l_size - pivot_idx];
+	    tracker = new child_tracker_t(child);
+	    t.new_pending_trackers.push_back(tracker);
+	    SUBTRACET(seastore_fixedkv_tree,
+	      "new tracker: {}, this: {}, child: {}",
+	      t, (void*)replacement_right.child_trackers[pos + l_size - pivot_idx],
+	      replacement_right, *child);
+	  }
+	  t.trackers_to_rm.push_back(right.child_trackers[pos]);
+	  ((FixedKVNode*)child)->parent_tracker.reset();
+	}
+      }
+    }
+  }
 };
 
 /**
@@ -216,335 +549,8 @@ struct FixedKVInternalNode
     : FixedKVNode<NODE_KEY>(rhs),
       node_layout_t(this->get_bptr().c_str()) {}
 
-  void adjust_child_back_trackers() {
-    LOG_PREFIX(FixedKVInternalNode::adjust_child_back_trackers);
-    for (auto it = this->child_trackers.begin();
-	 it != this->child_trackers.begin() + this->get_size();
-	 it++) {
-      auto tracker = *it;
-      if (tracker && tracker->child) {
-	if (!this->back_tracker_to_me) {
-	  this->back_tracker_to_me = new back_tracker_t<NODE_KEY>(this);
-	  SUBTRACE(seastore_fixedkv_tree, "new back_tracker: {}, this: {}",
-	    (void*)this->back_tracker_to_me, *this);
-	}
-	auto &child = (base_t&)*tracker->child;
-	child.back_tracker = this->back_tracker_to_me;
-      }
-    }
-  }
-
-  void prepare_commit() final {
-    if (this->is_initial_pending()) {
-      adjust_child_back_trackers();
-    }
-  }
-
-  void init_child_trackers() {
-    LOG_PREFIX(FixedKVInternalNode::init_child_trackers);
-    for (auto it = this->child_trackers.begin();
-	 it != this->child_trackers.begin() + this->get_size();
-	 it++) {
-      *it = new child_tracker_t();
-      SUBTRACE(seastore_fixedkv_tree,
-	"init tracker: {}, this: {}", (void*)(*it), *this);
-    }
-  }
-
-  void link_child(CachedExtent &child, uint64_t pos) {
-    auto tracker = this->child_trackers[pos];
-    ceph_assert(tracker != nullptr);
-    ceph_assert(!tracker->child);
-    //ceph_assert((!this->is_pending() && !child.is_pending())
-    //  || (child.is_pending() && this->is_pending()));
-    tracker->child = child.weak_from_this();
-  }
-
-  void new_child(Transaction &t, CachedExtent &child, uint64_t pos) {
-    LOG_PREFIX(FixedKVInternalNode::new_child);
-    auto &tracker = this->child_trackers[pos];
-    assert(tracker != nullptr);
-    ceph_assert(child.is_mutation_pending() && this->is_pending());
-    t.trackers_to_rm.push_back(tracker);
-    tracker = new child_tracker_t(&child);
-    t.new_pending_trackers.push_back(tracker);
-    SUBTRACET(seastore_fixedkv_tree,
-      "new tracker: {}, this: {}, child: {}",
-      t, (void*)tracker, *this, child);
-  }
-
-  void add_child_trans_view(FixedKVNode<NODE_KEY> &child, uint64_t pos) {
-    ceph_assert(pos < this->get_size());
-    this->child_trans_views.new_trans_view(child, pos);
-
-    ceph_assert(!this->is_pending() && child.is_mutation_pending());
-    ceph_assert(!child.parent_tracker);
-    ceph_assert(this->child_trackers[pos]);
-    child.parent_tracker = std::make_unique<parent_tracker_t>(this, pos);
-  }
-
-  // this method should only be invoked to rewrite extents
-  void copy_child_trackers_out(
-    Transaction &t,
-    FixedKVInternalNode &new_node) {
-    LOG_PREFIX(FixedKVInternalNode::copy_child_trackers_out);
-    SUBTRACET(seastore_fixedkv_tree,
-      "coping {} trackers from {} to {}",
-      t, this->get_size(), *this, new_node);
-
-    ceph_assert(this->get_type() == new_node.get_type());
-    auto data = this->child_trackers.data();
-    auto n_data = new_node.child_trackers.data();
-#ifndef NDEBUG
-    for (int i = 0; i < this->get_size(); i++) {
-      assert(this->child_trackers[i]);
-    }
-#endif
-    std::memmove(n_data, data, this->get_size() * sizeof(child_tracker_t*));
-    if (!this->is_pending()) {
-      auto children = this->child_trans_views
-	.template remove_trans_view<base_t>(t);
-      for (auto [child, pos] : children) {
-	auto &tracker = new_node.child_trackers[pos];
-	tracker = new child_tracker_t(child);
-	((base_t*)child)->parent_tracker.reset();
-	t.new_pending_trackers.push_back(tracker);
-	t.trackers_to_rm.push_back(this->child_trackers[pos]);
-	SUBTRACET(seastore_fixedkv_tree,
-	  "new tracker: {}, this: {}, child: {}",
-	  t, (void*)new_node.child_trackers[pos], new_node, *child);
-      }
-    }
-  }
-
-  void split_child_trackers(
-    Transaction &t,
-    node_type_t &left,
-    node_type_t &right)
-  {
-    ceph_assert(left.get_size() > 0);
-    ceph_assert(right.get_size() > 0);
-    LOG_PREFIX(FixedKVNode::split_child_trackers);
-    size_t pivot = this->get_size() / 2;
-    child_tracker_t** l_data = left.child_trackers.data();
-    child_tracker_t** r_data = right.child_trackers.data();
-    child_tracker_t** data = this->child_trackers.data();
-    size_t l_size = pivot;
-    size_t r_size = this->get_size() - pivot;
-
-    std::memmove(l_data, data, sizeof(child_tracker_t*) * l_size);
-    std::memmove(r_data, data + pivot, sizeof(child_tracker_t*) * r_size);
-
-    if (!this->is_pending()) {
-      auto children = this->child_trans_views
-	.template remove_trans_view<base_t>(t);
-      for (auto [child, pos] : children) {
-	if (pos < pivot) {
-	  auto &tracker = left.child_trackers[pos];
-	  tracker = new child_tracker_t(child);
-	  t.new_pending_trackers.push_back(tracker);
-	  SUBTRACET(seastore_fixedkv_tree,
-	    "new tracker: {}, this: {}, child: {}",
-	    t, (void*)tracker, left, *child);
-	} else {
-	  auto &tracker = right.child_trackers[pos - pivot];
-	  tracker = new child_tracker_t(child);
-	  t.new_pending_trackers.push_back(tracker);
-	  SUBTRACET(seastore_fixedkv_tree,
-	    "new tracker: {}, this: {}, child: {}",
-	    t, (void*)tracker, right, *child);
-	}
-	t.trackers_to_rm.push_back(this->child_trackers[pos]);
-	((base_t*)child)->parent_tracker.reset();
-      }
-    }
-
-    SUBTRACET(seastore_fixedkv_tree,
-      "l_size: {}, {}; r_size: {}, {}",
-      t, l_size, left, r_size, right);
-  }
-
-  template <typename T1, typename T2>
-  void merge_child_trackers(
-    Transaction &t,
-    T1 &left,
-    T2 &right)
-  {
-    LOG_PREFIX(FixedKVInternalNode::merge_child_trackers);
-    static_assert(std::is_base_of_v<FixedKVNode<NODE_KEY>, T1>);
-    static_assert(std::is_base_of_v<FixedKVNode<NODE_KEY>, T2>);
-    auto l_data = left.child_trackers.data();
-    auto r_data = right.child_trackers.data();
-    auto data = this->child_trackers.data();
-    auto l_size = left.get_size();
-    auto r_size = right.get_size();
-    ceph_assert(l_size + r_size <= CAPACITY);
-
-    std::memmove(data, l_data, l_size * sizeof(child_tracker_t*));
-    std::memmove(data + l_size, r_data, r_size * sizeof(child_tracker_t*));
-
-    if (!left.is_pending()) {
-      auto children = left.child_trans_views
-	.template remove_trans_view<base_t>(t);
-      for (auto [child, pos] : children) {
-	auto &tracker = this->child_trackers[pos];
-	tracker = new child_tracker_t(child);
-	((base_t*)child)->parent_tracker.reset();
-	t.new_pending_trackers.push_back(tracker);
-	t.trackers_to_rm.push_back(left.child_trackers[pos]);
-	SUBTRACET(seastore_fixedkv_tree,
-	  "new tracker: {}, this: {}, child: {}",
-	  t, (void*)this->child_trackers[pos], *this, *child);
-      }
-    }
-
-    if (!right.is_pending()) {
-      auto children = right.child_trans_views
-	.template remove_trans_view<base_t>(t);
-      for (auto [child, pos] : children) {
-	auto &tracker = this->child_trackers[l_size + pos];
-	tracker = new child_tracker_t(child);
-	((base_t*)child)->parent_tracker.reset();
-	t.new_pending_trackers.push_back(tracker);
-	t.trackers_to_rm.push_back(right.child_trackers[pos]);
-	SUBTRACET(seastore_fixedkv_tree,
-	  "new tracker: {}, this: {}, child: {}",
-	  t, (void*)this->child_trackers[l_size + pos], *this, *child);
-      }
-    }
-  }
-
-  template <typename T1, typename T2>
-  static void balance_child_trackers(
-    Transaction &t,
-    T1 &left,
-    T2 &right,
-    bool prefer_left,
-    T2 &replacement_left,
-    T2 &replacement_right)
-  {
-    ceph_assert(replacement_left.get_size() > 0);
-    ceph_assert(replacement_right.get_size() > 0);
-    static_assert(std::is_base_of_v<FixedKVNode<NODE_KEY>, T1>);
-    static_assert(std::is_base_of_v<FixedKVNode<NODE_KEY>, T2>);
-    size_t l_size = left.get_size();
-    size_t r_size = right.get_size();
-    size_t total = l_size + r_size;
-    size_t pivot_idx = (l_size + r_size) / 2;
-    if (total % 2 && prefer_left) {
-      pivot_idx++;
-    }
-    LOG_PREFIX(FixedKVNode::balance_child_trackers);
-    SUBTRACE(seastore_fixedkv_tree,
-      "l_size: {}, r_size: {}, pivot_idx: {}",
-      l_size,
-      r_size,
-      pivot_idx);
-
-    auto l_data = left.child_trackers.data();
-    auto r_data = right.child_trackers.data();
-    auto rep_l_data = replacement_left.child_trackers.data();
-    auto rep_r_data = replacement_right.child_trackers.data();
-
-    if (pivot_idx < l_size) {
-      std::memmove(rep_l_data, l_data, pivot_idx * sizeof(child_tracker_t*));
-      std::memmove(rep_r_data, l_data + pivot_idx,
-	(l_size - pivot_idx) * sizeof(child_tracker_t*));
-      std::memmove(
-	rep_r_data + (l_size - pivot_idx),
-	r_data,
-	r_size * sizeof(child_tracker_t*));
-
-      if (!left.is_pending()) {
-	auto children = left.child_trans_views
-	  .template remove_trans_view<base_t>(t);
-	for (auto [child, pos] : children) {
-	  if (pos < pivot_idx){
-	    auto &tracker = replacement_left.child_trackers[pos];
-	    tracker = new child_tracker_t(child);
-	    t.new_pending_trackers.push_back(tracker);
-	    SUBTRACET(seastore_fixedkv_tree,
-	      "new tracker: {}, this: {}, child: {}",
-	      t, (void*)replacement_left.child_trackers[pos],
-	      replacement_left, *child);
-	  } else {
-	    auto &tracker = replacement_right.child_trackers[pos - pivot_idx];
-	    tracker = new child_tracker_t(child);
-	    t.new_pending_trackers.push_back(tracker);
-	    SUBTRACET(seastore_fixedkv_tree,
-	      "new tracker: {}, this: {}, child: {}",
-	      t, (void*)replacement_right.child_trackers[pos - pivot_idx],
-	      replacement_right, *child);
-	  }
-	  t.trackers_to_rm.push_back(left.child_trackers[pos]);
-	  ((base_t*)child)->parent_tracker.reset();
-	}
-      }
-
-      if (!right.is_pending()) {
-	auto children = right.child_trans_views
-	  .template remove_trans_view<base_t>(t);
-	for (auto [child, pos] : children) {
-	  auto &tracker = replacement_right.child_trackers[pos + l_size - pivot_idx];
-	  tracker = new child_tracker_t(child);
-	  t.new_pending_trackers.push_back(tracker);
-	  t.trackers_to_rm.push_back(right.child_trackers[pos]);
-	  ((base_t*)child)->parent_tracker.reset();
-	  SUBTRACET(seastore_fixedkv_tree,
-	    "new tracker: {}, this: {}, child: {}",
-	    t, (void*)replacement_right.child_trackers[pos + l_size - pivot_idx],
-	    replacement_right, *child);
-	}
-      }
-    } else {
-      std::memmove(rep_l_data, l_data, l_size * sizeof(child_tracker_t*));
-      std::memmove(rep_l_data + l_size, r_data,
-	(pivot_idx - l_size) * sizeof(child_tracker_t*));
-      std::memmove(rep_r_data, r_data + pivot_idx - l_size,
-	(r_size + l_size - pivot_idx) * sizeof(child_tracker_t*));
-
-      if (!left.is_pending()) {
-	auto children = left.child_trans_views
-	  .template remove_trans_view<base_t>(t);
-	for (auto [child, pos] : children) {
-	  auto &tracker = replacement_left.child_trackers[pos];
-	  tracker = new child_tracker_t(child);
-	  t.new_pending_trackers.push_back(tracker);
-	  t.trackers_to_rm.push_back(left.child_trackers[pos]);
-	  ((base_t*)child)->parent_tracker.reset();
-	  SUBTRACET(seastore_fixedkv_tree,
-	    "new tracker: {}, this: {}, child: {}",
-	    t, (void*)replacement_left.child_trackers[pos],
-	    replacement_left, *child);
-	}
-      }
-
-      if (!right.is_pending()) {
-	auto children = right.child_trans_views
-	  .template remove_trans_view<base_t>(t);
-	for (auto [child, pos] : children) {
-	  if (pos < pivot_idx - l_size) {
-	    auto &tracker = replacement_left.child_trackers[pos + l_size];
-	    tracker = new child_tracker_t(child);
-	    t.new_pending_trackers.push_back(tracker);
-	    SUBTRACET(seastore_fixedkv_tree,
-	      "new tracker: {}, this: {}, child: {}",
-	      t, (void*)replacement_left.child_trackers[pos + l_size],
-	      replacement_left, *child);
-	  } else {
-	    auto &tracker = replacement_right.child_trackers[pos + l_size - pivot_idx];
-	    tracker = new child_tracker_t(child);
-	    t.new_pending_trackers.push_back(tracker);
-	    SUBTRACET(seastore_fixedkv_tree,
-	      "new tracker: {}, this: {}, child: {}",
-	      t, (void*)replacement_right.child_trackers[pos + l_size - pivot_idx],
-	      replacement_right, *child);
-	  }
-	  t.trackers_to_rm.push_back(right.child_trackers[pos]);
-	  ((base_t*)child)->parent_tracker.reset();
-	}
-      }
-    }
+  uint16_t get_node_size() const {
+    return this->get_size();
   }
 
   virtual ~FixedKVInternalNode() {
@@ -988,19 +994,16 @@ struct FixedKVLeafNode
       VAL_LE>;
   using internal_const_iterator_t = typename node_layout_t::const_iterator;
 
+  uint16_t get_node_size() const {
+    return this->get_size();
+  }
+
   FixedKVLeafNode(ceph::bufferptr &&ptr)
     : FixedKVNode<NODE_KEY>(0, std::move(ptr)),
       node_layout_t(this->get_bptr().c_str()) {}
   FixedKVLeafNode(const FixedKVLeafNode &rhs)
     : FixedKVNode<NODE_KEY>(rhs),
       node_layout_t(this->get_bptr().c_str()) {}
-
-  void init_child_trackers() {
-    //TODO: noop for now, as we are only dealing with intra-fixed-kv-btree
-    //	    node trackers now.
-    //	    In the future, when linking logical extents with their parents,
-    //	    this method should be implemented.
-  }
 
   template <typename... T>
   FixedKVLeafNode(T&&... t) :
