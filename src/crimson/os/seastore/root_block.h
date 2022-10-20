@@ -38,6 +38,11 @@ struct RootBlock : CachedExtent {
 
   root_t root;
 
+  CachedExtent* lba_root_node = nullptr;
+  CachedExtent* backref_root_node = nullptr;
+  CachedExtent* pending_lba_root_node = nullptr;
+  CachedExtent* pending_backref_root_node = nullptr;
+
   RootBlock() : CachedExtent(0) {}
 
   RootBlock(const RootBlock &rhs) = default;
@@ -50,6 +55,8 @@ struct RootBlock : CachedExtent {
   extent_types_t get_type() const final {
     return extent_types_t::ROOT;
   }
+
+  void on_replace_prior(Transaction &t) final;
 
   /// dumps root as delta
   ceph::bufferlist get_delta() final {
