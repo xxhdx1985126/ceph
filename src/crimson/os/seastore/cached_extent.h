@@ -33,6 +33,18 @@ template <
   size_t node_size,
   bool leaf_has_children>
 class FixedKVBtree;
+template <
+  size_t CAPACITY,
+  typename NODE_KEY,
+  typename NODE_KEY_LE,
+  typename VAL,
+  typename VAL_LE,
+  size_t node_size,
+  typename node_type_t,
+  bool has_children>
+struct FixedKVLeafNode;
+template <typename, typename>
+class BtreeNodePin;
 
 // #define DEBUG_CACHED_EXTENT_REF
 #ifdef DEBUG_CACHED_EXTENT_REF
@@ -687,6 +699,8 @@ protected:
   friend class crimson::os::seastore::SegmentedAllocator;
   friend class crimson::os::seastore::TransactionManager;
   friend class crimson::os::seastore::ExtentPlacementManager;
+  template <typename, typename>
+  friend class BtreeNodePin;
 };
 
 std::ostream &operator<<(std::ostream &, CachedExtent::extent_state_t);
@@ -857,6 +871,7 @@ public:
   virtual key_t get_key() const = 0;
   virtual PhysicalNodePinRef<key_t, val_t> duplicate() const = 0;
   virtual bool has_been_invalidated() const = 0;
+  virtual CachedExtentRef get_parent() const = 0;
 
   virtual ~PhysicalNodePin() {}
 };
@@ -929,6 +944,32 @@ public:
   }
 };
 
+class parent_tracker_t
+  : public boost::intrusive_ref_counter<
+     parent_tracker_t, boost::thread_unsafe_counter> {
+public:
+  parent_tracker_t(CachedExtentRef parent)
+    : parent(parent) {}
+  parent_tracker_t(CachedExtent* parent)
+    : parent(parent) {}
+  ~parent_tracker_t();
+  template <typename T = CachedExtent>
+  TCachedExtentRef<T> get_parent() {
+    ceph_assert(parent);
+    if constexpr (std::is_same_v<T, CachedExtent>) {
+      return parent;
+    } else {
+      return parent->template cast<T>();
+    }
+  }
+  void reset_parent(CachedExtentRef p) {
+    parent = p;
+  }
+private:
+  CachedExtentRef parent;
+};
+
+using parent_tracker_ref = boost::intrusive_ptr<parent_tracker_t>;
 /**
  * LogicalCachedExtent
  *
@@ -978,7 +1019,17 @@ public:
   }
 
   std::ostream &print_detail(std::ostream &out) const final;
+
+  void on_replace_prior(Transaction &t) final;
+
+  virtual ~LogicalCachedExtent();
+
+  parent_tracker_ref get_parent_tracker() {
+    return parent_tracker;
+  }
 protected:
+
+  parent_tracker_ref parent_tracker;
   virtual void apply_delta(const ceph::bufferlist &bl) = 0;
   virtual std::ostream &print_detail_l(std::ostream &out) const {
     return out;
@@ -998,6 +1049,17 @@ protected:
 private:
   laddr_t laddr = L_ADDR_NULL;
   LBAPinRef pin;
+
+  template <
+    size_t CAPACITY,
+    typename NODE_KEY,
+    typename NODE_KEY_LE,
+    typename VAL,
+    typename VAL_LE,
+    size_t node_size,
+    typename node_type_t,
+    bool has_children>
+  friend struct FixedKVLeafNode;
 };
 
 using LogicalCachedExtentRef = TCachedExtentRef<LogicalCachedExtent>;
