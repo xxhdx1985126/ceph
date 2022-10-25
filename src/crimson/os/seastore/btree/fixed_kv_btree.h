@@ -214,6 +214,7 @@ public:
       auto key = get_key();
       return std::make_unique<pin_t>(
 	leaf.node,
+        leaf.pos,
 	val,
 	fixed_kv_node_meta_t<node_key_t>{ key, key + val.len, 0 });
     }
@@ -534,7 +535,8 @@ public:
     op_context_t<node_key_t> c,
     iterator iter,
     node_key_t laddr,
-    node_val_t val
+    node_val_t val,
+    LogicalCachedExtent* nextent
   ) {
     LOG_PREFIX(FixedKVBtree::insert);
     SUBTRACET(
@@ -545,10 +547,10 @@ public:
       iter.is_end() ? min_max_t<node_key_t>::max : iter.get_key());
     return seastar::do_with(
       iter,
-      [this, c, laddr, val](auto &ret) {
+      [this, c, laddr, val, nextent](auto &ret) {
         return find_insertion(
           c, laddr, ret
-        ).si_then([this, c, laddr, val, &ret] {
+        ).si_then([this, c, laddr, val, &ret, nextent] {
           if (!ret.at_boundary() && ret.get_key() == laddr) {
             return insert_ret(
               interruptible::ready_future_marker{},
@@ -557,7 +559,7 @@ public:
             ++(get_tree_stats<self_type>(c.trans).num_inserts);
             return handle_split(
               c, ret
-            ).si_then([c, laddr, val, &ret] {
+            ).si_then([c, laddr, val, &ret, nextent] {
               if (!ret.leaf.node->is_pending()) {
                 CachedExtentRef mut = c.cache.duplicate_for_write(
                   c.trans, ret.leaf.node
@@ -570,7 +572,7 @@ public:
               assert(iter == ret.leaf.node->end() || iter->get_key() > laddr);
               assert(laddr >= ret.leaf.node->get_meta().begin &&
                      laddr < ret.leaf.node->get_meta().end);
-              ret.leaf.node->insert(iter, laddr, val);
+              ret.leaf.node->insert(iter, laddr, val, nextent);
               return insert_ret(
                 interruptible::ready_future_marker{},
                 std::make_pair(ret, true));
@@ -583,11 +585,12 @@ public:
   insert_ret insert(
     op_context_t<node_key_t> c,
     node_key_t laddr,
-    node_val_t val) {
+    node_val_t val,
+    LogicalCachedExtent* nextent) {
     return lower_bound(
       c, laddr
-    ).si_then([this, c, laddr, val](auto iter) {
-      return this->insert(c, iter, laddr, val);
+    ).si_then([this, c, laddr, val, nextent](auto iter) {
+      return this->insert(c, iter, laddr, val, nextent);
     });
   }
 
@@ -606,7 +609,8 @@ public:
   update_ret update(
     op_context_t<node_key_t> c,
     iterator iter,
-    node_val_t val)
+    node_val_t val,
+    LogicalCachedExtent* nextent)
   {
     LOG_PREFIX(FixedKVBtree::update);
     SUBTRACET(
@@ -623,7 +627,8 @@ public:
     ++(get_tree_stats<self_type>(c.trans).num_updates);
     iter.leaf.node->update(
       iter.leaf.node->iter_idx(iter.leaf.pos),
-      val);
+      val,
+      nextent);
     return update_ret(
       interruptible::ready_future_marker{},
       iter);
