@@ -98,23 +98,6 @@ struct FixedKVNode : CachedExtent {
   };
 
   using FixedKVNodeRef = TCachedExtentRef<FixedKVNode>;
-  struct parent_tracker_t
-    : public boost::intrusive_ref_counter<
-	parent_tracker_t, boost::thread_unsafe_counter> {
-    parent_tracker_t(FixedKVNodeRef parent)
-      : parent(parent) {}
-    parent_tracker_t(FixedKVNode* parent)
-      : parent(parent) {}
-    FixedKVNodeRef parent = nullptr;
-    ~parent_tracker_t() {
-      // this is parent's tracker, reset it
-      if (parent->my_tracker == this) {
-	parent->my_tracker = nullptr;
-      }
-    }
-  };
-
-  using parent_tracker_ref = boost::intrusive_ptr<parent_tracker_t>;
   using pending_children_set_t =
     boost::intrusive::set<
       pending_child_tracker_t,
@@ -235,8 +218,9 @@ struct FixedKVNode : CachedExtent {
       auto [it2, inserted] = mutate_state.pending_children.insert(tracker);
       ceph_assert(inserted);
       if (tracker.op != op_t::REMOVE) {
-	ceph_assert(tracker.child);
-	set_child_ptracker((FixedKVNode*)tracker.child);
+	if (tracker.child) {
+	  set_child_ptracker((FixedKVNode*)tracker.child);
+	}
       }
     }
   }
@@ -323,7 +307,7 @@ struct FixedKVNode : CachedExtent {
       : stable_parent(stable_parent), pos(pos) {}
   };
 
-  void link_child(FixedKVNode* child, uint16_t pos) {
+  void link_child(CachedExtent* child, uint16_t pos) {
     assert(pos < get_node_size());
     assert(child);
     ceph_assert(!is_pending());
@@ -524,11 +508,12 @@ struct FixedKVNode : CachedExtent {
       switch (child_tracker.op) {
       case op_t::INSERT:
 	{
-	  SUBTRACE(seastore_fixedkv_tree, "trans.{}, insert, pos {}, key {}, {}",
+	  SUBTRACE(seastore_fixedkv_tree,
+	    "trans.{}, insert, pos {}, key {}, child {}",
 	    this->pending_for_transaction,
 	    child_tracker.pos,
 	    child_tracker.key,
-	    *child_tracker.child);
+	    (void*)child_tracker.child);
 	  stable_children[child_tracker.pos] = child_tracker.child;
 	  src += count;
 	  next_pos += count + 1;
@@ -538,11 +523,12 @@ struct FixedKVNode : CachedExtent {
 	break;
       case op_t::UPDATE:
 	{
-	  SUBTRACE(seastore_fixedkv_tree, "trans.{}, update, pos {}, key{}, {}",
+	  SUBTRACE(seastore_fixedkv_tree,
+	    "trans.{}, update, pos {}, key{}, child {}",
 	    this->pending_for_transaction,
 	    child_tracker.pos,
 	    child_tracker.key,
-	    *child_tracker.child);
+	    (void*)child_tracker.child);
 	  stable_children[child_tracker.pos] = child_tracker.child;
 	  src += count + 1;
 	  next_pos += count + 1;
@@ -587,13 +573,13 @@ struct FixedKVNode : CachedExtent {
     }
     ceph_assert(!root_block);
     parent_tracker = prior.parent_tracker;
-    auto &parent = parent_tracker->parent;
-    assert(parent);
-    assert(parent->is_valid());
+    assert(parent_tracker->parent);
+    auto &parent = (FixedKVNode&)*parent_tracker->parent;
+    assert(parent.is_valid());
     //TODO: can this search be avoided?
-    auto off = parent->lower_bound_offset(get_node_meta().begin);
-    assert(parent->get_key_from_idx(off) == get_node_meta().begin);
-    parent->stable_children[off] = this;
+    auto off = parent.lower_bound_offset(get_node_meta().begin);
+    assert(parent.get_key_from_idx(off) == get_node_meta().begin);
+    parent.stable_children[off] = this;
   }
 
   bool empty_stable_children() {
@@ -626,8 +612,10 @@ struct FixedKVNode : CachedExtent {
       }
 
       auto c = (FixedKVNode*)tracker.child;
-      ceph_assert(c);
-      set_child_ptracker(c);
+      assert(c || get_node_meta().depth == 1);
+      if (c) {
+	set_child_ptracker(c);
+      }
     }
   }
 
@@ -699,53 +687,33 @@ struct FixedKVNode : CachedExtent {
     parent_tracker.reset();
   }
 
-  void adjust_ptracker_for_stable_children() {
-    for (auto it = stable_children.begin();
-	it != stable_children.begin() + get_node_size() &&
-	  it != stable_children.end();
-	it++) {
-      auto child = *it;
-      if (!child) {
-	continue;
-      }
-      set_child_ptracker((FixedKVNode*)child);
-    }
-  }
+  virtual void adjust_ptracker_for_stable_children() = 0;
 
   bool is_rewrite_from_mutation_pending() {
     return is_initial_pending() && get_prior_instance();
   }
 
-  void on_initial_write() final {
+  void on_initial_write() override {
     // All in-memory relative addrs are necessarily block-relative
     resolve_relative_addrs(get_paddr());
     ceph_assert(
       parent_tracker
 	? (parent_tracker->parent && parent_tracker->parent->is_valid())
 	: true);
-    //TODO: should remove this if block after leaf->logical pointers
-    //	    are added
-    if (get_node_meta().depth > 1) {
-      copy_from_srcs_and_apply_mutates();
-      if (is_rewrite_from_mutation_pending()) {
-	// this must be a rewritten extent
-	take_prior_tracker();
-	reset_prior_instance();
-      } else {
-	adjust_ptracker_for_stable_children();
-      }
-      assert(validate_stable_children());
-      mutate_state.clear();
-      copy_sources.clear();
+    copy_from_srcs_and_apply_mutates();
+    if (is_rewrite_from_mutation_pending()) {
+      // this must be a rewritten extent
+      take_prior_tracker();
+      reset_prior_instance();
+    } else {
+      adjust_ptracker_for_stable_children();
     }
+    assert(validate_stable_children());
+    mutate_state.clear();
+    copy_sources.clear();
   }
 
-  void set_child_ptracker(FixedKVNode *child) {
-    if (!my_tracker) {
-      my_tracker = new parent_tracker_t(this);
-    }
-    child->parent_tracker.reset(my_tracker);
-  }
+  virtual void set_child_ptracker(CachedExtent *child) = 0;
 
   void on_clean_read() final {
     // From initial write of block, relative addrs are necessarily block-relative
@@ -796,6 +764,26 @@ struct FixedKVInternalNode
     : FixedKVNode<NODE_KEY>(rhs),
       node_layout_t(this->get_bptr().c_str()) {}
 
+  void set_child_ptracker(CachedExtent *child) final {
+    if (!this->my_tracker) {
+      this->my_tracker = new parent_tracker_t(this);
+    }
+    ((FixedKVNode<NODE_KEY>*)child)->parent_tracker.reset(this->my_tracker);
+  }
+
+  void adjust_ptracker_for_stable_children() final {
+    for (auto it = this->stable_children.begin();
+	it != this->stable_children.begin() + this->get_size() &&
+	  it != this->stable_children.end();
+	it++) {
+      auto child = *it;
+      if (!child) {
+	continue;
+      }
+      this->set_child_ptracker(child);
+    }
+  }
+
   bool validate_stable_children() final {
     LOG_PREFIX(FixedKVInternalNode::validate_stable_children);
     if (this->stable_children.empty()) {
@@ -834,12 +822,12 @@ struct FixedKVInternalNode
 	  this->root_block, (FixedKVNode<NODE_KEY>*)nullptr);
       } else {
 	ceph_assert(this->parent_tracker);
-	auto &parent = this->parent_tracker->parent;
-	ceph_assert(parent);
-	auto off = parent->lower_bound_offset(this->get_meta().begin);
-	assert(parent->get_key_from_idx(off) == this->get_meta().begin);
-	assert(parent->stable_children[off] == this);
-	parent->stable_children[off] = nullptr;
+	assert(this->parent_tracker->parent);
+	auto &parent = (FixedKVNode<NODE_KEY>&)*this->parent_tracker->parent;
+	auto off = parent.lower_bound_offset(this->get_meta().begin);
+	assert(parent.get_key_from_idx(off) == this->get_meta().begin);
+	assert(parent.stable_children[off] == this);
+	parent.stable_children[off] = nullptr;
       }
     }
   }
@@ -1154,13 +1142,35 @@ struct FixedKVLeafNode
       VAL_LE>;
   using internal_const_iterator_t = typename node_layout_t::const_iterator;
   FixedKVLeafNode(ceph::bufferptr &&ptr)
-    : FixedKVNode<NODE_KEY>(0, std::move(ptr)),
+    : FixedKVNode<NODE_KEY>(has_children ? CAPACITY : 0, std::move(ptr)),
       node_layout_t(this->get_bptr().c_str()) {}
   FixedKVLeafNode(const FixedKVLeafNode &rhs)
     : FixedKVNode<NODE_KEY>(rhs),
       node_layout_t(this->get_bptr().c_str()) {}
 
-  bool validate_stable_children() final {
+  static constexpr bool children = has_children;
+
+  void set_child_ptracker(CachedExtent *child) final {
+    if (!this->my_tracker) {
+      this->my_tracker = new parent_tracker_t(this);
+    }
+    ((LogicalCachedExtent*)child)->parent_tracker.reset(this->my_tracker);
+  }
+
+  void adjust_ptracker_for_stable_children() final {
+    for (auto it = this->stable_children.begin();
+	it != this->stable_children.begin() + this->get_size() &&
+	  it != this->stable_children.end();
+	it++) {
+      auto child = *it;
+      if (!child) {
+	continue;
+      }
+      this->set_child_ptracker(child);
+    }
+  }
+
+  bool validate_stable_children() override {
     return true;
   }
 
@@ -1172,19 +1182,55 @@ struct FixedKVLeafNode
 	  this->root_block, (FixedKVNode<NODE_KEY>*)nullptr);
       } else {
 	ceph_assert(this->parent_tracker);
-	auto &parent = this->parent_tracker->parent;
-	ceph_assert(parent);
-	auto off = parent->lower_bound_offset(this->get_meta().begin);
-	assert(parent->get_key_from_idx(off) == this->get_meta().begin);
-	assert(parent->stable_children[off] == this);
-	parent->stable_children[off] = nullptr;
+	assert(this->parent_tracker->parent);
+	auto &parent = (FixedKVNode<NODE_KEY>&)*this->parent_tracker->parent;
+	auto off = parent.lower_bound_offset(this->get_meta().begin);
+	assert(parent.get_key_from_idx(off) == this->get_meta().begin);
+	assert(parent.stable_children[off] == this);
+	parent.stable_children[off] = nullptr;
       }
     }
   }
 
-  void on_replace_prior(Transaction &t) final {
-    this->set_parent_tracker();
+  void on_initial_write() final {
+    // All in-memory relative addrs are necessarily block-relative
+    this->resolve_relative_addrs(this->get_paddr());
+    if constexpr (has_children) {
+      this->copy_from_srcs_and_apply_mutates();
+      if (this->get_prior_instance()) {
+	// this must be a rewritten extent
+	this->take_prior_tracker();
+	this->reset_prior_instance();
+      } else {
+	this->adjust_ptracker_for_stable_children();
+      }
+      assert(this->validate_stable_children());
+      this->mutate_state.clear();
+      this->copy_sources.clear();
+    }
     assert(this->mutate_state.empty());
+    assert(this->copy_sources.empty());
+  }
+
+  void on_replace_prior(Transaction &t) final {
+    if constexpr (has_children) {
+      auto &prior = (FixedKVNode<NODE_KEY>&)(*this->get_prior_instance());
+      this->stable_children.resize(this->capacity, nullptr);
+      auto copied = this->copy_from_src_and_apply_mutates(
+	this->mutate_state.pending_children.begin(),
+	this->mutate_state.pending_children.end(),
+	prior,
+	0,
+	0);
+      ceph_assert(copied == get_node_size());
+      assert(this->validate_stable_children());
+      this->set_parent_tracker();
+      this->take_prior_tracker();
+      this->mutate_state.clear();
+    } else {
+      this->set_parent_tracker();
+      assert(this->mutate_state.empty());
+    }
   }
 
   uint16_t lower_bound_offset(NODE_KEY key) const final {
@@ -1219,11 +1265,13 @@ struct FixedKVLeafNode
 
   virtual void update(
     internal_const_iterator_t iter,
-    VAL val) = 0;
+    VAL val,
+    LogicalCachedExtent* nextent) = 0;
   virtual internal_const_iterator_t insert(
     internal_const_iterator_t iter,
     NODE_KEY addr,
-    VAL val) = 0;
+    VAL val,
+    LogicalCachedExtent* nextent) = 0;
   virtual void remove(internal_const_iterator_t iter) = 0;
 
   std::tuple<Ref, Ref, NODE_KEY>
@@ -1232,6 +1280,9 @@ struct FixedKVLeafNode
       c.trans, node_size, placement_hint_t::HOT, 0);
     auto right = c.cache.template alloc_new_extent<node_type_t>(
       c.trans, node_size, placement_hint_t::HOT, 0);
+    if constexpr (has_children) {
+      this->split_mutate_state(*left, *right);
+    }
     auto pivot = this->split_into(*left, *right);
     left->pin.set_range(left->get_meta());
     right->pin.set_range(right->get_meta());
@@ -1246,6 +1297,9 @@ struct FixedKVLeafNode
     Ref &right) {
     auto replacement = c.cache.template alloc_new_extent<node_type_t>(
       c.trans, node_size, placement_hint_t::HOT, 0);
+    if constexpr (has_children) {
+      replacement->merge_mutate_state(*this, *right);
+    }
     replacement->merge_from(*this, *right->template cast<node_type_t>());
     replacement->pin.set_range(replacement->get_meta());
     return replacement;
@@ -1269,6 +1323,14 @@ struct FixedKVLeafNode
       prefer_left,
       *replacement_left,
       *replacement_right);
+    if constexpr (has_children) {
+      this->balance_mutate_state(
+	*this,
+	right,
+	prefer_left,
+	*replacement_left,
+	*replacement_right);
+    }
 
     replacement_left->pin.set_range(replacement_left->get_meta());
     replacement_right->pin.set_range(replacement_right->get_meta());
