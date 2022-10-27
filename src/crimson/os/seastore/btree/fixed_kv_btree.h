@@ -52,7 +52,8 @@ template <
   typename internal_node_t,
   typename leaf_node_t,
   typename pin_t,
-  size_t node_size>
+  size_t node_size,
+  bool leaf_has_children>
 class FixedKVBtree {
   static constexpr size_t MAX_DEPTH = 16;
   using self_type = FixedKVBtree<
@@ -61,7 +62,8 @@ class FixedKVBtree {
     internal_node_t,
     leaf_node_t,
     pin_t,
-    node_size>;
+    node_size,
+    leaf_has_children>;
 public:
   using InternalNodeRef = TCachedExtentRef<internal_node_t>;
   using LeafNodeRef = TCachedExtentRef<leaf_node_t>;
@@ -861,7 +863,8 @@ public:
       n_fixed_kv_extent->set_modify_time(fixed_kv_extent.get_modify_time());
       n_fixed_kv_extent->pin.set_range(n_fixed_kv_extent->get_node_meta());
 
-      if (fixed_kv_extent.get_type() == internal_node_t::TYPE) {
+      if (fixed_kv_extent.get_type() == internal_node_t::TYPE ||
+          leaf_node_t::do_has_children) {
         if (!fixed_kv_extent.is_pending()) {
           n_fixed_kv_extent->copy_sources.emplace(&fixed_kv_extent);
           n_fixed_kv_extent->prior_instance = &fixed_kv_extent;
@@ -2007,7 +2010,8 @@ template <
   typename internal_node_t,
   typename leaf_node_t,
   typename pin_t,
-  size_t node_size>
+  size_t node_size,
+  bool leaf_has_children>
 struct is_fixed_kv_tree<
   FixedKVBtree<
     node_key_t,
@@ -2015,7 +2019,8 @@ struct is_fixed_kv_tree<
     internal_node_t,
     leaf_node_t,
     pin_t,
-    node_size>> : std::true_type {};
+    node_size,
+    leaf_has_children>> : std::true_type {};
 
 template <
   typename tree_type_t,
