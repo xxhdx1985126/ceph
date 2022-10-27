@@ -298,14 +298,6 @@ struct FixedKVNode : CachedExtent {
     }
   }
 
-  struct child_pos_t {
-    FixedKVNodeRef stable_parent;
-    uint16_t pos = std::numeric_limits<uint16_t>::max();
-    CachedExtentRef child;
-    child_pos_t(CachedExtentRef child) : child(child) {}
-    child_pos_t(FixedKVNodeRef stable_parent, uint16_t pos)
-      : stable_parent(stable_parent), pos(pos) {}
-  };
 
   void link_child(CachedExtent* child, uint16_t pos) {
     assert(pos < get_node_size());
@@ -316,6 +308,10 @@ struct FixedKVNode : CachedExtent {
     stable_children[pos] = child;
     set_child_ptracker(child);
   }
+
+  virtual child_pos_t get_logical_child(
+    Transaction &t,
+    uint16_t pos) = 0;
 
   template <typename iter_t>
   child_pos_t get_child(Transaction &t, iter_t iter) {
@@ -764,6 +760,12 @@ struct FixedKVInternalNode
     : FixedKVNode<NODE_KEY>(rhs),
       node_layout_t(this->get_bptr().c_str()) {}
 
+  child_pos_t get_logical_child(Transaction &, uint16_t) final
+  {
+    ceph_abort("impossible");
+    return child_pos_t(nullptr);
+  }
+
   void set_child_ptracker(CachedExtent *child) final {
     if (!this->my_tracker) {
       this->my_tracker = new parent_tracker_t(this);
@@ -1150,6 +1152,35 @@ struct FixedKVLeafNode
       node_layout_t(this->get_bptr().c_str()) {}
 
   static constexpr bool children = has_children;
+
+  child_pos_t get_logical_child(Transaction &t, uint16_t pos) final {
+    if (!this->is_pending()) {
+      auto child = this->stable_children[pos];
+      if (child) {
+	return child_pos_t(child->get_transactional_view(t));
+      } else {
+	return child_pos_t(this, pos);
+      }
+    } else {
+      auto key = this->get_key_from_idx(pos);
+      auto it = this->mutate_state.pending_children.find(
+	key,
+	typename FixedKVNode<NODE_KEY>::pending_child_tracker_t::cmp_t());
+      if (it != this->mutate_state.pending_children.end()) {
+	ceph_assert(it->pos == pos);
+	return child_pos_t(it->child);
+      } else {
+	auto &sparent = this->get_stable_for_key(key);
+	auto spos = sparent.child_pos_for_key(key);
+	auto child = sparent.stable_children[spos];
+	if (child) {
+	  return child_pos_t(child->get_transactional_view(t));
+	} else {
+	  return child_pos_t(&sparent, spos);
+	}
+      }
+    }
+  }
 
   void set_child_ptracker(CachedExtent *child) final {
     if (!this->my_tracker) {
