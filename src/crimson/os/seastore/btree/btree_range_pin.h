@@ -467,6 +467,9 @@ public:
     fixed_kv_node_meta_t<key_t> &&meta)
     : parent(parent), value(value), len(len), pos(pos) {
     pin.set_range(std::move(meta));
+    if (!parent->is_pending()) {
+      this->child_pos = {parent, pos};
+    }
   }
 
   CachedExtentRef get_parent() const final {
@@ -485,7 +488,14 @@ public:
     parent = pin;
   }
 
-  void link_extent(LogicalCachedExtent *ref) final;
+  void link_extent(LogicalCachedExtent *ref) final {
+    pin.set_extent(ref);
+    pos = std::numeric_limits<uint16_t>::max();
+  }
+
+  uint16_t get_pos() const final {
+    return pos;
+  }
 
   extent_len_t get_length() const final {
     ceph_assert(pin.range.end > pin.range.begin);
@@ -512,6 +522,7 @@ public:
     ret->value = value;
     ret->parent = parent;
     ret->len = len;
+    ret->pos = pos;
     return ret;
   }
 
@@ -522,6 +533,9 @@ public:
   bool has_been_invalidated() const final {
     return parent->has_been_invalidated();
   }
+
+protected:
+  void init_child_pos(Transaction&) final;
 };
 
 }

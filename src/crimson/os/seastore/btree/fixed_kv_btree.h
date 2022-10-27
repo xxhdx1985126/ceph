@@ -231,6 +231,9 @@ public:
       return leaf.node;
     }
 
+    uint16_t get_leaf_pos() {
+      return leaf.pos;
+    }
   private:
     iterator() noexcept {}
     iterator(depth_t depth) noexcept : internal(depth - 1) {}
@@ -1333,7 +1336,7 @@ private:
     };
 
     auto child_pos = parent->get_child(c.trans, node_iter);
-    auto &child = child_pos.child;
+    auto child = child_pos.template get_child<internal_node_t>();
     if (child) {
       SUBTRACET(seastore_fixedkv_tree,
         "got child on {}, pos: {}, res: {}",
@@ -1370,8 +1373,8 @@ private:
       begin,
       end,
       std::make_optional<node_position_t<internal_node_t>>(
-        child_pos.stable_parent->template cast<internal_node_t>(),
-        child_pos.pos)
+        child_pos.template get_parent<internal_node_t>(),
+        child_pos.get_pos())
     ).si_then([on_found=std::move(on_found)](InternalNodeRef node) {
       return on_found(node);
     });
@@ -1407,7 +1410,7 @@ private:
     };
 
     auto child_pos = parent->get_child(c.trans, node_iter);
-    auto &child = child_pos.child;
+    auto child = child_pos.template get_child<leaf_node_t>();
     if (child) {
       SUBTRACET(seastore_fixedkv_tree,
         "got child on {}, pos: {}, res: {}",
@@ -1444,8 +1447,8 @@ private:
       begin,
       end,
       std::make_optional<node_position_t<leaf_node_t>>(
-        child_pos.stable_parent->template cast<leaf_node_t>(),
-        child_pos.pos)
+        child_pos.template get_parent<leaf_node_t>(),
+        child_pos.get_pos())
     ).si_then([on_found=std::move(on_found)](LeafNodeRef node) {
       return on_found(node);
     });
@@ -1966,7 +1969,7 @@ private:
     };
 
     auto child_pos = parent_pos.node->get_child(c.trans, donor_iter);
-    auto &child = child_pos.child;
+    auto child = child_pos.template get_child<NodeType>();
     if (child) {
       SUBTRACET(seastore_fixedkv_tree,
         "got child on {}, pos: {}, res: {}",
@@ -2002,8 +2005,8 @@ private:
       begin,
       end,
       std::make_optional<node_position_t<NodeType>>(
-        child_pos.stable_parent->template cast<NodeType>(),
-        child_pos.pos)
+        child_pos.template get_parent<NodeType>(),
+        child_pos.get_pos())
     ).si_then([do_merge=std::move(do_merge)](typename NodeType::Ref donor) {
       return do_merge(donor);
     });

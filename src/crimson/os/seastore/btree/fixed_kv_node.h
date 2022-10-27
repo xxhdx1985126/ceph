@@ -217,15 +217,6 @@ struct FixedKVNode : ChildableCachedExtent {
     }
   }
 
-  struct child_pos_t {
-    FixedKVNodeRef stable_parent;
-    uint16_t pos = std::numeric_limits<uint16_t>::max();
-    CachedExtentRef child;
-    child_pos_t(CachedExtentRef child) : child(child) {}
-    child_pos_t(FixedKVNodeRef stable_parent, uint16_t pos)
-      : stable_parent(stable_parent), pos(pos) {}
-  };
-
   void link_child(ChildableCachedExtent* child, uint16_t pos) {
     assert(pos < get_node_size());
     assert(child);
@@ -235,6 +226,10 @@ struct FixedKVNode : ChildableCachedExtent {
     children[pos] = child;
     set_child_ptracker(child);
   }
+
+  virtual child_pos_t get_logical_child(
+    Transaction &t,
+    uint16_t pos) = 0;
 
   template <typename iter_t>
   child_pos_t get_child(Transaction &t, iter_t iter) {
@@ -590,6 +585,12 @@ struct FixedKVInternalNode
       assert(this->validate_stable_children());
       this->copy_sources.clear();
     }
+  }
+
+  child_pos_t get_logical_child(Transaction &, uint16_t) final
+  {
+    ceph_abort("impossible");
+    return child_pos_t(nullptr);
   }
 
   bool validate_stable_children() final {
@@ -958,6 +959,25 @@ struct FixedKVLeafNode
 
   uint16_t get_node_split_pivot() final {
     return this->get_split_pivot().get_offset();
+  }
+
+  child_pos_t get_logical_child(Transaction &t, uint16_t pos) final {
+    auto child = this->children[pos];
+    if (is_valid_child_ptr(child)) {
+      return child_pos_t(child->get_transactional_view(t));
+    } else if (this->is_pending()) {
+      auto key = this->iter_idx(pos).get_key();
+      auto &sparent = this->get_stable_for_key(key);
+      auto spos = sparent.child_pos_for_key(key);
+      auto child = sparent.children[spos];
+      if (is_valid_child_ptr(child)) {
+	return child_pos_t(child->get_transactional_view(t));
+      } else {
+	return child_pos_t(&sparent, spos);
+      }
+    } else {
+      return child_pos_t(this, pos);
+    }
   }
 
   bool validate_stable_children() override {
