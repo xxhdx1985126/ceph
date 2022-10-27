@@ -872,6 +872,7 @@ public:
   virtual PhysicalNodePinRef<key_t, val_t> duplicate() const = 0;
   virtual bool has_been_invalidated() const = 0;
   virtual CachedExtentRef get_parent() const = 0;
+  virtual LogicalCachedExtent* get_logical_extent(Transaction&) = 0;
 
   virtual ~PhysicalNodePin() {}
 };

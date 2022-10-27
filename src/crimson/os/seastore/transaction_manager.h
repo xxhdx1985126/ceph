@@ -209,14 +209,26 @@ public:
     SUBTRACET(seastore_tm, "{}~{}", t, offset, length);
     return get_pin(
       t, offset
-    ).si_then([this, FNAME, &t, offset, length] (auto pin) {
+    ).si_then([this, FNAME, &t, offset, length] (auto pin)
+      -> read_extent_ret<T> {
       if (length != pin->get_length() || !pin->get_val().is_real()) {
         SUBERRORT(seastore_tm,
             "offset {} len {} got wrong pin {}",
             t, offset, length, *pin);
         ceph_assert(0 == "Should be impossible");
       }
-      return this->pin_to_extent<T>(t, std::move(pin));
+      TCachedExtentRef<T> extent = (T*)pin->get_logical_extent(t);
+      if (extent) {
+	SUBERRORT(seastore_tm, "got extent {}", t, *extent);
+	if (!extent->is_pending_in_trans(t.get_trans_id())) {
+	  t.add_to_read_set(extent);
+	}
+	return extent->wait_io().then([extent] {
+	  return extent;
+	});
+      } else {
+	return this->pin_to_extent<T>(t, std::move(pin));
+      }
     });
   }
 
@@ -233,14 +245,26 @@ public:
     SUBTRACET(seastore_tm, "{}", t, offset);
     return get_pin(
       t, offset
-    ).si_then([this, FNAME, &t, offset] (auto pin) {
+    ).si_then([this, FNAME, &t, offset] (auto pin)
+      -> read_extent_ret<T> {
       if (!pin->get_val().is_real()) {
         SUBERRORT(seastore_tm,
             "offset {} got wrong pin {}",
             t, offset, *pin);
         ceph_assert(0 == "Should be impossible");
       }
-      return this->pin_to_extent<T>(t, std::move(pin));
+      TCachedExtentRef<T> extent = (T*)pin->get_logical_extent(t);
+      if (extent) {
+	SUBERRORT(seastore_tm, "got extent {}", t, *extent);
+	if (!extent->is_pending_in_trans(t.get_trans_id())) {
+	  t.add_to_read_set(extent);
+	}
+	return extent->wait_io().then([extent] {
+	  return extent;
+	});
+      } else {
+	return this->pin_to_extent<T>(t, std::move(pin));
+      }
     });
   }
 

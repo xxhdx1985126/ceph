@@ -473,6 +473,8 @@ public:
     return parent;
   }
 
+  LogicalCachedExtent* get_logical_extent(Transaction &) final;
+
   btree_range_pin_t<key_t>& get_range_pin() {
     return pin;
   }

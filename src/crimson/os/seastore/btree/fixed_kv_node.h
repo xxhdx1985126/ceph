@@ -316,6 +316,10 @@ struct FixedKVNode : CachedExtent {
     set_child_ptracker(child);
   }
 
+  virtual LogicalCachedExtent* get_logical_child(
+    Transaction &t,
+    uint16_t pos) = 0;
+
   template <typename iter_t>
   child_pos_t get_child(Transaction &t, iter_t iter) {
     if (!is_pending()) {
@@ -759,6 +763,12 @@ struct FixedKVInternalNode
     : FixedKVNode<NODE_KEY>(rhs),
       node_layout_t(this->get_bptr().c_str()) {}
 
+  LogicalCachedExtent* get_logical_child(Transaction &, uint16_t) final
+  {
+    ceph_abort("impossible");
+    return nullptr;
+  }
+
   void set_child_ptracker(CachedExtent *child) final {
     if (!this->my_tracker) {
       this->my_tracker = new parent_tracker_t(this);
@@ -1144,6 +1154,35 @@ struct FixedKVLeafNode
       node_layout_t(this->get_bptr().c_str()) {}
 
   static constexpr bool children = has_children;
+
+  LogicalCachedExtent* get_logical_child(Transaction &t, uint16_t pos) final {
+    if (!this->is_pending()) {
+      auto child = this->stable_children[pos];
+      if (child) {
+	return (LogicalCachedExtent*)child->get_transactional_view(t);
+      } else {
+	return nullptr;
+      }
+    } else {
+      auto key = this->get_key_from_idx(pos);
+      auto it = this->mutate_state.pending_children.find(
+	key,
+	typename FixedKVNode<NODE_KEY>::pending_child_tracker_t::cmp_t());
+      if (it != this->mutate_state.pending_children.end()) {
+	ceph_assert(it->pos == pos);
+	return (LogicalCachedExtent*)it->child;
+      } else {
+	auto &sparent = this->get_stable_for_key(key);
+	auto spos = sparent.child_pos_for_key(key);
+	auto child = sparent.stable_children[spos];
+	if (child) {
+	  return (LogicalCachedExtent*)child->get_transactional_view(t);
+	} else {
+	  return nullptr;
+	}
+      }
+    }
+  }
 
   void set_child_ptracker(CachedExtent *child) final {
     if (!this->my_tracker) {
