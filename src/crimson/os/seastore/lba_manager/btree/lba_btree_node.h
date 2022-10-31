@@ -227,14 +227,14 @@ struct LBALeafNode
     lba_map_val_t val,
     LogicalCachedExtent* nextent) final {
     if constexpr (has_children) {
+      LOG_PREFIX(LBALeafNode::insert);
+      SUBTRACE(seastore_fixedkv_tree, "trans.{}, pos {}, key {}, extent {}",
+	this->pending_for_transaction,
+	iter.get_offset(),
+	addr,
+	(void*)nextent);
+      this->mutate_state.pending_insert(iter, addr, nextent);
       if (nextent) {
-	LOG_PREFIX(LBALeafNode::insert);
-	SUBTRACE(seastore_fixedkv_tree, "trans.{}, pos {}, key {}, {}",
-	  this->pending_for_transaction,
-	  iter.get_offset(),
-	  addr,
-	  *nextent);
-	this->mutate_state.pending_insert(iter, addr, nextent);
 	this->set_child_ptracker(nextent);
       }
     }
@@ -254,6 +254,7 @@ struct LBALeafNode
 	this->pending_for_transaction,
 	iter.get_offset(),
 	iter.get_key());
+      assert(iter != this->end());
       this->mutate_state.pending_remove(iter);
     }
     return this->journal_remove(

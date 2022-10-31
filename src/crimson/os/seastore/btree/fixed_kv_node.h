@@ -218,8 +218,9 @@ struct FixedKVNode : CachedExtent {
       auto [it2, inserted] = mutate_state.pending_children.insert(tracker);
       ceph_assert(inserted);
       if (tracker.op != op_t::REMOVE) {
-	ceph_assert(tracker.child);
-	set_child_ptracker((FixedKVNode*)tracker.child);
+	if (tracker.child) {
+	  set_child_ptracker((FixedKVNode*)tracker.child);
+	}
       }
     }
   }
@@ -511,11 +512,12 @@ struct FixedKVNode : CachedExtent {
       switch (child_tracker.op) {
       case op_t::INSERT:
 	{
-	  SUBTRACE(seastore_fixedkv_tree, "trans.{}, insert, pos {}, key {}, {}",
+	  SUBTRACE(seastore_fixedkv_tree,
+	    "trans.{}, insert, pos {}, key {}, child {}",
 	    this->pending_for_transaction,
 	    child_tracker.pos,
 	    child_tracker.key,
-	    *child_tracker.child);
+	    (void*)child_tracker.child);
 	  stable_children[child_tracker.pos] = child_tracker.child;
 	  src += count;
 	  next_pos += count + 1;
@@ -525,11 +527,12 @@ struct FixedKVNode : CachedExtent {
 	break;
       case op_t::UPDATE:
 	{
-	  SUBTRACE(seastore_fixedkv_tree, "trans.{}, update, pos {}, key{}, {}",
+	  SUBTRACE(seastore_fixedkv_tree,
+	    "trans.{}, update, pos {}, key{}, child {}",
 	    this->pending_for_transaction,
 	    child_tracker.pos,
 	    child_tracker.key,
-	    *child_tracker.child);
+	    (void*)child_tracker.child);
 	  stable_children[child_tracker.pos] = child_tracker.child;
 	  src += count + 1;
 	  next_pos += count + 1;
@@ -613,8 +616,10 @@ struct FixedKVNode : CachedExtent {
       }
 
       auto c = (FixedKVNode*)tracker.child;
-      ceph_assert(c);
-      set_child_ptracker(c);
+      assert(c || get_node_meta().depth == 1);
+      if (c) {
+	set_child_ptracker(c);
+      }
     }
   }
 
