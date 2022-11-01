@@ -92,6 +92,11 @@ CachedExtent* CachedExtent::get_transactional_view(Transaction &t) {
   }
 }
 
+void child_pos_t::link_child(CachedExtent *c) {
+  get_parent<FixedKVNode<laddr_t>>()->link_child(c, pos);
+  child = c;
+}
+
 std::ostream &LogicalCachedExtent::print_detail(std::ostream &out) const
 {
   out << ", laddr=" << laddr;

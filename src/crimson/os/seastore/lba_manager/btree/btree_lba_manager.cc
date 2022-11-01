@@ -465,6 +465,8 @@ _init_cached_extent(
       if (!iter.is_end() &&
 	  iter.get_key() == logn->get_laddr() &&
 	  iter.get_val().paddr == logn->get_paddr()) {
+	assert(!iter.get_leaf_node()->is_pending());
+	iter.get_leaf_node()->link_child(logn.get(), iter.get_leaf_pos());
 	logn->set_pin(iter.get_pin());
 	ceph_assert(iter.get_val().len == e->get_length());
 	if (c.pins) {

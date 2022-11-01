@@ -128,7 +128,8 @@ public:
   template <typename T>
   pin_to_extent_ret<T> pin_to_extent(
     Transaction &t,
-    LBAPinRef pin) {
+    LBAPinRef pin,
+    child_pos_t &child_pos) {
     LOG_PREFIX(TransactionManager::pin_to_extent);
     SUBTRACET(seastore_tm, "getting extent {}", t, *pin);
     static_assert(is_logical_type(T::TYPE));
@@ -138,11 +139,13 @@ public:
       t,
       pref.get_val(),
       pref.get_length(),
-      [this, pin=std::move(pin)](T &extent) mutable {
+      [this, pin=std::move(pin), child_pos=std::move(child_pos)]
+      (T &extent) mutable {
 	assert(!extent.has_pin());
 	assert(!extent.has_been_invalidated());
 	assert(!pin->has_been_invalidated());
 	assert(pin->get_parent());
+	child_pos.link_child(&extent);
 	extent.set_pin(std::move(pin));
 	lba_manager->add_pin(extent.get_pin());
       }
@@ -217,9 +220,10 @@ public:
             t, offset, length, *pin);
         ceph_assert(0 == "Should be impossible");
       }
-      TCachedExtentRef<T> extent = (T*)pin->get_logical_extent(t);
+      auto child_pos = pin->get_logical_extent(t);
+      auto extent = child_pos.template get_child<T>();
       if (extent) {
-	SUBERRORT(seastore_tm, "got extent {}", t, *extent);
+	SUBTRACET(seastore_tm, "got extent {}", t, *extent);
 	if (!extent->is_pending_in_trans(t.get_trans_id())) {
 	  t.add_to_read_set(extent);
 	}
@@ -227,7 +231,7 @@ public:
 	  return extent;
 	});
       } else {
-	return this->pin_to_extent<T>(t, std::move(pin));
+	return this->pin_to_extent<T>(t, std::move(pin), child_pos);
       }
     });
   }
@@ -253,9 +257,10 @@ public:
             t, offset, *pin);
         ceph_assert(0 == "Should be impossible");
       }
-      TCachedExtentRef<T> extent = (T*)pin->get_logical_extent(t);
+      auto child_pos = pin->get_logical_extent(t);
+      auto extent = child_pos.template get_child<T>();
       if (extent) {
-	SUBERRORT(seastore_tm, "got extent {}", t, *extent);
+	SUBTRACET(seastore_tm, "got extent {}", t, *extent);
 	if (!extent->is_pending_in_trans(t.get_trans_id())) {
 	  t.add_to_read_set(extent);
 	}
@@ -263,7 +268,7 @@ public:
 	  return extent;
 	});
       } else {
-	return this->pin_to_extent<T>(t, std::move(pin));
+	return this->pin_to_extent<T>(t, std::move(pin), child_pos);
       }
     });
   }
