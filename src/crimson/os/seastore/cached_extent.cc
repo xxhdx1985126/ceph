@@ -100,11 +100,6 @@ void child_pos_t::link_child(CachedExtent *c) {
 std::ostream &LogicalCachedExtent::print_detail(std::ostream &out) const
 {
   out << ", laddr=" << laddr;
-  if (pin) {
-    out << ", pin=" << *pin;
-  } else {
-    out << ", pin=empty";
-  }
   return print_detail_l(out);
 }
 
