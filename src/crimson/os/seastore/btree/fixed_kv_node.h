@@ -103,7 +103,7 @@ struct FixedKVNode : CachedExtent {
       pending_child_tracker_t,
       boost::intrusive::constant_time_size<false>>;
 
-  btree_range_pin_t<node_key_t> pin;
+  fixed_kv_node_meta_t<node_key_t> range;
 
   // only used in mutation pending fixed-kv-nodes
   struct mutate_state_t {
@@ -228,17 +228,17 @@ struct FixedKVNode : CachedExtent {
   struct copy_source_cmp_t {
     using is_transparent = node_key_t;
     bool operator()(const FixedKVNodeRef &l, const FixedKVNodeRef &r) const {
-      assert(l->pin.range.end <= r->pin.range.begin
-	|| r->pin.range.end <= l->pin.range.begin
-	|| (l->pin.range.begin == r->pin.range.begin
-	    && l->pin.range.end == r->pin.range.end));
-      return l->pin.range.begin < r->pin.range.begin;
+      assert(l->range.end <= r->range.begin
+	|| r->range.end <= l->range.begin
+	|| (l->range.begin == r->range.begin
+	    && l->range.end == r->range.end));
+      return l->range.begin < r->range.begin;
     }
     bool operator()(const node_key_t &l, const FixedKVNodeRef &r) const {
-      return l < r->pin.range.begin;
+      return l < r->range.begin;
     }
     bool operator()(const FixedKVNodeRef &l, const node_key_t &r) const {
-      return l->pin.range.begin < r;
+      return l->range.begin < r;
     }
   };
 
@@ -249,14 +249,18 @@ struct FixedKVNode : CachedExtent {
   parent_tracker_ref parent_tracker;
   RootBlockRef root_block;
 
+  bool is_linked() {
+    assert(!(bool)parent_tracker || !(bool)root_block);
+    return (bool)parent_tracker || (bool)root_block;
+  }
+
   FixedKVNode(uint16_t capacity, ceph::bufferptr &&ptr)
     : CachedExtent(std::move(ptr)),
-      pin(this),
       stable_children(capacity, nullptr),
       capacity(capacity) {}
   FixedKVNode(const FixedKVNode &rhs)
     : CachedExtent(rhs),
-      pin(rhs.pin, this),
+      range(rhs.range),
       stable_children(0),
       capacity(rhs.capacity) {}
 
@@ -561,7 +565,7 @@ struct FixedKVNode : CachedExtent {
   void set_parent_tracker() {
     assert(is_mutation_pending());
     auto &prior = (FixedKVNode&)(*get_prior_instance());
-    if (pin.is_root()) {
+    if (range.is_root()) {
       ceph_assert(prior.root_block);
       root_block = prior.root_block;
       set_phy_tree_root_node<false, node_key_t>(root_block, this);
@@ -619,7 +623,6 @@ struct FixedKVNode : CachedExtent {
     // All in-memory relative addrs are necessarily record-relative
     assert(get_prior_instance());
     assert(pending_for_transaction);
-    pin.take_pin(get_prior_instance()->template cast<FixedKVNode>()->pin);
     resolve_relative_addrs(record_block_offset);
   }
 
@@ -818,7 +821,7 @@ struct FixedKVInternalNode
 
   virtual ~FixedKVInternalNode() {
     if (this->is_valid() && !this->is_pending()) {
-      if (this->pin.is_root()) {
+      if (this->range.is_root()) {
 	ceph_assert(this->root_block);
 	set_phy_tree_root_node<false, NODE_KEY>(
 	  this->root_block, (FixedKVNode<NODE_KEY>*)nullptr);
@@ -963,8 +966,8 @@ struct FixedKVInternalNode
       c.trans, node_size, placement_hint_t::HOT, 0);
     this->split_mutate_state(*left, *right);
     auto pivot = this->split_into(*left, *right);
-    left->pin.set_range(left->get_meta());
-    right->pin.set_range(right->get_meta());
+    left->range = left->get_meta();
+    right->range = right->get_meta();
     return std::make_tuple(
       left,
       right,
@@ -978,7 +981,7 @@ struct FixedKVInternalNode
       c.trans, node_size, placement_hint_t::HOT, 0);
     replacement->merge_mutate_state(*this, *right);
     replacement->merge_from(*this, *right->template cast<node_type_t>());
-    replacement->pin.set_range(replacement->get_meta());
+    replacement->range = replacement->get_meta();
     return replacement;
   }
 
@@ -1007,8 +1010,8 @@ struct FixedKVInternalNode
       *replacement_left,
       *replacement_right);
 
-    replacement_left->pin.set_range(replacement_left->get_meta());
-    replacement_right->pin.set_range(replacement_right->get_meta());
+    replacement_left->range = replacement_left->get_meta();
+    replacement_right->range = replacement_right->get_meta();
     return std::make_tuple(
       replacement_left,
       replacement_right,
@@ -1208,7 +1211,7 @@ struct FixedKVLeafNode
 
   virtual ~FixedKVLeafNode() {
     if (this->is_valid() && !this->is_pending()) {
-      if (this->pin.is_root()) {
+      if (this->range.is_root()) {
 	ceph_assert(this->root_block);
 	set_phy_tree_root_node<false, NODE_KEY>(
 	  this->root_block, (FixedKVNode<NODE_KEY>*)nullptr);
@@ -1317,8 +1320,8 @@ struct FixedKVLeafNode
       this->split_mutate_state(*left, *right);
     }
     auto pivot = this->split_into(*left, *right);
-    left->pin.set_range(left->get_meta());
-    right->pin.set_range(right->get_meta());
+    left->range = left->get_meta();
+    right->range = right->get_meta();
     return std::make_tuple(
       left,
       right,
@@ -1334,7 +1337,7 @@ struct FixedKVLeafNode
       replacement->merge_mutate_state(*this, *right);
     }
     replacement->merge_from(*this, *right->template cast<node_type_t>());
-    replacement->pin.set_range(replacement->get_meta());
+    replacement->range = replacement->get_meta();
     return replacement;
   }
 
@@ -1365,8 +1368,8 @@ struct FixedKVLeafNode
 	*replacement_right);
     }
 
-    replacement_left->pin.set_range(replacement_left->get_meta());
-    replacement_right->pin.set_range(replacement_right->get_meta());
+    replacement_left->range = replacement_left->get_meta();
+    replacement_right->range = replacement_right->get_meta();
     return std::make_tuple(
       replacement_left,
       replacement_right,
