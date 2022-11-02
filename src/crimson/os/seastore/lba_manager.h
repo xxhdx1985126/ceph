@@ -201,8 +201,6 @@ public:
     laddr_t laddr,
     seastore_off_t len) = 0;
 
-  virtual void add_pin(LBAPin &pin) = 0;
-
   virtual ~LBAManager() {}
 };
 using LBAManagerRef = std::unique_ptr<LBAManager>;

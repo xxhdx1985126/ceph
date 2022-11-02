@@ -36,7 +36,6 @@ template <typename node_key_t>
 struct op_context_t {
   Cache &cache;
   Transaction &trans;
-  btree_pin_set_t<node_key_t> *pins = nullptr;
 };
 
 template <typename T>
@@ -352,7 +351,7 @@ public:
     root_leaf->set_size(0);
     fixed_kv_node_meta_t<node_key_t> meta{min_max_t<node_key_t>::min, min_max_t<node_key_t>::max, 1};
     root_leaf->set_meta(meta);
-    root_leaf->pin.set_range(meta);
+    root_leaf->range = meta;
     get_tree_stats<self_type>(c.trans).depth = 1u;
     get_tree_stats<self_type>(c.trans).extents_num_delta++;
     return {phy_tree_root_t{root_leaf->get_paddr(), 1u}, root_leaf};
@@ -862,7 +861,7 @@ public:
         fixed_kv_extent.get_length(),
         n_fixed_kv_extent->get_bptr().c_str());
       n_fixed_kv_extent->set_modify_time(fixed_kv_extent.get_modify_time());
-      n_fixed_kv_extent->pin.set_range(n_fixed_kv_extent->get_node_meta());
+      n_fixed_kv_extent->range = n_fixed_kv_extent->get_node_meta();
 
       if (fixed_kv_extent.get_type() == internal_node_t::TYPE ||
           leaf_node_t::children) {
@@ -1071,8 +1070,8 @@ private:
                           parent_pos=std::move(parent_pos)]
                           (internal_node_t &node) {
       assert(!node.is_pending());
-      assert(!node.pin.is_linked());
-      node.pin.set_range(fixed_kv_node_meta_t<node_key_t>{begin, end, depth});
+      assert(!node.is_linked());
+      node.range = fixed_kv_node_meta_t<node_key_t>{begin, end, depth};
       if (parent_pos) {
         auto &parent = parent_pos->node;
         parent->link_child(&node, parent_pos->pos);
@@ -1085,9 +1084,6 @@ private:
           assert(!root_block->is_pending());
           set_phy_tree_root_node<false, self_type>(root_block, &node);
         }
-      }
-      if (c.pins) {
-        c.pins->add_pin(node.pin);
       }
     };
     return c.cache.template get_extent<need_check_trans, internal_node_t>(
@@ -1105,7 +1101,7 @@ private:
         *ret);
       // This can only happen during init_cached_extent
       // or when backref extent being rewritten by gc space reclaiming
-      if (c.pins && !ret->is_pending() && !ret->pin.is_linked()) {
+      if (!ret->is_pending() && !ret->is_linked()) {
         assert(ret->is_dirty()
           || (is_backref_node(ret->get_type())
             && ret->is_clean()));
@@ -1148,8 +1144,8 @@ private:
                       parent_pos=std::move(parent_pos)]
                       (leaf_node_t &node) {
       assert(!node.is_pending());
-      assert(!node.pin.is_linked());
-      node.pin.set_range(fixed_kv_node_meta_t<node_key_t>{begin, end, 1});
+      assert(!node.is_linked());
+      node.range = fixed_kv_node_meta_t<node_key_t>{begin, end, 1};
       if (parent_pos) {
         auto &parent = parent_pos->node;
         parent->link_child(&node, parent_pos->pos);
@@ -1162,9 +1158,6 @@ private:
           assert(!root_block->is_pending());
           set_phy_tree_root_node<false, self_type>(root_block, &node);
         }
-      }
-      if (c.pins) {
-        c.pins->add_pin(node.pin);
       }
     };
     return c.cache.template get_extent<need_check_trans, leaf_node_t>(
@@ -1182,7 +1175,7 @@ private:
         *ret);
       // This can only happen during init_cached_extent
       // or when backref extent being rewritten by gc space reclaiming
-      if (c.pins && !ret->is_pending() && !ret->pin.is_linked()) {
+      if (!ret->is_pending() && !ret->is_linked()) {
         assert(ret->is_dirty()
           || (is_backref_node(ret->get_type())
             && ret->is_clean()));
@@ -1614,7 +1607,7 @@ private:
       fixed_kv_node_meta_t<node_key_t> meta{
         min_max_t<node_key_t>::min, min_max_t<node_key_t>::max, iter.get_depth() + 1};
       nroot->set_meta(meta);
-      nroot->pin.set_range(meta);
+      nroot->range = meta;
       nroot->journal_insert(
         nroot->begin(),
         min_max_t<node_key_t>::min,
