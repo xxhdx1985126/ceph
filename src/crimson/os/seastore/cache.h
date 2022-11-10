@@ -1212,6 +1212,7 @@ private:
     counter_by_src_t<commit_trans_efforts_t> committed_efforts_by_src;
     counter_by_src_t<invalid_trans_efforts_t> invalidated_efforts_by_src;
     counter_by_src_t<query_counters_t> cache_query_by_src;
+    counter_by_src_t<query_counters_t> onode_query_by_src;
     success_read_trans_efforts_t success_read_efforts;
     uint64_t dirty_bytes = 0;
 

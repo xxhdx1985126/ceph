@@ -200,6 +200,29 @@ void Cache::register_metrics()
     );
   }
 
+  /*
+   * onode_tree_query: onode_tree access and onode_tree hit
+   */
+  for (auto& [src, src_label] : labels_by_src) {
+    metrics.add_group(
+      "onode_tree",
+      {
+        sm::make_counter(
+          "access",
+          get_by_src(stats.onode_query_by_src, src).access,
+          sm::description("total number of cache accesses"),
+          {src_label}
+        ),
+        sm::make_counter(
+          "hit",
+          get_by_src(stats.onode_query_by_src, src).hit,
+          sm::description("total number of cache hits"),
+          {src_label}
+        ),
+      }
+    );
+  }
+
   {
     /*
      * efforts discarded/committed
@@ -1043,6 +1066,10 @@ record_t Cache::prepare_record(
 
   auto& efforts = get_by_src(stats.committed_efforts_by_src,
                              trans_src);
+  auto& onode_queries = get_by_src(stats.onode_query_by_src,
+				   trans_src);
+  onode_queries.access += t.onode_queries.access;
+  onode_queries.hit += t.onode_queries.hit;
 
   // Should be valid due to interruptible future
   io_stat_t read_stat;

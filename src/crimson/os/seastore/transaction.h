@@ -405,6 +405,9 @@ public:
   tree_stats_t& get_backref_tree_stats() {
     return backref_tree_stats;
   }
+  query_counters_t& get_onode_query_counter() {
+    return onode_queries;
+  }
 
   struct ool_write_stats_t {
     io_stat_t extents;
@@ -530,6 +533,7 @@ private:
   tree_stats_t backref_tree_stats;
   ool_write_stats_t ool_write_stats;
   version_stat_t rewrite_version_stats;
+  query_counters_t onode_queries;
 
   bool conflicted = false;
 

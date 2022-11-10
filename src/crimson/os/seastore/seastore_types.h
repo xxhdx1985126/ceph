@@ -21,6 +21,11 @@
 
 namespace crimson::os::seastore {
 
+struct query_counters_t {
+  uint64_t access = 0;
+  uint64_t hit = 0;
+};
+
 /* using a special xattr key "omap_header" to store omap header */
   const std::string OMAP_HEADER_XATTR_KEY = "omap_header";
 

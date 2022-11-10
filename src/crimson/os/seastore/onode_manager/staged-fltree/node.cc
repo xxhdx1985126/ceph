@@ -1568,8 +1568,10 @@ eagain_ifuture<Ref<Node>> InternalNode::get_or_track_child(
   LOG_PREFIX(OTree::InternalNode::get_or_track_child);
   Ref<Node> this_ref = this;
   return [this, position, child_addr, c, FNAME] {
+    c.t.get_onode_query_counter().access++;
     auto found = tracked_child_nodes.find(position);
     if (found != tracked_child_nodes.end()) {
+      c.t.get_onode_query_counter().hit++;
       TRACET("loaded child tracked {} at pos({}) addr={:x}",
               c.t, found->second->get_name(), position, child_addr);
       return eagain_iertr::make_ready_future<Ref<Node>>(found->second);
