@@ -42,6 +42,20 @@ class TestReplayExtent final: public NodeExtent {
     return new TestReplayExtent(std::move(bp), std::move(recorder));
   }
 
+  void new_child(NodeExtent& child) final {}
+
+  void replace_child(NodeExtent& child) final {}
+
+  NodeExtentRef get_child(laddr_t laddr) final {
+    return nullptr;
+  }
+
+  NodeExtentRef get_parent() final {
+    return nullptr;
+  }
+
+  void set_parent(NodeExtentRef parent_extent) final {}
+
  protected:
   NodeExtentRef mutate(context_t, DeltaRecorderURef&&) override {
     ceph_abort("impossible path"); }

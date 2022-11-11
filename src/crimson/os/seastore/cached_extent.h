@@ -1070,6 +1070,8 @@ public:
 
   void on_replace_prior(Transaction &t) final;
 
+  virtual void logical_on_replace_prior(Transaction &t) {}
+
   virtual ~LogicalCachedExtent();
 protected:
 

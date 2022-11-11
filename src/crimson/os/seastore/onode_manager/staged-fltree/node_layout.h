@@ -96,6 +96,31 @@ class NodeLayoutT final : public InternalNodeImpl, public LeafNodeImpl {
     });
   }
 
+  NodeExtentRef get_node_extent() {
+    return extent.get_node_extent();
+  }
+
+  void set_parent_node(NodeImpl& parent_node) final {
+    auto parent = parent_node.get_node_extent();
+    auto child = extent.get_node_extent();
+    child->set_parent(parent);
+  }
+
+  eagain_ifuture<NodeExtentRef> get_child_if_cached(
+    context_t c,
+    laddr_t addr,
+    bool expect_is_level_tail) final
+  {
+    auto node_extent = extent.get_node_extent();
+    auto child = node_extent->get_child(addr);
+    if (child) {
+      return child->wait_io().then([child] {
+	return child;
+      });
+    }
+    return eagain_iertr::make_ready_future<NodeExtentRef>(nullptr);
+  }
+
  protected:
   /*
    * NodeImpl

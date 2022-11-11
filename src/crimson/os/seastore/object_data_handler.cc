@@ -38,7 +38,11 @@ get_iertr::future<ObjectDataBlockRef> read_pin(
       return extent;
     });
   } else {
-    return ctx.tm.pin_to_extent<ObjectDataBlock>(ctx.t, std::move(pin), child_pos
+    return ctx.tm.pin_to_extent<ObjectDataBlock>(
+      ctx.t,
+      std::move(pin),
+      child_pos,
+      [](ObjectDataBlock&) {}
     ).handle_error_interruptible(
       get_iertr::pass_further{},
       crimson::ct_error::assert_all{ "read_pin: invalid error" }

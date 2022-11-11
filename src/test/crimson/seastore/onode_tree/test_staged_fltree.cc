@@ -862,6 +862,17 @@ class DummyChildPool {
       build_name();
     }
 
+ eagain_ifuture<NodeExtentRef> get_child_if_cached(
+    context_t, laddr_t, bool) {
+   return eagain_iertr::make_ready_future<NodeExtentRef>(nullptr);
+ }
+
+  NodeExtentRef get_node_extent() {
+    return nullptr;
+  }
+
+  void set_parent_node(NodeImpl& parent_node) {}
+
    public:
     laddr_t laddr() const override { return _laddr; }
     bool is_level_tail() const override { return _is_level_tail; }

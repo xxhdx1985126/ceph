@@ -44,7 +44,7 @@ class SeastoreNodeExtent final: public NodeExtent {
   SeastoreNodeExtent(ceph::bufferptr &&ptr)
     : NodeExtent(std::move(ptr)) {}
   SeastoreNodeExtent(const SeastoreNodeExtent& other)
-    : NodeExtent(other) {}
+    : NodeExtent(other), parent(other.parent) {}
   ~SeastoreNodeExtent() override = default;
 
   constexpr static extent_types_t TYPE = extent_types_t::ONODE_BLOCK_STAGED;
@@ -52,7 +52,44 @@ class SeastoreNodeExtent final: public NodeExtent {
     return TYPE;
   }
 
+  void logical_on_replace_prior(Transaction &t) final {
+    ceph_assert(parent);
+    parent->replace_child(*this);
+  }
+
+  void new_child(NodeExtent& child) final {
+    auto [it, inserted] = children.emplace(child.get_laddr(), &child);
+    ceph_assert(inserted);
+    child.set_parent(this);
+  }
+
+  void replace_child(NodeExtent& child) final {
+    auto it = children.find(child.get_laddr());
+    assert(it != children.end());
+    it->second = &child;
+  }
+
+  NodeExtentRef get_child(laddr_t laddr) final {
+    auto it = children.find(laddr);
+    if (it == children.end()) {
+      return nullptr;
+    }
+    return it->second;
+  }
+
+  NodeExtentRef get_parent() final {
+    return parent;
+  }
+
+  void set_parent(NodeExtentRef parent_extent) final {
+    parent = parent_extent;
+  }
+
  protected:
+  std::map<laddr_t, NodeExtent*> children;
+  //XXX: is the invariant that parent must be in memory before load children
+  //	 necessary for onode tree?
+  NodeExtentRef parent;
   NodeExtentRef mutate(context_t, DeltaRecorderURef&&) override;
 
   DeltaRecorder* get_recorder() const override {
@@ -101,7 +138,7 @@ class SeastoreNodeExtentManager final: public TransactionManagerHandle {
   bool is_read_isolated() const override { return true; }
 
   read_iertr::future<NodeExtentRef> read_extent(
-      Transaction& t, laddr_t addr) override {
+      Transaction& t, laddr_t addr, NodeExtentRef parent) override {
     SUBTRACET(seastore_onode, "reading at {:#x} ...", t, addr);
     if constexpr (INJECT_EAGAIN) {
       if (trigger_eagain()) {
@@ -110,7 +147,14 @@ class SeastoreNodeExtentManager final: public TransactionManagerHandle {
         return read_iertr::make_ready_future<NodeExtentRef>();
       }
     }
-    return tm.read_extent<SeastoreNodeExtent>(t, addr
+    return tm.read_extent<SeastoreNodeExtent>(
+      t,
+      addr,
+      [parent](SeastoreNodeExtent &extent) {
+	if (parent) {
+	  parent->new_child(extent);
+	}
+      }
     ).si_then([addr, &t](auto&& e) -> read_iertr::future<NodeExtentRef> {
       SUBTRACET(seastore_onode,
           "read {}B at {:#x} -- {}",

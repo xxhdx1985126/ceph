@@ -125,6 +125,7 @@ void LogicalCachedExtent::on_replace_prior(Transaction &t) {
   auto off = parent->lower_bound_offset(laddr);
   assert(parent->get_key_from_idx(off) == laddr);
   parent->stable_children[off] = this;
+  logical_on_replace_prior(t);
 }
 
 parent_tracker_t::~parent_tracker_t() {

@@ -50,7 +50,8 @@ FlatCollectionManager::get_coll_root(const coll_root_t &coll_root, Transaction &
   return cc.tm.read_extent<CollectionNode>(
     cc.t,
     coll_root.get_location(),
-    coll_root.get_size()
+    coll_root.get_size(),
+    [](CollectionNode&) {}
   ).si_then([](auto&& e) {
     return get_root_iertr::make_ready_future<CollectionNodeRef>(std::move(e));
   });

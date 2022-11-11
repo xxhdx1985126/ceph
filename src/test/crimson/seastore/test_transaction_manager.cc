@@ -425,7 +425,7 @@ struct transaction_manager_test_t :
     ceph_assert(test_mappings.get(addr, t.mapping_delta).desc.len == len);
 
     auto ext = with_trans_intr(*(t.t), [&](auto& trans) {
-      return tm->read_extent<TestBlock>(trans, addr, len);
+      return tm->read_extent<TestBlock>(trans, addr, len, [](TestBlock&) {});
     }).unsafe_get0();
     EXPECT_EQ(addr, ext->get_laddr());
     return ext;
@@ -439,7 +439,7 @@ struct transaction_manager_test_t :
     using ertr = with_trans_ertr<TransactionManager::read_extent_iertr>;
     using ret = ertr::future<TestBlockRef>;
     auto ext = with_trans_intr(*(t.t), [&](auto& trans) {
-      return tm->read_extent<TestBlock>(trans, addr);
+      return tm->read_extent<TestBlock>(trans, addr, [](TestBlock&) {});
     }).safe_then([](auto ext) -> ret {
       return ertr::make_ready_future<TestBlockRef>(ext);
     }).handle_error(
@@ -466,7 +466,7 @@ struct transaction_manager_test_t :
     using ertr = with_trans_ertr<TransactionManager::read_extent_iertr>;
     using ret = ertr::future<TestBlockRef>;
     auto ext = with_trans_intr(*(t.t), [&](auto& trans) {
-      return tm->read_extent<TestBlock>(trans, addr, len);
+      return tm->read_extent<TestBlock>(trans, addr, len, [](TestBlock&) {});
     }).safe_then([](auto ext) -> ret {
       return ertr::make_ready_future<TestBlockRef>(ext);
     }).handle_error(
@@ -662,7 +662,8 @@ struct transaction_manager_test_t :
 	    boost::make_counting_iterator(0lu),
 	    boost::make_counting_iterator(BLOCKS),
 	    [this, &t](auto i) {
-	    return tm->read_extent<TestBlock>(t, i * BSIZE, BSIZE
+	    return tm->read_extent<TestBlock>(
+	      t, i * BSIZE, BSIZE, [](TestBlock&) {}
 	    ).si_then([](auto) {
 	      return seastar::now();
 	    });

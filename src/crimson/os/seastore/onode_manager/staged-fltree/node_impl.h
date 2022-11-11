@@ -11,6 +11,8 @@
 
 namespace crimson::os::seastore::onode {
 
+class Node;
+
 #ifdef UNIT_TESTS_BUILT
 enum class InsertType { BEGIN, LAST, MID };
 struct split_expectation_t {
@@ -50,6 +52,7 @@ extern last_split_info_t last_split;
 struct key_hobj_t;
 struct key_view_t;
 class NodeExtentMutable;
+class NodeExtent;
 
 /**
  * NodeImpl
@@ -103,6 +106,12 @@ class NodeImpl {
   virtual void test_copy_to(NodeExtentMutable&) const = 0;
   virtual void test_set_tail(NodeExtentMutable&) = 0;
 
+  virtual void set_parent_node(NodeImpl& parent_node) = 0;
+
+  virtual eagain_ifuture<NodeExtentRef> get_child_if_cached(
+    context_t, laddr_t, bool) = 0;
+
+  virtual NodeExtentRef get_node_extent() = 0;
  protected:
   NodeImpl() = default;
 };

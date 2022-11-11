@@ -125,11 +125,12 @@ public:
   template <typename T>
   using pin_to_extent_ret = pin_to_extent_iertr::future<
     TCachedExtentRef<T>>;
-  template <typename T>
+  template <typename T, typename init_func_t>
   pin_to_extent_ret<T> pin_to_extent(
     Transaction &t,
     LBAPinRef pin,
-    child_pos_t &child_pos) {
+    child_pos_t &child_pos,
+    init_func_t&& init_func) {
     LOG_PREFIX(TransactionManager::pin_to_extent);
     SUBTRACET(seastore_tm, "getting extent {}", t, *pin);
     static_assert(is_logical_type(T::TYPE));
@@ -139,7 +140,8 @@ public:
       t,
       pref.get_val(),
       pref.get_length(),
-      [pin=std::move(pin), child_pos=std::move(child_pos)]
+      [pin=std::move(pin), child_pos=std::move(child_pos),
+      init_func=std::move(init_func)]
       (T &extent) mutable {
 	assert(!extent.has_laddr());
 	assert(!extent.has_been_invalidated());
@@ -147,6 +149,7 @@ public:
 	assert(pin->get_parent());
 	child_pos.link_child(&extent);
 	extent.set_laddr(pin->get_key());
+	init_func(extent);
       }
     ).si_then([FNAME, &t](auto ref) mutable -> ret {
       SUBTRACET(seastore_tm, "got extent -- {}", t, *ref);
@@ -177,16 +180,18 @@ public:
   template <typename T>
   using read_extent_ret = read_extent_iertr::future<
     TCachedExtentRef<T>>;
-  template <typename T>
+  template <typename T, typename init_func_t>
   read_extent_ret<T> read_extent(
     Transaction &t,
     laddr_t offset,
-    extent_len_t length) {
+    extent_len_t length,
+    init_func_t&& init_func) {
     LOG_PREFIX(TransactionManager::read_extent);
     SUBTRACET(seastore_tm, "{}~{}", t, offset, length);
     return get_pin(
       t, offset
-    ).si_then([this, FNAME, &t, offset, length] (auto pin)
+    ).si_then([this, FNAME, &t, offset, length,
+	      init_func=std::move(init_func)] (auto pin)
       -> read_extent_ret<T> {
       if (length != pin->get_length() || !pin->get_val().is_real()) {
         SUBERRORT(seastore_tm,
@@ -208,7 +213,8 @@ public:
 	  return extent;
 	});
       } else {
-	return this->pin_to_extent<T>(t, std::move(pin), child_pos);
+	return this->pin_to_extent<T>(
+	  t, std::move(pin), child_pos, std::move(init_func));
       }
     });
   }
@@ -218,15 +224,17 @@ public:
    *
    * Read extent of type T at offset
    */
-  template <typename T>
+  template <typename T, typename init_func_t>
   read_extent_ret<T> read_extent(
     Transaction &t,
-    laddr_t offset) {
+    laddr_t offset,
+    init_func_t&& init_func) {
     LOG_PREFIX(TransactionManager::read_extent);
     SUBTRACET(seastore_tm, "{}", t, offset);
     return get_pin(
       t, offset
-    ).si_then([this, FNAME, &t, offset] (auto pin)
+    ).si_then([this, FNAME, &t, offset,
+	      init_func=std::move(init_func)] (auto pin)
       -> read_extent_ret<T> {
       if (!pin->get_val().is_real()) {
         SUBERRORT(seastore_tm,
@@ -248,7 +256,8 @@ public:
 	  return extent;
 	});
       } else {
-	return this->pin_to_extent<T>(t, std::move(pin), child_pos);
+	return this->pin_to_extent<T>(
+	  t, std::move(pin), child_pos, std::move(init_func));
       }
     });
   }

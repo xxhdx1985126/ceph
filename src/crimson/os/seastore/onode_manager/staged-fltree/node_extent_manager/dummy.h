@@ -50,7 +50,45 @@ class DummyNodeExtent final: public NodeExtent {
     get_bptr().swap(empty_bptr);
   }
 
+  void logical_on_replace_prior(Transaction &t) final {
+    ceph_assert(parent);
+    parent->replace_child(*this);
+  }
+
+  void new_child(NodeExtent& child) final {
+    auto [it, inserted] = children.emplace(child.get_laddr(), &child);
+    ceph_assert(inserted);
+    child.set_parent(this);
+  }
+
+  void replace_child(NodeExtent& child) final {
+    auto it = children.find(child.get_laddr());
+    assert(it != children.end());
+    it->second = &child;
+  }
+
+  NodeExtentRef get_child(laddr_t laddr) final {
+    auto it = children.find(laddr);
+    if (it == children.end()) {
+      return nullptr;
+    }
+    return it->second;
+  }
+
+  NodeExtentRef get_parent() final {
+    return parent;
+  }
+
+  void set_parent(NodeExtentRef parent_extent) final {
+    parent = parent_extent;
+  }
+
+
  protected:
+  std::map<laddr_t, NodeExtent*> children;
+  //XXX: is the invariant that parent must be in memory before load children
+  //	 necessary for onode tree?
+  NodeExtentRef parent;
   NodeExtentRef mutate(context_t, DeltaRecorderURef&&) override {
     ceph_abort("impossible path"); }
   DeltaRecorder* get_recorder() const override {
@@ -76,14 +114,14 @@ class DummyNodeExtentManager final: public NodeExtentManager {
   bool is_read_isolated() const override { return false; }
 
   read_iertr::future<NodeExtentRef> read_extent(
-      Transaction& t, laddr_t addr) override {
+      Transaction& t, laddr_t addr, NodeExtentRef parent) override {
     SUBTRACET(seastore_onode, "reading at {:#x} ...", t, addr);
     if constexpr (SYNC) {
-      return read_extent_sync(t, addr);
+      return read_extent_sync(t, addr, parent);
     } else {
       using namespace std::chrono_literals;
-      return seastar::sleep(1us).then([this, &t, addr] {
-        return read_extent_sync(t, addr);
+      return seastar::sleep(1us).then([this, &t, addr, &parent] {
+        return read_extent_sync(t, addr, parent);
       });
     }
   }
@@ -135,7 +173,7 @@ class DummyNodeExtentManager final: public NodeExtentManager {
 
  private:
   read_iertr::future<NodeExtentRef> read_extent_sync(
-      Transaction& t, laddr_t addr) {
+      Transaction& t, laddr_t addr, NodeExtentRef parent) {
     auto iter = allocate_map.find(addr);
     assert(iter != allocate_map.end());
     auto extent = iter->second;
@@ -143,6 +181,9 @@ class DummyNodeExtentManager final: public NodeExtentManager {
         "read {}B at {:#x} -- {}",
         t, extent->get_length(), extent->get_laddr(), *extent);
     assert(extent->get_laddr() == addr);
+    if (parent) {
+      parent->new_child(*extent);
+    }
     return read_iertr::make_ready_future<NodeExtentRef>(extent);
   }
 

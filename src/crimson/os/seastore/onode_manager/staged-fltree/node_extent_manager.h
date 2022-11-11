@@ -38,6 +38,11 @@ class NodeExtent : public LogicalCachedExtent {
 
   virtual DeltaRecorder* get_recorder() const = 0;
   virtual NodeExtentRef mutate(context_t, DeltaRecorderURef&&) = 0;
+  virtual void new_child(NodeExtent&) = 0;
+  virtual void replace_child(NodeExtent&) = 0;
+  virtual NodeExtentRef get_child(laddr_t) = 0;
+  virtual NodeExtentRef get_parent() = 0;
+  virtual void set_parent(NodeExtentRef) = 0;
 
  protected:
   template <typename... T>
@@ -73,7 +78,7 @@ class NodeExtentManager {
     crimson::ct_error::enoent,
     crimson::ct_error::erange>;
   virtual read_iertr::future<NodeExtentRef> read_extent(
-      Transaction&, laddr_t) = 0;
+      Transaction&, laddr_t, NodeExtentRef) = 0;
 
   using alloc_iertr = base_iertr;
   virtual alloc_iertr::future<NodeExtentRef> alloc_extent(

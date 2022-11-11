@@ -430,7 +430,7 @@ eagain_ifuture<Ref<Node>> Node::load_root(context_t c, RootNodeTracker& root_tra
     auto root_addr = _super->get_root_laddr();
     assert(root_addr != L_ADDR_NULL);
     TRACET("loading root_addr={:x} ...", c.t, root_addr);
-    return Node::load(c, root_addr, true
+    return Node::load(c, root_addr, true, nullptr
     ).si_then([c, _super = std::move(_super),
                  &root_tracker, FNAME](auto root) mutable {
       TRACET("loaded {}", c.t, root->get_name());
@@ -679,80 +679,96 @@ template eagain_ifuture<> Node::fix_parent_index<true>(context_t, Ref<Node>&&, b
 template eagain_ifuture<> Node::fix_parent_index<false>(context_t, Ref<Node>&&, bool);
 
 eagain_ifuture<Ref<Node>> Node::load(
-    context_t c, laddr_t addr, bool expect_is_level_tail)
+    context_t c, laddr_t addr, bool expect_is_level_tail, Ref<Node> parent)
 {
-  LOG_PREFIX(OTree::Node::load);
-  return c.nm.read_extent(c.t, addr
-  ).handle_error_interruptible(
-    eagain_iertr::pass_further{},
-    crimson::ct_error::input_output_error::handle(
-        [FNAME, c, addr, expect_is_level_tail] {
-      ERRORT("EIO -- addr={:x}, is_level_tail={}",
-             c.t, addr, expect_is_level_tail);
-      ceph_abort("fatal error");
-    }),
-    crimson::ct_error::invarg::handle(
-        [FNAME, c, addr, expect_is_level_tail] {
-      ERRORT("EINVAL -- addr={:x}, is_level_tail={}",
-             c.t, addr, expect_is_level_tail);
-      ceph_abort("fatal error");
-    }),
-    crimson::ct_error::enoent::handle(
-        [FNAME, c, addr, expect_is_level_tail] {
-      ERRORT("ENOENT -- addr={:x}, is_level_tail={}",
-             c.t, addr, expect_is_level_tail);
-      ceph_abort("fatal error");
-    }),
-    crimson::ct_error::erange::handle(
-        [FNAME, c, addr, expect_is_level_tail] {
-      ERRORT("ERANGE -- addr={:x}, is_level_tail={}",
-             c.t, addr, expect_is_level_tail);
-      ceph_abort("fatal error");
-    })
-  ).si_then([FNAME, c, addr, expect_is_level_tail](auto extent)
-	      -> eagain_ifuture<Ref<Node>> {
-    assert(extent);
-    auto header = extent->get_header();
-    auto field_type = header.get_field_type();
-    if (!field_type) {
-      ERRORT("load addr={:x}, is_level_tail={} error, "
-             "got invalid header -- {}",
-             c.t, addr, expect_is_level_tail, extent);
-      ceph_abort("fatal error");
-    }
-    if (header.get_is_level_tail() != expect_is_level_tail) {
-      ERRORT("load addr={:x}, is_level_tail={} error, "
-             "is_level_tail mismatch -- {}",
-             c.t, addr, expect_is_level_tail, extent);
-      ceph_abort("fatal error");
+  auto fut = eagain_iertr::make_ready_future<NodeExtentRef>(nullptr);
+  if (parent) {
+    fut = parent->get_child_if_cached(
+      c, addr, expect_is_level_tail);
+  }
+  return fut.si_then([c, addr, expect_is_level_tail, parent](auto extent)
+		      -> eagain_ifuture<Ref<Node>> {
+    LOG_PREFIX(OTree::Node::load);
+    auto on_found = [FNAME, c, addr, expect_is_level_tail](NodeExtentRef extent)
+		  -> eagain_ifuture<Ref<Node>> {
+      assert(extent);
+      auto header = extent->get_header();
+      auto field_type = header.get_field_type();
+      if (!field_type) {
+	ERRORT("load addr={:x}, is_level_tail={} error, "
+	       "got invalid header -- {}",
+	       c.t, addr, expect_is_level_tail, extent);
+	ceph_abort("fatal error");
+      }
+      if (header.get_is_level_tail() != expect_is_level_tail) {
+	ERRORT("load addr={:x}, is_level_tail={} error, "
+	       "is_level_tail mismatch -- {}",
+	       c.t, addr, expect_is_level_tail, extent);
+	ceph_abort("fatal error");
+      }
+
+      auto node_type = header.get_node_type();
+      if (node_type == node_type_t::LEAF) {
+	if (extent->get_length() != c.vb.get_leaf_node_size()) {
+	  ERRORT("load addr={:x}, is_level_tail={} error, "
+		 "leaf length mismatch -- {}",
+		 c.t, addr, expect_is_level_tail, extent);
+	  ceph_abort("fatal error");
+	}
+	auto impl = LeafNodeImpl::load(extent, *field_type);
+	auto *derived_ptr = impl.get();
+	return eagain_iertr::make_ready_future<Ref<Node>>(
+	  new LeafNode(derived_ptr, std::move(impl)));
+      } else if (node_type == node_type_t::INTERNAL) {
+	if (extent->get_length() != c.vb.get_internal_node_size()) {
+	  ERRORT("load addr={:x}, is_level_tail={} error, "
+		 "internal length mismatch -- {}",
+		 c.t, addr, expect_is_level_tail, extent);
+	  ceph_abort("fatal error");
+	}
+	auto impl = InternalNodeImpl::load(extent, *field_type);
+	auto *derived_ptr = impl.get();
+	return eagain_iertr::make_ready_future<Ref<Node>>(
+	  new InternalNode(derived_ptr, std::move(impl)));
+      } else {
+	ceph_abort("impossible path");
+      }
+    };
+    if (extent) {
+      return on_found(extent);
     }
 
-    auto node_type = header.get_node_type();
-    if (node_type == node_type_t::LEAF) {
-      if (extent->get_length() != c.vb.get_leaf_node_size()) {
-        ERRORT("load addr={:x}, is_level_tail={} error, "
-               "leaf length mismatch -- {}",
-               c.t, addr, expect_is_level_tail, extent);
-        ceph_abort("fatal error");
-      }
-      auto impl = LeafNodeImpl::load(extent, *field_type);
-      auto *derived_ptr = impl.get();
-      return eagain_iertr::make_ready_future<Ref<Node>>(
-	new LeafNode(derived_ptr, std::move(impl)));
-    } else if (node_type == node_type_t::INTERNAL) {
-      if (extent->get_length() != c.vb.get_internal_node_size()) {
-        ERRORT("load addr={:x}, is_level_tail={} error, "
-               "internal length mismatch -- {}",
-               c.t, addr, expect_is_level_tail, extent);
-        ceph_abort("fatal error");
-      }
-      auto impl = InternalNodeImpl::load(extent, *field_type);
-      auto *derived_ptr = impl.get();
-      return eagain_iertr::make_ready_future<Ref<Node>>(
-	new InternalNode(derived_ptr, std::move(impl)));
-    } else {
-      ceph_abort("impossible path");
-    }
+    auto &impl = parent->get_impl();
+    return c.nm.read_extent(c.t, addr, impl.get_node_extent()
+    ).handle_error_interruptible(
+      eagain_iertr::pass_further{},
+      crimson::ct_error::input_output_error::handle(
+	  [FNAME, c, addr, expect_is_level_tail] {
+	ERRORT("EIO -- addr={:x}, is_level_tail={}",
+	       c.t, addr, expect_is_level_tail);
+	ceph_abort("fatal error");
+      }),
+      crimson::ct_error::invarg::handle(
+	  [FNAME, c, addr, expect_is_level_tail] {
+	ERRORT("EINVAL -- addr={:x}, is_level_tail={}",
+	       c.t, addr, expect_is_level_tail);
+	ceph_abort("fatal error");
+      }),
+      crimson::ct_error::enoent::handle(
+	  [FNAME, c, addr, expect_is_level_tail] {
+	ERRORT("ENOENT -- addr={:x}, is_level_tail={}",
+	       c.t, addr, expect_is_level_tail);
+	ceph_abort("fatal error");
+      }),
+      crimson::ct_error::erange::handle(
+	  [FNAME, c, addr, expect_is_level_tail] {
+	ERRORT("ERANGE -- addr={:x}, is_level_tail={}",
+	       c.t, addr, expect_is_level_tail);
+	ceph_abort("fatal error");
+      })
+    ).si_then([on_found=std::move(on_found)](auto extent) {
+      return on_found(extent);
+    });
   });
 }
 
@@ -1562,6 +1578,23 @@ eagain_ifuture<Ref<InternalNode>> InternalNode::insert_or_split(
   });
 }
 
+NodeImpl& Node::get_impl() {
+  ceph_assert(impl);
+  return *impl;
+}
+
+void Node::set_parent_node(Node& parent_node) {
+  ceph_assert(impl);
+  impl->set_parent_node(parent_node.get_impl());
+}
+
+eagain_ifuture<NodeExtentRef> Node::get_child_if_cached(
+  context_t c, laddr_t addr, bool expect_is_level_tail)
+{
+  ceph_assert(impl);
+  return impl->get_child_if_cached(c, addr, expect_is_level_tail);
+}
+
 eagain_ifuture<Ref<Node>> InternalNode::get_or_track_child(
     context_t c, const search_position_t& position, laddr_t child_addr)
 {
@@ -1580,7 +1613,7 @@ eagain_ifuture<Ref<Node>> InternalNode::get_or_track_child(
     TRACET("loading child at pos({}) addr={:x} ...",
            c.t, position, child_addr);
     bool level_tail = position.is_end();
-    return Node::load(c, child_addr, level_tail
+    return Node::load(c, child_addr, level_tail, this
     ).si_then([this, position, c, FNAME] (auto child) {
       TRACET("loaded child untracked {}",
              c.t, child->get_name());

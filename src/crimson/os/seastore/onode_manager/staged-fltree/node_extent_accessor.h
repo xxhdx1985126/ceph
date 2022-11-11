@@ -329,6 +329,7 @@ class NodeExtentAccessorT {
   NodeExtentAccessorT& operator=(NodeExtentAccessorT&&) = delete;
 
   const node_stage_t& read() const { return node_stage; }
+  NodeExtentRef get_node_extent() const { return extent; }
   laddr_t get_laddr() const { return extent->get_laddr(); }
   extent_len_t get_length() const {
     auto len = extent->get_length();

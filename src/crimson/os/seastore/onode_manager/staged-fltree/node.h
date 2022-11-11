@@ -381,6 +381,13 @@ class Node
   void test_make_destructable(context_t, NodeExtentMutable&, Super::URef&&);
   virtual eagain_ifuture<> test_clone_root(context_t, RootNodeTracker&) const = 0;
 
+  eagain_ifuture<NodeExtentRef> get_child_if_cached(
+    context_t, laddr_t, bool);
+
+  void set_parent_node(Node&);
+
+  NodeImpl& get_impl();
+
  protected:
   virtual eagain_ifuture<> test_clone_non_root(context_t, Ref<InternalNode>) const {
     ceph_abort("impossible path");
@@ -460,7 +467,8 @@ class Node
   std::optional<parent_info_t> _parent_info;
 
  private:
-  static eagain_ifuture<Ref<Node>> load(context_t, laddr_t, bool expect_is_level_tail);
+  static eagain_ifuture<Ref<Node>> load(
+    context_t, laddr_t, bool expect_is_level_tail, Ref<Node>);
 
   NodeImplURef impl;
   friend class InternalNode;
@@ -498,6 +506,7 @@ class InternalNode final : public Node {
     auto& child_pos = child.parent_info().position;
     assert(tracked_child_nodes.find(child_pos) == tracked_child_nodes.end());
     tracked_child_nodes[child_pos] = &child;
+    child.set_parent_node(*child.parent_info().ptr);
   }
 
   void do_untrack_child(const Node& child) {
