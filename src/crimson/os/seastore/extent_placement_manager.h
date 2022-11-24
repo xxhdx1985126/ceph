@@ -235,7 +235,8 @@ public:
 
     if (hint == placement_hint_t::COLD) {
       assert(gen == INIT_GENERATION);
-      return alloc_paddr(MIN_REWRITE_GENERATION, get_extent_category(type), length);
+      return alloc_paddr(background_process.get_generation_mapping(MIN_REWRITE_GENERATION),
+                         get_extent_category(type), length);
     }
 
     if (get_extent_category(type) == data_category_t::METADATA &&
@@ -255,7 +256,8 @@ public:
       } else if (gen == INIT_GENERATION) {
         gen = OOL_GENERATION;
       }
-      return alloc_paddr(gen, get_extent_category(type), length);
+      return alloc_paddr(background_process.get_generation_mapping(gen),
+                         get_extent_category(type), length);
     }
   }
 
@@ -425,6 +427,19 @@ private:
           cleaner_by_device_id[id] = cold_cleaner.get();
         }
       }
+      for (rewrite_gen_t gen = INLINE_GENERATION;
+           gen < REWRITE_GENERATIONS;
+           ++gen) {
+        generation_mappings[gen] = gen;
+      }
+      start_evict_ratio = crimson::common::get_conf<double>(
+          "seastore_multiple_tiers_start_evict_threshold");
+      stop_evict_ratio = crimson::common::get_conf<double>(
+          "seastore_multiple_tiers_stop_evict_threshold");
+    }
+
+    rewrite_gen_t get_generation_mapping(rewrite_gen_t gen) const {
+      return generation_mappings[gen];
     }
 
     journal_type_t get_journal_type() const {
@@ -596,7 +611,18 @@ private:
       assert(is_ready());
       return major_cleaner->should_clean_space()
         || (has_cold_tier() && cold_cleaner->should_clean_space())
+        || should_evict()
         || trimmer->should_trim();
+    }
+
+    bool should_evict() const {
+      if (!has_cold_tier()) {
+        return false;
+      }
+      auto stat = major_cleaner->get_stat();
+      double used_ratio = (double)stat.data_stored / (double)stat.total;
+      return used_ratio > start_evict_ratio ||
+        (used_ratio >= stop_evict_ratio && start_evict);
     }
 
     bool should_block_io() const {
@@ -621,6 +647,8 @@ private:
 
     seastar::future<> do_background_cycle();
 
+    void update_generation_mappings();
+
     void register_metrics();
 
     struct {
@@ -641,11 +669,15 @@ private:
      */
     AsyncCleanerRef cold_cleaner;
     std::vector<AsyncCleaner*> cleaner_by_device_id;
+    rewrite_gen_t generation_mappings[REWRITE_GENERATIONS];
+    double start_evict_ratio;
+    double stop_evict_ratio;
 
     std::optional<seastar::future<>> process_join;
     std::optional<seastar::promise<>> blocking_background;
     std::optional<seastar::promise<>> blocking_io;
     bool is_running_until_halt = false;
+    bool start_evict = false;
     state_t state = state_t::STOP;
   };
 
