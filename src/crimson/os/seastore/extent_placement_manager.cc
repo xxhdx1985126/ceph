@@ -467,7 +467,8 @@ ExtentPlacementManager::BackgroundProcess::try_reserve(
 {
   reserve_result_t res {
     trimmer->try_reserve_inline_usage(usage.inline_usage),
-    major_cleaner->try_reserve_projected_usage(usage.inline_usage + usage.ool_usage)
+    major_cleaner->try_reserve_projected_usage(usage.inline_usage + usage.ool_usage),
+    !has_cold_tier() || cold_cleaner->try_reserve_projected_usage(usage.cold_ool_usage)
   };
 
   if (!res.is_successful()) {
@@ -476,6 +477,9 @@ ExtentPlacementManager::BackgroundProcess::try_reserve(
     }
     if (res.reserve_ool_success) {
       major_cleaner->release_projected_usage(usage.inline_usage + usage.ool_usage);
+    }
+    if (has_cold_tier() && res.reserve_cold_ool_success) {
+      cold_cleaner->release_projected_usage(usage.cold_ool_usage);
     }
   }
   return res;
@@ -558,10 +562,36 @@ ExtentPlacementManager::BackgroundProcess::do_background_cycle()
 {
   assert(is_ready());
   bool trimmer_reserve_success = true;
+  auto trimmer_reserve_size = trimmer->get_trim_size_per_cycle();
+
   if (trimmer->should_trim()) {
-    trimmer_reserve_success =
-      major_cleaner->try_reserve_projected_usage(
-        trimmer->get_trim_size_per_cycle());
+    // We should not invoke `try_reserve' diectly since it will fail
+    // even the inline usage is zero. So we reserve space by hand here.
+    bool hot_success = true;
+    bool cold_success = true;
+
+    hot_success = major_cleaner->try_reserve_projected_usage(trimmer_reserve_size);
+    if (has_cold_tier()) {
+      // We take a cautious policy here that the trimmer also reserves
+      // the max value on cold cleaner even if no extents will be rewritten
+      // to the cold tier. Cleaner also takes the same policy.
+      // The reason is that we don't know the exact value of reservation until
+      // the construction of trimmer transaction completes after which the reservation
+      // might fail then the trimmer is possible to be invalidated by cleaner.
+      // Reserving the max size at first could help us avoid these trouble.
+      cold_success = cold_cleaner->try_reserve_projected_usage(trimmer_reserve_size);
+    }
+
+    trimmer_reserve_success = hot_success && cold_success;
+
+    if (!trimmer_reserve_success) {
+      if (hot_success) {
+        major_cleaner->release_projected_usage(trimmer_reserve_size);
+      }
+      if (has_cold_tier() && cold_success) {
+        cold_cleaner->release_projected_usage(trimmer_reserve_size);
+      }
+    }
   }
 
   if (trimmer->should_trim() && trimmer_reserve_success) {
@@ -569,20 +599,68 @@ ExtentPlacementManager::BackgroundProcess::do_background_cycle()
     ).finally([this] {
       major_cleaner->release_projected_usage(
           trimmer->get_trim_size_per_cycle());
-    });
-  } else if (major_cleaner->should_clean_space() ||
-             // make sure cleaner will start
-             // when the trimmer should run but
-             // failed to reserve space.
-             !trimmer_reserve_success) {
-    return major_cleaner->clean_space(
-    ).handle_error(
-      crimson::ct_error::assert_all{
-	"do_background_cycle encountered invalid error in clean_space"
+      if (has_cold_tier()) {
+        cold_cleaner->release_projected_usage(
+          trimmer->get_trim_size_per_cycle());
       }
-    );
+    });
   } else {
-    return seastar::now();
+    bool clean_hot = false;
+    bool clean_cold = false;
+    bool major_cleaner_should_run =
+      major_cleaner->should_clean_space() ||
+      // make sure cleaner will start
+      // when the trimmer should run but
+      // failed to reserve space.
+      !trimmer_reserve_success;
+
+    if (major_cleaner_should_run) {
+      if (!has_cold_tier()) {
+        // single tier
+        clean_hot = true;
+      } else {
+        // multiple tiers
+        clean_hot = cold_cleaner->try_reserve_projected_usage(
+            major_cleaner->get_reclaim_size_per_cycle());
+      }
+    }
+
+    if (has_cold_tier() &&
+        (cold_cleaner->should_clean_space() ||
+         (major_cleaner_should_run && !clean_hot))) {
+      clean_cold = true;
+    }
+
+    ceph_assert(clean_hot || clean_cold);
+    return seastar::when_all(
+      [this, clean_hot] {
+        if (!clean_hot) {
+          return seastar::now();
+        }
+        return major_cleaner->clean_space(
+        ).handle_error(
+          crimson::ct_error::assert_all{
+            "do_background_cycle encountered invalid error in hot clean_space"
+          }
+        ).finally([this] {
+          if (has_cold_tier()) {
+            cold_cleaner->release_projected_usage(
+                 major_cleaner->get_reclaim_size_per_cycle());
+          }
+        });
+      },
+      [this, clean_cold] {
+        if (!clean_cold) {
+          return seastar::now();
+        }
+        return cold_cleaner->clean_space(
+        ).handle_error(
+          crimson::ct_error::assert_all{
+            "do_background_cycle encountered invalid error in cold clean_space"
+          }
+        );
+      }
+    ).discard_result();
   }
 }
 

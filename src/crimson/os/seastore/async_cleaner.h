@@ -1152,6 +1152,8 @@ public:
 
   virtual const std::set<device_id_t>& get_device_ids() const = 0;
 
+  virtual std::size_t get_reclaim_size_per_cycle() const = 0;
+
   // test only
   virtual bool check_usage() = 0;
 
@@ -1333,6 +1335,10 @@ public:
 
   const std::set<device_id_t>& get_device_ids() const final {
     return sm_group->get_device_ids();
+  }
+
+  std::size_t get_reclaim_size_per_cycle() const final {
+    return config.reclaim_bytes_per_cycle;
   }
 
   // Testing interfaces
@@ -1651,6 +1657,10 @@ public:
 
   const std::set<device_id_t>& get_device_ids() const final {
     return rb_group->get_device_ids();
+  }
+
+  std::size_t get_reclaim_size_per_cycle() const final {
+    return 0;
   }
 
   RandomBlockManager* get_rbm(paddr_t paddr) {
