@@ -231,6 +231,25 @@ public:
     });
   }
 
+  void update_hit_ratio(Transaction& t, device_id_t id) {
+    if (epm->is_hot_device(id)) {
+      t.hit_hot++;
+    } else {
+      t.hit_cold++;
+    }
+  }
+  void update_read_ratio(Transaction& t, device_id_t id) {
+    if (epm->is_hot_device(id)) {
+      t.read_hot++;
+    } else {
+      t.read_cold++;
+    }
+  }
+  void submit_read_ratio(Transaction& t) {
+    if (cache) {
+      cache->update_read_ratio(t);
+    }
+  }
   /**
    * read_extent
    *

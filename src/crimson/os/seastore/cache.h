@@ -979,6 +979,10 @@ public:
   uint64_t get_omap_tree_depth() {
     return stats.omap_tree_depth;
   }
+  void update_read_ratio(Transaction& t) {
+    stats.read_hot += t.read_hot;
+    stats.read_cold += t.read_cold;
+  }
 private:
   ExtentPlacementManager& epm;
   RootBlockRef root;               ///< ref to current root
@@ -1201,6 +1205,10 @@ private:
 
     version_stat_t committed_dirty_version;
     version_stat_t committed_reclaim_version;
+    uint64_t hit_hot;
+    uint64_t hit_cold;
+    uint64_t read_hot;
+    uint64_t read_cold;
   } stats;
 
   template <typename CounterT>

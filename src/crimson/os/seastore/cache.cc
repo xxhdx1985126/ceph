@@ -202,6 +202,13 @@ void Cache::register_metrics()
     );
   }
 
+  metrics.add_group("cache", {
+    sm::make_counter("hit_hot", stats.hit_hot, sm::description("")),
+    sm::make_counter("hit_cold", stats.hit_cold, sm::description("")),
+    sm::make_counter("read_hot", stats.read_hot, sm::description("")),
+    sm::make_counter("read_cold", stats.read_cold, sm::description("")),
+  });
+
   {
     /*
      * efforts discarded/committed
@@ -1587,6 +1594,9 @@ void Cache::complete_commit(
       epm.mark_space_free(i->get_paddr(), i->get_length());
     }
   }
+
+  stats.hit_hot += t.hit_hot;
+  stats.hit_cold += t.hit_cold;
 }
 
 void Cache::init()

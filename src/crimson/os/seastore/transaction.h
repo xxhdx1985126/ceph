@@ -360,7 +360,16 @@ public:
   friend class crimson::os::seastore::SeaStore;
   friend class TransactionConflictCondition;
 
+  uint64_t hit_hot = 0;
+  uint64_t hit_cold = 0;
+  uint64_t read_hot = 0;
+  uint64_t read_cold = 0;
+
   void reset_preserve_handle(journal_seq_t initiated_after) {
+    hit_hot = 0;
+    hit_cold = 0;
+    read_hot = 0;
+    read_cold = 0;
     root.reset();
     offset = 0;
     delayed_temp_offset = 0;
