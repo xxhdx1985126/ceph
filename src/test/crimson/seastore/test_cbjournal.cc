@@ -157,7 +157,8 @@ struct cbjournal_test_t : public seastar_test_suite_t, JournalTrimmer
 
   void update_journal_tails(
     journal_seq_t dirty_tail,
-    journal_seq_t alloc_tail) final {}
+    journal_seq_t alloc_tail,
+    transaction_type_t) final {}
 
   seastar::future<> set_up_fut() final {
     return seastar::now();

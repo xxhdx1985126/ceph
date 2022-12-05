@@ -397,7 +397,7 @@ struct BackgroundListener {
 
   virtual ~BackgroundListener() = default;
   virtual void maybe_wake_background() = 0;
-  virtual void maybe_wake_blocked_io() = 0;
+  virtual void maybe_wake_blocked_io(transaction_type_t) = 0;
   virtual state_t get_state() const = 0;
 
   bool is_ready() const {
@@ -424,7 +424,9 @@ public:
 
   // set the committed journal tails
   virtual void update_journal_tails(
-      journal_seq_t dirty_tail, journal_seq_t alloc_tail) = 0;
+      journal_seq_t dirty_tail,
+      journal_seq_t alloc_tail,
+      transaction_type_t tran_type) = 0;
 
   virtual ~JournalTrimmer() {}
 
@@ -508,7 +510,9 @@ public:
   }
 
   void update_journal_tails(
-      journal_seq_t dirty_tail, journal_seq_t alloc_tail) final;
+      journal_seq_t dirty_tail,
+      journal_seq_t alloc_tail,
+      transaction_type_t) final;
 
   journal_type_t get_journal_type() const {
     return journal_type;
@@ -1089,13 +1093,13 @@ public:
 
   virtual void mark_space_used(paddr_t, extent_len_t) = 0;
 
-  virtual void mark_space_free(paddr_t, extent_len_t) = 0;
+  virtual void mark_space_free(paddr_t, extent_len_t, transaction_type_t) = 0;
 
   virtual void commit_space_used(paddr_t, extent_len_t) = 0;
 
   virtual void reserve_projected_usage(std::size_t) = 0;
 
-  virtual void release_projected_usage(std::size_t) = 0;
+  virtual void release_projected_usage(std::size_t, transaction_type_t) = 0;
 
   virtual bool should_block_io_on_clean() const = 0;
 
@@ -1248,7 +1252,7 @@ public:
 
   void mark_space_used(paddr_t, extent_len_t) final;
 
-  void mark_space_free(paddr_t, extent_len_t) final;
+  void mark_space_free(paddr_t, extent_len_t, transaction_type_t) final;
   
   void commit_space_used(paddr_t addr, extent_len_t len) final {
     mark_space_used(addr, len);
@@ -1256,7 +1260,7 @@ public:
 
   void reserve_projected_usage(std::size_t) final;
 
-  void release_projected_usage(size_t) final;
+  void release_projected_usage(size_t, transaction_type_t) final;
 
   bool should_block_io_on_clean() const final {
     assert(background_callback->is_ready());
@@ -1578,13 +1582,13 @@ public:
 
   void mark_space_used(paddr_t, extent_len_t) final;
 
-  void mark_space_free(paddr_t, extent_len_t) final;
+  void mark_space_free(paddr_t, extent_len_t, transaction_type_t) final;
 
   void commit_space_used(paddr_t, extent_len_t) final;
 
   void reserve_projected_usage(std::size_t) final;
 
-  void release_projected_usage(size_t) final;
+  void release_projected_usage(size_t, transaction_type_t) final;
 
   bool should_block_io_on_clean() const final {
     return false;

@@ -436,6 +436,9 @@ ExtentPlacementManager::BackgroundProcess::reserve_projected_usage(
     },
     [this] {
       blocking_io = seastar::promise<>();
+      if (time_point_block.time_since_epoch() == std::chrono::steady_clock::duration()) {
+        time_point_block = std::chrono::steady_clock::now();
+      }
       return blocking_io->get_future();
     }
   ).then([this, is_blocked, projected_usage] {
@@ -480,21 +483,45 @@ ExtentPlacementManager::BackgroundProcess::do_background_cycle()
   assert(is_ready());
   if (trimmer->should_trim_alloc()) {
     return trimmer->trim_alloc(
-    ).handle_error(
+    ).safe_then([this] {
+      if (time_point_block.time_since_epoch() !=
+          std::chrono::steady_clock::duration()) {
+        auto now = std::chrono::steady_clock::now();
+        auto d = now - time_point_block;
+        stats.time_blocked_on_trim_alloc += d.count();
+        time_point_block = now;
+      }
+    }).handle_error(
       crimson::ct_error::assert_all{
 	"do_background_cycle encountered invalid error in trim_alloc"
       }
     );
   } else if (trimmer->should_trim_dirty()) {
     return trimmer->trim_dirty(
-    ).handle_error(
+    ).safe_then([this] {
+      if (time_point_block.time_since_epoch() !=
+          std::chrono::steady_clock::duration()) {
+        auto now = std::chrono::steady_clock::now();
+        auto d = now - time_point_block;
+        stats.time_blocked_on_trim_dirty += d.count();
+        time_point_block = now;
+      }
+    }).handle_error(
       crimson::ct_error::assert_all{
 	"do_background_cycle encountered invalid error in trim_dirty"
       }
     );
   } else if (cleaner->should_clean_space()) {
     return cleaner->clean_space(
-    ).handle_error(
+    ).safe_then([this] {
+      if (time_point_block.time_since_epoch() !=
+          std::chrono::steady_clock::duration()) {
+        auto now = std::chrono::steady_clock::now();
+        auto d = now - time_point_block;
+        stats.time_blocked_on_clean += d.count();
+        time_point_block = now;
+      }
+    }).handle_error(
       crimson::ct_error::assert_all{
 	"do_background_cycle encountered invalid error in clean_space"
       }
@@ -517,7 +544,14 @@ void ExtentPlacementManager::BackgroundProcess::register_metrics()
     sm::make_counter("io_blocked_count_clean", stats.io_blocked_count_clean,
                      sm::description("IOs that are blocked by cleaning")),
     sm::make_counter("io_blocked_sum", stats.io_blocked_sum,
-                     sm::description("the sum of blocking IOs"))
+                     sm::description("the sum of blocking IOs")),
+
+    sm::make_counter("time_blocked_on_trim_alloc", stats.time_blocked_on_trim_alloc,
+                     sm::description("total time of io being blocked by trim_alloc")),
+    sm::make_counter("time_blocked_on_trim_dirty", stats.time_blocked_on_trim_dirty,
+                     sm::description("total time of io being blocked by trim_dirty")),
+    sm::make_counter("time_blocked_on_clean", stats.time_blocked_on_clean,
+                     sm::description("total time of io being blocked"))
   });
 }
 

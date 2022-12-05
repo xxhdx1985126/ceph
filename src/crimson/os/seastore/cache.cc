@@ -868,7 +868,7 @@ void Cache::mark_transaction_conflicted(
     efforts.mutate_delta_bytes += delta_stat.bytes;
 
     for (auto &i: t.pre_alloc_list) {
-      epm.mark_space_free(i->get_paddr(), i->get_length());
+      epm.mark_space_free(i->get_paddr(), i->get_length(), t.get_src());
     }
 
     auto& ool_stats = t.get_ool_write_stats();
@@ -1493,7 +1493,7 @@ void Cache::complete_commit(
   }
 
   for (auto &i: t.retired_set) {
-    epm.mark_space_free(i->get_paddr(), i->get_length());
+    epm.mark_space_free(i->get_paddr(), i->get_length(), t.get_src());
   }
   for (auto &i: t.existing_block_list) {
     if (i->is_valid()) {
@@ -1567,7 +1567,7 @@ void Cache::complete_commit(
 
   for (auto &i: t.pre_alloc_list) {
     if (!i->is_valid()) {
-      epm.mark_space_free(i->get_paddr(), i->get_length());
+      epm.mark_space_free(i->get_paddr(), i->get_length(), t.get_src());
     }
   }
 }

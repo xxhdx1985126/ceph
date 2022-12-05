@@ -444,7 +444,8 @@ void JournalTrimmerImpl::set_journal_head(journal_seq_t head)
 
 void JournalTrimmerImpl::update_journal_tails(
   journal_seq_t dirty_tail,
-  journal_seq_t alloc_tail)
+  journal_seq_t alloc_tail,
+  transaction_type_t tran_type)
 {
   LOG_PREFIX(JournalTrimmerImpl::update_journal_tails);
 
@@ -487,7 +488,7 @@ void JournalTrimmerImpl::update_journal_tails(
   }
 
   background_callback->maybe_wake_background();
-  background_callback->maybe_wake_blocked_io();
+  background_callback->maybe_wake_blocked_io(tran_type);
 }
 
 journal_seq_t JournalTrimmerImpl::get_tail_limit() const
@@ -634,7 +635,7 @@ void JournalTrimmerImpl::register_metrics()
                      sm::description("the size of the journal for dirty extents")),
     sm::make_counter("alloc_journal_bytes",
                      [this] { return get_alloc_journal_size(); },
-                     sm::description("the size of the journal for alloc info"))
+                     sm::description("the size of the journal for alloc info")),
   });
 }
 
@@ -1203,7 +1204,7 @@ SegmentCleaner::clean_space_ret SegmentCleaner::clean_space()
             adjust_segment_util(old_usage, new_usage);
             INFO("released {}, {}",
                  segment_to_release, stat_printer_t{*this, false});
-            background_callback->maybe_wake_blocked_io();
+            background_callback->maybe_wake_blocked_io(transaction_type_t::CLEANER);
           });
         } else {
           return clean_space_ertr::now();
@@ -1430,7 +1431,8 @@ void SegmentCleaner::mark_space_used(
 
 void SegmentCleaner::mark_space_free(
   paddr_t addr,
-  extent_len_t len)
+  extent_len_t len,
+  transaction_type_t tran_type)
 {
   LOG_PREFIX(SegmentCleaner::mark_space_free);
   assert(background_callback->get_state() >= state_t::SCAN_SPACE);
@@ -1452,7 +1454,7 @@ void SegmentCleaner::mark_space_free(
     len);
   auto new_usage = calc_utilization(seg_addr.get_segment_id());
   adjust_segment_util(old_usage, new_usage);
-  background_callback->maybe_wake_blocked_io();
+  background_callback->maybe_wake_blocked_io(tran_type);
   assert(ret >= 0);
   DEBUG("segment {} free len: {}~{}, live_bytes: {}",
         seg_addr.get_segment_id(),
@@ -1512,12 +1514,14 @@ void SegmentCleaner::reserve_projected_usage(std::size_t projected_usage)
   stats.projected_used_bytes_sum += stats.projected_used_bytes;
 }
 
-void SegmentCleaner::release_projected_usage(std::size_t projected_usage)
+void SegmentCleaner::release_projected_usage(
+  std::size_t projected_usage,
+  transaction_type_t tran_type)
 {
   assert(background_callback->is_ready());
   ceph_assert(stats.projected_used_bytes >= projected_usage);
   stats.projected_used_bytes -= projected_usage;
-  background_callback->maybe_wake_blocked_io();
+  background_callback->maybe_wake_blocked_io(tran_type);
 }
 
 void SegmentCleaner::print(std::ostream &os, bool is_detailed) const
@@ -1578,7 +1582,8 @@ void RBMCleaner::mark_space_used(
 
 void RBMCleaner::mark_space_free(
   paddr_t addr,
-  extent_len_t len)
+  extent_len_t len,
+  transaction_type_t)
 {
   LOG_PREFIX(RBMCleaner::mark_space_free);
   assert(addr.get_addr_type() == paddr_types_t::RANDOM_BLOCK);
@@ -1613,12 +1618,14 @@ void RBMCleaner::reserve_projected_usage(std::size_t projected_usage)
   stats.projected_used_bytes += projected_usage;
 }
 
-void RBMCleaner::release_projected_usage(std::size_t projected_usage)
+void RBMCleaner::release_projected_usage(
+  std::size_t projected_usage,
+  transaction_type_t tran_type)
 {
   assert(background_callback->is_ready());
   ceph_assert(stats.projected_used_bytes >= projected_usage);
   stats.projected_used_bytes -= projected_usage;
-  background_callback->maybe_wake_blocked_io();
+  background_callback->maybe_wake_blocked_io(tran_type);
 }
 
 RBMCleaner::clean_space_ret RBMCleaner::clean_space()

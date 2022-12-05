@@ -98,7 +98,7 @@ struct journal_test_t : seastar_test_suite_t, SegmentProvider, JournalTrimmer {
 
   journal_seq_t get_alloc_tail() const final { return dummy_tail; }
 
-  void update_journal_tails(journal_seq_t, journal_seq_t) final {}
+  void update_journal_tails(journal_seq_t, journal_seq_t, transaction_type_t) final {}
 
   /*
    * SegmentProvider interfaces

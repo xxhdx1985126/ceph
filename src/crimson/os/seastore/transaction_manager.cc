@@ -48,7 +48,8 @@ TransactionManager::mkfs_ertr::future<> TransactionManager::mkfs()
   ).safe_then([this] {
     return journal->open_for_mkfs();
   }).safe_then([this](auto start_seq) {
-    journal->get_trimmer().update_journal_tails(start_seq, start_seq);
+    journal->get_trimmer().update_journal_tails(
+      start_seq, start_seq, transaction_type_t::MAX);
     journal->get_trimmer().set_journal_head(start_seq);
     return epm->open_for_write();
   }).safe_then([this, FNAME]() {
@@ -123,7 +124,7 @@ TransactionManager::mount_ertr::future<> TransactionManager::mount()
         epm->start_scan_space();
         return backref_manager->scan_mapped_space(
           t,
-          [this](
+          [this, &t](
             paddr_t paddr,
             extent_len_t len,
             extent_types_t type,
@@ -135,7 +136,7 @@ TransactionManager::mount_ertr::future<> TransactionManager::mount()
             epm->mark_space_used(paddr, len);
           } else if (laddr == L_ADDR_NULL) {
             cache->update_tree_extents_num(type, -1);
-            epm->mark_space_free(paddr, len);
+            epm->mark_space_free(paddr, len, t.get_src());
           } else {
             cache->update_tree_extents_num(type, 1);
             epm->mark_space_used(paddr, len);
@@ -286,7 +287,7 @@ TransactionManager::submit_transaction(
       return submit_transaction_direct(t);
     }).finally([this, FNAME, projected_usage, &t] {
       SUBTRACET(seastore_t, "releasing projected_usage: {}", t, projected_usage);
-      epm->release_projected_usage(projected_usage);
+      epm->release_projected_usage(projected_usage, t.get_src());
     });
   });
 }
@@ -397,7 +398,8 @@ TransactionManager::submit_transaction_direct(
 
       journal->get_trimmer().update_journal_tails(
 	cache->get_oldest_dirty_from().value_or(start_seq),
-	cache->get_oldest_backref_dirty_from().value_or(start_seq));
+	cache->get_oldest_backref_dirty_from().value_or(start_seq),
+        tref.get_src());
       return journal->finish_commit(tref.get_src()
       ).then([&tref] {
 	return tref.get_handle().complete();

@@ -418,7 +418,8 @@ Journal::replay_ret CircularBoundedJournal::replay(
     }).safe_then([this]() {
       trimmer.update_journal_tails(
 	header.dirty_tail,
-	header.alloc_tail);
+	header.alloc_tail,
+	transaction_type_t::READ);
     });
   });
 }

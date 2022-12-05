@@ -293,8 +293,12 @@ public:
     background_process.mark_space_used(addr, len);
   }
 
-  void mark_space_free(paddr_t addr, extent_len_t len) {
-    background_process.mark_space_free(addr, len);
+  void mark_space_free(
+    paddr_t addr,
+    extent_len_t len,
+    transaction_type_t tran_type)
+  {
+    background_process.mark_space_free(addr, len, tran_type);
   }
 
   void commit_space_used(paddr_t addr, extent_len_t len) {
@@ -305,8 +309,11 @@ public:
     return background_process.reserve_projected_usage(projected_usage);
   }
 
-  void release_projected_usage(std::size_t projected_usage) {
-    return background_process.release_projected_usage(projected_usage);
+  void release_projected_usage(
+    std::size_t projected_usage,
+    transaction_type_t tran_type)
+  {
+    return background_process.release_projected_usage(projected_usage, tran_type);
   }
 
   // Testing interfaces
@@ -405,12 +412,16 @@ private:
       cleaner->mark_space_used(addr, len);
     }
 
-    void mark_space_free(paddr_t addr, extent_len_t len) {
+    void mark_space_free(
+      paddr_t addr,
+      extent_len_t len,
+      transaction_type_t tran_type)
+    {
       if (state < state_t::SCAN_SPACE) {
         return;
       }
       assert(cleaner);
-      cleaner->mark_space_free(addr, len);
+      cleaner->mark_space_free(addr, len, tran_type);
     }
 
     void commit_space_used(paddr_t addr, extent_len_t len) {
@@ -423,9 +434,12 @@ private:
 
     seastar::future<> reserve_projected_usage(std::size_t projected_usage);
 
-    void release_projected_usage(std::size_t projected_usage) {
+    void release_projected_usage(
+      std::size_t projected_usage,
+      transaction_type_t tran_type)
+    {
       ceph_assert(is_ready());
-      return cleaner->release_projected_usage(projected_usage);
+      return cleaner->release_projected_usage(projected_usage, tran_type);
     }
 
     seastar::future<> stop_background();
@@ -452,13 +466,33 @@ private:
       }
     }
 
-    void maybe_wake_blocked_io() final {
+    void maybe_wake_blocked_io(transaction_type_t tran_type) final {
       if (!is_ready()) {
         return;
       }
       if (!should_block_io() && blocking_io) {
         blocking_io->set_value();
         blocking_io = std::nullopt;
+        if (time_point_block.time_since_epoch() !=
+            std::chrono::steady_clock::duration()) {
+          auto d = std::chrono::steady_clock::now() - time_point_block;
+
+          switch (tran_type) {
+          case transaction_type_t::TRIM_DIRTY:
+            stats.time_blocked_on_trim_dirty += d.count();
+            break;
+          case transaction_type_t::TRIM_ALLOC:
+            stats.time_blocked_on_trim_alloc += d.count();
+            break;
+          case transaction_type_t::CLEANER:
+            stats.time_blocked_on_clean += d.count();
+            break;
+          default:
+            break;
+          }
+
+          time_point_block = std::chrono::steady_clock::time_point();
+        }
       }
     }
 
@@ -508,6 +542,11 @@ private:
       uint64_t io_blocked_count_trim = 0;
       uint64_t io_blocked_count_clean = 0;
       uint64_t io_blocked_sum = 0;
+
+      uint64_t time_blocked_on_trim_alloc = 0;
+      uint64_t time_blocked_on_trim_dirty = 0;
+      uint64_t time_blocked_on_clean = 0;
+
     } stats;
     seastar::metrics::metric_group metrics;
 
@@ -519,6 +558,7 @@ private:
     std::optional<seastar::promise<>> blocking_io;
     bool is_running_until_halt = false;
     state_t state = state_t::STOP;
+    std::chrono::steady_clock::time_point time_point_block;
   };
 
   bool prefer_ool;

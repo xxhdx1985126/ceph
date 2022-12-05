@@ -154,7 +154,9 @@ SegmentedJournal::scan_last_segment(
   LOG_PREFIX(SegmentedJournal::scan_last_segment);
   assert(segment_id == segment_header.physical_segment_id);
   trimmer.update_journal_tails(
-      segment_header.dirty_tail, segment_header.alloc_tail);
+      segment_header.dirty_tail,
+      segment_header.alloc_tail,
+      transaction_type_t::MAX);
   auto seq = journal_seq_t{
     segment_header.segment_seq,
     paddr_t::make_seg_paddr(segment_id, 0)
@@ -205,7 +207,9 @@ SegmentedJournal::scan_last_segment(
               ceph_assert(tail_delta.dirty_tail != JOURNAL_SEQ_NULL);
               ceph_assert(tail_delta.alloc_tail != JOURNAL_SEQ_NULL);
               trimmer.update_journal_tails(
-                  tail_delta.dirty_tail, tail_delta.alloc_tail);
+                  tail_delta.dirty_tail,
+		  tail_delta.alloc_tail,
+		  transaction_type_t::MAX);
             }
           }
         }
