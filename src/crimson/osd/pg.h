@@ -415,7 +415,7 @@ public:
   }
 
   void rebuild_missing_set_with_deletes(PGLog &pglog) final {
-    ceph_assert(0 == "Impossible for crimson");
+    //ceph_assert(0 == "Impossible for crimson");
   }
 
   PerfCounters &get_peering_perf() final {

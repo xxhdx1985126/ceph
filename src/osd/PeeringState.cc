@@ -777,9 +777,9 @@ void PeeringState::on_new_interval()
       !perform_deletes_during_peering()) {
     pl->rebuild_missing_set_with_deletes(pg_log);
   }
-  ceph_assert(
-    pg_log.get_missing().may_include_deletes ==
-    !perform_deletes_during_peering());
+  //ceph_assert(
+  //  pg_log.get_missing().may_include_deletes ==
+  //  !perform_deletes_during_peering());
 
   init_hb_stamps();
 
