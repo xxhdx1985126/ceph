@@ -1006,11 +1006,11 @@ PG::with_locked_obc(const hobject_t &hobj,
   const hobject_t oid = get_oid(hobj);
   switch (get_lock_type(op_info)) {
   case RWState::RWREAD:
-      return obc_loader.with_obc<RWState::RWREAD>(oid, std::move(f));
+      return obc_loader.with_obc<RWState::RWREAD>(oid, this, std::move(f));
   case RWState::RWWRITE:
-      return obc_loader.with_obc<RWState::RWWRITE>(oid, std::move(f));
+      return obc_loader.with_obc<RWState::RWWRITE>(oid, this, std::move(f));
   case RWState::RWEXCL:
-      return obc_loader.with_obc<RWState::RWEXCL>(oid, std::move(f));
+      return obc_loader.with_obc<RWState::RWEXCL>(oid, this, std::move(f));
   default:
     ceph_abort();
   };

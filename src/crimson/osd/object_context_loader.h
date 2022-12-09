@@ -33,10 +33,12 @@ public:
 
   template<RWState::State State>
   load_obc_iertr::future<> with_obc(hobject_t oid,
+				    Ref<PG> pg,
                                     with_obc_func_t&& func);
 
   template<RWState::State State>
   load_obc_iertr::future<> with_clone_obc(hobject_t oid,
+					  Ref<PG> pg,
                                           with_obc_func_t&& func);
 
   // Use this variant in the case where the head object
@@ -45,20 +47,23 @@ public:
   template<RWState::State State>
   load_obc_iertr::future<> with_clone_obc_only(ObjectContextRef head,
                                                hobject_t oid,
+					       Ref<PG> pg,
                                                with_obc_func_t&& func);
 
   template<RWState::State State>
   load_obc_iertr::future<> with_head_obc(ObjectContextRef obc,
                                          bool existed,
+					 Ref<PG> pg,
                                          with_obc_func_t&& func);
 
   template<RWState::State State>
   load_obc_iertr::future<ObjectContextRef>
   get_or_load_obc(ObjectContextRef obc,
-                  bool existed);
+                  bool existed,
+		  Ref<PG> pg);
 
   load_obc_iertr::future<ObjectContextRef>
-  load_obc(ObjectContextRef obc);
+  load_obc(ObjectContextRef obc, Ref<PG> pg);
 
   load_obc_iertr::future<> reload_obc(ObjectContext& obc) const;
 
