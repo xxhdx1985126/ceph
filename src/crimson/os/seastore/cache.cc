@@ -474,7 +474,7 @@ void Cache::register_metrics()
         sm::description("total number of dirty extents")
       ),
       sm::make_counter(
-        "dirty_extent_bytes",
+        "dirty_bytes",
         stats.dirty_bytes,
         sm::description("total bytes of dirty extents")
       ),
@@ -494,6 +494,20 @@ void Cache::register_metrics()
       ),
     }
   );
+
+  for (auto& [ext, ext_label] : labels_by_ext) {
+    metrics.add_group(
+      "cache",
+      {
+	sm::make_counter(
+	  "dirty_extent_bytes",
+	  get_by_ext(stats.dirty_bytes_by_ext, ext),
+	  sm::description("dirty bytes of extents"),
+	  {ext_label}
+	),
+      }
+    );
+  }
 
   /**
    * tree stats
@@ -730,6 +744,7 @@ void Cache::add_to_dirty(CachedExtentRef ref)
   intrusive_ptr_add_ref(&*ref);
   dirty.push_back(*ref);
   stats.dirty_bytes += ref->get_length();
+  get_by_ext(stats.dirty_bytes_by_ext, ref->get_type()) += ref->get_length();
 }
 
 void Cache::remove_from_dirty(CachedExtentRef ref)
@@ -737,6 +752,7 @@ void Cache::remove_from_dirty(CachedExtentRef ref)
   if (ref->is_dirty()) {
     ceph_assert(ref->primary_ref_list_hook.is_linked());
     stats.dirty_bytes -= ref->get_length();
+    get_by_ext(stats.dirty_bytes_by_ext, ref->get_type()) -= ref->get_length();
     dirty.erase(dirty.s_iterator_to(*ref));
     intrusive_ptr_release(&*ref);
   } else {
@@ -780,6 +796,7 @@ void Cache::commit_replace_extent(
       || prev->primary_ref_list_hook.is_linked());
     if (prev->is_dirty()) {
       stats.dirty_bytes -= prev->get_length();
+      get_by_ext(stats.dirty_bytes_by_ext, prev->get_type()) -= prev->get_length();
       dirty.erase(dirty.s_iterator_to(*prev));
       intrusive_ptr_release(&*prev);
     }
@@ -1622,6 +1639,8 @@ Cache::close_ertr::future<> Cache::close()
   for (auto i = dirty.begin(); i != dirty.end(); ) {
     auto ptr = &*i;
     stats.dirty_bytes -= ptr->get_length();
+    get_by_ext(stats.dirty_bytes_by_ext, ptr->get_type()) -= ptr->get_length();
+    assert(get_by_ext(stats.dirty_bytes_by_ext, ptr->get_type()) >= 0);
     dirty.erase(i++);
     intrusive_ptr_release(ptr);
   }

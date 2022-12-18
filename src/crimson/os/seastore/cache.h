@@ -1168,6 +1168,7 @@ private:
     counter_by_src_t<query_counters_t> cache_query_by_src;
     success_read_trans_efforts_t success_read_efforts;
     uint64_t dirty_bytes = 0;
+    counter_by_extent_t<uint64_t> dirty_bytes_by_ext;
 
     uint64_t onode_tree_depth = 0;
     int64_t onode_tree_extents_num = 0;
