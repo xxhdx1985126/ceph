@@ -205,6 +205,8 @@ public:
     out << "CachedExtent(addr=" << this
 	<< ", type=" << get_type()
 	<< ", version=" << version
+	<< ", version_by_mutate=" << version_by_mutate
+	<< ", version_by_rewrite=" << version_by_rewrite
 	<< ", dirty_from_or_retired_at=" << dirty_from_or_retired_at
 	<< ", modify_time=" << sea_time_point_printer_t{modify_time}
 	<< ", paddr=" << get_paddr()
@@ -365,6 +367,14 @@ public:
     return version;
   }
 
+  extent_version_t get_version_by_mutate() const {
+    return version_by_mutate;
+  }
+
+  extent_version_t get_version_by_rewrite() const {
+    return version_by_rewrite;
+  }
+
   /// Returns crc32c of buffer
   uint32_t get_crc32c() {
     return ceph_crc32c(
@@ -463,6 +473,9 @@ private:
   /// number of deltas since initial write
   extent_version_t version = 0;
 
+  extent_version_t version_by_mutate = 0;
+  extent_version_t version_by_rewrite = 0;
+
   /// address of original block -- relative iff is_pending() and is_clean()
   paddr_t poffset;
 
@@ -502,6 +515,8 @@ protected:
       dirty_from_or_retired_at(other.dirty_from_or_retired_at),
       ptr(other.ptr.c_str(), other.ptr.length()),
       version(other.version),
+      version_by_mutate(other.version_by_mutate),
+      version_by_rewrite(other.version_by_rewrite),
       poffset(other.poffset) {}
 
   struct share_buffer_t {};
@@ -510,6 +525,8 @@ protected:
     dirty_from_or_retired_at(other.dirty_from_or_retired_at),
     ptr(other.ptr),
     version(other.version),
+    version_by_mutate(other.version_by_mutate),
+    version_by_rewrite(other.version_by_rewrite),
     poffset(other.poffset) {}
 
   struct retired_placeholder_t{};

@@ -512,7 +512,11 @@ TransactionManager::rewrite_extent_ret TransactionManager::rewrite_extent(
     extent->set_modify_time(modify_time);
   }
 
-  t.get_rewrite_version_stats().increment(extent->get_version());
+  t.get_rewrite_version_stats(
+    extent->get_type()).increment(
+      extent->get_version(),
+      extent->get_version_by_mutate(),
+      extent->get_version_by_rewrite());
 
   if (is_backref_node(extent->get_type())) {
     DEBUGT("rewriting backref extent -- {}", t, *extent);

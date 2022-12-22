@@ -209,6 +209,7 @@ struct cbjournal_test_t : public seastar_test_suite_t, JournalTrimmer
 	1,
 	0,
 	segment_type_t::JOURNAL,
+	true,
 	bl
     };
   }

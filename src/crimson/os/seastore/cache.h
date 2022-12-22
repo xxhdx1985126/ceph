@@ -1193,8 +1193,8 @@ private:
     std::array<uint64_t, NUM_SRC_COMB> trans_conflicts_by_srcs;
     counter_by_src_t<uint64_t> trans_conflicts_by_unknown;
 
-    version_stat_t committed_dirty_version;
-    version_stat_t committed_reclaim_version;
+    counter_by_extent_t<version_stat_t> committed_dirty_version;
+    counter_by_extent_t<version_stat_t> committed_reclaim_version;
   } stats;
 
   template <typename CounterT>

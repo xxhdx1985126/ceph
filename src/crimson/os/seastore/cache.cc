@@ -682,31 +682,61 @@ void Cache::register_metrics()
   /**
    * rewrite version
    */
-  metrics.add_group(
-    "cache",
-    {
-      sm::make_counter(
-        "version_count_dirty",
-        stats.committed_dirty_version.num,
-        sm::description("total number of rewrite-dirty extents")
-      ),
-      sm::make_counter(
-        "version_sum_dirty",
-        stats.committed_dirty_version.version,
-        sm::description("sum of the version from rewrite-dirty extents")
-      ),
-      sm::make_counter(
-        "version_count_reclaim",
-        stats.committed_reclaim_version.num,
-        sm::description("total number of rewrite-reclaim extents")
-      ),
-      sm::make_counter(
-        "version_sum_reclaim",
-        stats.committed_reclaim_version.version,
-        sm::description("sum of the version from rewrite-reclaim extents")
-      ),
-    }
-  );
+  for (auto& [ext, ext_label] : labels_by_ext) {
+    metrics.add_group(
+      "cache",
+      {
+	sm::make_counter(
+	  "version_count_dirty",
+	  get_by_ext(stats.committed_dirty_version, ext).num,
+	  sm::description("total number of rewrite-dirty extents"),
+	  {ext_label}
+	),
+	sm::make_counter(
+	  "version_sum_dirty",
+	  get_by_ext(stats.committed_dirty_version, ext).version,
+	  sm::description("sum of the version from rewrite-dirty extents"),
+	  {ext_label}
+	),
+	sm::make_counter(
+	  "version_by_mutate_sum_dirty",
+	  get_by_ext(stats.committed_dirty_version, ext).version_by_mutate,
+	  sm::description("sum of the mutate version from rewrite-dirty extents"),
+	  {ext_label}
+	),
+	sm::make_counter(
+	  "version_by_rewrite_sum_dirty",
+	  get_by_ext(stats.committed_dirty_version, ext).version_by_rewrite,
+	  sm::description("sum of the rewrite version from rewrite-dirty extents"),
+	  {ext_label}
+	),
+	sm::make_counter(
+	  "version_count_reclaim",
+	  get_by_ext(stats.committed_reclaim_version, ext).num,
+	  sm::description("total number of rewrite-reclaim extents"),
+	  {ext_label}
+	),
+	sm::make_counter(
+	  "version_sum_reclaim",
+	  get_by_ext(stats.committed_reclaim_version, ext).version,
+	  sm::description("sum of the version from rewrite-reclaim extents"),
+	  {ext_label}
+	),
+	sm::make_counter(
+	  "version_by_mutate_sum_reclaim",
+	  get_by_ext(stats.committed_reclaim_version, ext).version_by_mutate,
+	  sm::description("sum of the mutate version from rewrite-reclaim extents"),
+	  {ext_label}
+	),
+	sm::make_counter(
+	  "version_by_rewrite_sum_reclaim",
+	  get_by_ext(stats.committed_reclaim_version, ext).version_by_rewrite,
+	  sm::description("sum of the rewrite version from rewrite-reclaim extents"),
+	  {ext_label}
+	),
+      }
+    );
+  }
 }
 
 void Cache::add_extent(
@@ -1017,6 +1047,12 @@ CachedExtentRef Cache::duplicate_for_write(
 
   if (i->is_exist_clean()) {
     i->version++;
+    if (t.get_src() == transaction_type_t::MUTATE
+	|| t.get_src() == transaction_type_t::TRIM_ALLOC) {
+      i->version_by_mutate++;
+    } else {
+      i->version_by_rewrite++;
+    }
     i->state = CachedExtent::extent_state_t::EXIST_MUTATION_PENDING;
     i->last_committed_crc = i->get_crc32c();
     t.add_mutated_extent(i);
@@ -1034,6 +1070,12 @@ CachedExtentRef Cache::duplicate_for_write(
   }
 
   ret->version++;
+  if (t.get_src() == transaction_type_t::MUTATE
+      || t.get_src() == transaction_type_t::TRIM_ALLOC) {
+    ret->version_by_mutate++;
+  } else {
+    ret->version_by_rewrite++;
+  }
   ret->state = CachedExtent::extent_state_t::MUTATION_PENDING;
   DEBUGT("{} -> {}", t, *i, *ret);
   return ret;
@@ -1121,6 +1163,8 @@ record_t Cache::prepare_record(
 	  t.root->get_version() - 1,
 	  MAX_SEG_SEQ,
 	  segment_type_t::NULL_SEG,
+	  (t.get_src() == transaction_type_t::MUTATE
+	    || t.get_src() == transaction_type_t::TRIM_ALLOC),
 	  std::move(delta_bl)
 	});
     } else {
@@ -1149,6 +1193,8 @@ record_t Cache::prepare_record(
 	  i->get_version() - 1,
 	  sseq,
 	  stype,
+	  (t.get_src() == transaction_type_t::MUTATE
+	    || t.get_src() == transaction_type_t::TRIM_ALLOC),
 	  std::move(delta_bl)
 	});
       i->last_committed_crc = final_crc;
@@ -1401,13 +1447,29 @@ record_t Cache::prepare_record(
   efforts.inline_record_metadata_bytes +=
     (record.size.get_raw_mdlength() - record.get_delta_size());
 
-  auto &rewrite_version_stats = t.get_rewrite_version_stats();
-  if (trans_src == Transaction::src_t::TRIM_DIRTY) {
-    stats.committed_dirty_version.increment_stat(rewrite_version_stats);
-  } else if (trans_src == Transaction::src_t::CLEANER) {
-    stats.committed_reclaim_version.increment_stat(rewrite_version_stats);
-  } else {
-    assert(rewrite_version_stats.is_clear());
+  for (auto ext = (uint8_t)extent_types_t::ROOT;
+       ext < (uint8_t)extent_types_t::NONE;
+       ext++)
+  {
+    auto &rewrite_version_stats = t.get_rewrite_version_stats(
+      (extent_types_t)ext);
+    if (rewrite_version_stats.is_clear()) {
+      continue;
+    }
+
+    if (trans_src == Transaction::src_t::TRIM_DIRTY) {
+      get_by_ext(
+	stats.committed_dirty_version,
+	(extent_types_t)ext).increment_stat(
+	    rewrite_version_stats);
+    } else if (trans_src == Transaction::src_t::CLEANER) {
+      get_by_ext(
+	stats.committed_reclaim_version,
+	(extent_types_t)ext).increment_stat(
+	    rewrite_version_stats);
+    } else {
+      ceph_abort("impossible");
+    }
   }
 
   return record;
@@ -1799,6 +1861,11 @@ Cache::replay_delta(
       assert(extent->last_committed_crc == delta.final_crc);
 
       extent->version++;
+      if (delta.by_mutation) {
+	extent->version_by_mutate++;
+      } else {
+	extent->version_by_rewrite++;
+      }
       if (extent->version == 1) {
 	extent->dirty_from_or_retired_at = journal_seq;
         DEBUG("replayed extent delta at {} {}, become dirty -- {}, extent={}" ,

@@ -44,19 +44,28 @@ inline std::ostream& operator<<(std::ostream& out, const io_stat_t& stat) {
 struct version_stat_t {
   uint64_t num = 0;
   uint64_t version = 0;
+  uint64_t version_by_mutate = 0;
+  uint64_t version_by_rewrite = 0;
 
   bool is_clear() const {
     return (num == 0 && version == 0);
   }
 
-  void increment(extent_version_t v) {
+  void increment(
+    extent_version_t v,
+    extent_version_t v_by_m,
+    extent_version_t v_by_r) {
     ++num;
     version += v;
+    version_by_mutate += v_by_m;
+    version_by_rewrite += v_by_r;
   }
 
   void increment_stat(const version_stat_t& stat) {
     num += stat.num;
     version += stat.version;
+    version_by_mutate += stat.version_by_mutate;
+    version_by_rewrite += stat.version_by_rewrite;
   }
 };
 
@@ -437,8 +446,10 @@ public:
   ool_write_stats_t& get_ool_write_stats() {
     return ool_write_stats;
   }
-  version_stat_t& get_rewrite_version_stats() {
-    return rewrite_version_stats;
+  version_stat_t& get_rewrite_version_stats(extent_types_t ext_type) {
+    auto index = static_cast<uint8_t>(ext_type);
+    assert(index < EXTENT_TYPES_MAX);
+    return rewrite_version_stats[index];
   }
 
   struct existing_block_stats_t {
@@ -540,7 +551,11 @@ private:
   tree_stats_t lba_tree_stats;
   tree_stats_t backref_tree_stats;
   ool_write_stats_t ool_write_stats;
-  version_stat_t rewrite_version_stats;
+
+  template <typename CounterT>
+  using counter_by_extent_t = std::array<CounterT, EXTENT_TYPES_MAX>;
+
+  counter_by_extent_t<version_stat_t> rewrite_version_stats;
 
   bool conflicted = false;
 

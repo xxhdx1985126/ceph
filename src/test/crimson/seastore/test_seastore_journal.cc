@@ -261,6 +261,7 @@ struct journal_test_t : seastar_test_suite_t, SegmentProvider, JournalTrimmer {
       1,
       MAX_SEG_SEQ,
       segment_type_t::NULL_SEG,
+      true,
       bl
     };
   }

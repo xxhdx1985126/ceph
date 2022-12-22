@@ -1260,6 +1260,7 @@ struct delta_info_t {
   extent_version_t pversion;                   ///< prior version
   segment_seq_t ext_seq;		       ///< seq of the extent's segment
   segment_type_t seg_type;
+  bool by_mutation = true;
   ceph::bufferlist bl;                         ///< payload
 
   DENC(delta_info_t, v, p) {
@@ -1273,6 +1274,7 @@ struct delta_info_t {
     denc(v.pversion, p);
     denc(v.ext_seq, p);
     denc(v.seg_type, p);
+    denc(v.by_mutation, p);
     denc(v.bl, p);
     DENC_FINISH(p);
   }
