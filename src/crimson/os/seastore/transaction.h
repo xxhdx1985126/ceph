@@ -552,9 +552,6 @@ private:
   tree_stats_t backref_tree_stats;
   ool_write_stats_t ool_write_stats;
 
-  template <typename CounterT>
-  using counter_by_extent_t = std::array<CounterT, EXTENT_TYPES_MAX>;
-
   counter_by_extent_t<version_stat_t> rewrite_version_stats;
 
   bool conflicted = false;

@@ -1079,6 +1079,9 @@ enum class extent_types_t : uint8_t {
 using extent_types_le_t = uint8_t;
 constexpr auto EXTENT_TYPES_MAX = static_cast<uint8_t>(extent_types_t::NONE);
 
+template <typename CounterT>
+using counter_by_extent_t = std::array<CounterT, EXTENT_TYPES_MAX>;
+
 constexpr size_t BACKREF_NODE_SIZE = 4096;
 
 std::ostream &operator<<(std::ostream &out, extent_types_t t);

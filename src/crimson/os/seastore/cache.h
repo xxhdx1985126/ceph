@@ -1108,9 +1108,6 @@ private:
     uint64_t hit = 0;
   };
 
-  template <typename CounterT>
-  using counter_by_extent_t = std::array<CounterT, EXTENT_TYPES_MAX>;
-
   struct invalid_trans_efforts_t {
     io_stat_t read;
     io_stat_t mutate;
@@ -1195,6 +1192,7 @@ private:
 
     counter_by_extent_t<version_stat_t> committed_dirty_version;
     counter_by_extent_t<version_stat_t> committed_reclaim_version;
+    uint64_t max_dirty_bytes = 0;
   } stats;
 
   template <typename CounterT>

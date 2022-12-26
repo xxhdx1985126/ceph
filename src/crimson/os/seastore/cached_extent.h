@@ -678,6 +678,9 @@ public:
     extent.parent_index = this;
 
     bytes += extent.get_length();
+    if (bytes > max_bytes) {
+      max_bytes = bytes;
+    }
   }
 
   void erase(CachedExtent &extent) {
@@ -722,6 +725,10 @@ public:
     return bytes;
   }
 
+  auto get_max_bytes() const {
+    return max_bytes;
+  }
+
   ~ExtentIndex() {
     assert(extent_index.empty());
     assert(bytes == 0);
@@ -729,6 +736,7 @@ public:
 
 private:
   uint64_t bytes = 0;
+  uint64_t max_bytes = 0;
 };
 
 class LogicalCachedExtent;

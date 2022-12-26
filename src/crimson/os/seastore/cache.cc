@@ -467,6 +467,13 @@ void Cache::register_metrics()
         sm::description("total bytes of cached extents")
       ),
       sm::make_counter(
+        "cached_extent_max_bytes",
+        [this] {
+          return extents.get_max_bytes();
+        },
+        sm::description("maximum of the total bytes of cached extents in history")
+      ),
+      sm::make_counter(
         "dirty_extents",
         [this] {
           return dirty.size();
@@ -477,6 +484,11 @@ void Cache::register_metrics()
         "dirty_bytes",
         stats.dirty_bytes,
         sm::description("total bytes of dirty extents")
+      ),
+      sm::make_counter(
+	"max_dirty_bytes_in_history",
+	stats.max_dirty_bytes,
+	sm::description("max value of dirty_bytes in history")
       ),
       sm::make_counter(
 	"cache_lru_size_bytes",
@@ -774,6 +786,9 @@ void Cache::add_to_dirty(CachedExtentRef ref)
   intrusive_ptr_add_ref(&*ref);
   dirty.push_back(*ref);
   stats.dirty_bytes += ref->get_length();
+  if (stats.dirty_bytes > stats.max_dirty_bytes) {
+    stats.max_dirty_bytes = stats.dirty_bytes;
+  }
   get_by_ext(stats.dirty_bytes_by_ext, ref->get_type()) += ref->get_length();
 }
 
