@@ -31,12 +31,18 @@ TransactionManager::TransactionManager(
   ExtentPlacementManagerRef &&_epm,
   BackrefManagerRef&& _backref_manager)
   : cache(std::move(_cache)),
+    onode_cache(nullptr),
     lba_manager(std::move(_lba_manager)),
     journal(std::move(_journal)),
     epm(std::move(_epm)),
     backref_manager(std::move(_backref_manager))
 {
   epm->set_extent_callback(this);
+  if (epm->has_multiple_tiers()) {
+    onode_cache = std::make_unique<OnodeCache>();
+    onode_cache->set_transaction_manager(this);
+    epm->init_onode_cache(onode_cache.get());
+  }
   journal->set_write_pipeline(&write_pipeline);
 }
 

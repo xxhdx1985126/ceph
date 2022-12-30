@@ -12,6 +12,7 @@
 #include "crimson/os/seastore/random_block_manager.h"
 #include "crimson/os/seastore/random_block_manager/block_rb_manager.h"
 #include "crimson/os/seastore/randomblock_manager_group.h"
+#include "crimson/os/seastore/onode_cache.h"
 
 namespace crimson::os::seastore {
 
@@ -137,6 +138,10 @@ public:
   }
 
   void init(JournalTrimmerImplRef &&, AsyncCleanerRef &&, AsyncCleanerRef &&);
+  void init_onode_cache(OnodeCache *oc) {
+    oc->set_epm(this);
+    background_process.init_onode_cache(oc);
+  }
 
   SegmentSeqAllocator* get_ool_segment_seq_allocator() const {
     return ool_segment_seq_allocator.get();
@@ -446,6 +451,15 @@ private:
           "seastore_multiple_tiers_stop_evict_threshold");
     }
 
+    void init_onode_cache(OnodeCache *oc) {
+      onode_cache = oc;
+      onode_cache->set_background_callback(this);
+    }
+
+    bool support_onode_cache() const {
+      return onode_cache;
+    }
+
     rewrite_gen_t get_generation_mapping(rewrite_gen_t gen) const {
       return generation_mappings[gen];
     }
@@ -689,6 +703,7 @@ private:
      * cold tier (optional, see has_cold_tier())
      */
     AsyncCleanerRef cold_cleaner;
+    OnodeCache* onode_cache = nullptr;
     std::vector<AsyncCleaner*> cleaner_by_device_id;
     rewrite_gen_t generation_mappings[REWRITE_GENERATIONS];
     double start_evict_ratio;

@@ -627,6 +627,7 @@ private:
   friend class Transaction;
 
   CacheRef cache;
+  OnodeCacheRef onode_cache;
   LBAManagerRef lba_manager;
   JournalRef journal;
   ExtentPlacementManagerRef epm;
