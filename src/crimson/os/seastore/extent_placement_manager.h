@@ -167,6 +167,14 @@ public:
     return background_process.get_stat();
   }
 
+  bool has_multiple_tiers() const {
+    return background_process.has_multiple_tiers();
+  }
+
+  bool is_hot_device(device_id_t id) const {
+    return background_process.is_hot_device(id);
+  }
+
   using mount_ertr = crimson::errorator<
       crimson::ct_error::input_output_error>;
   using mount_ret = mount_ertr::future<>;
@@ -470,6 +478,16 @@ private:
       return stat;
     }
 
+    bool has_multiple_tiers() const {
+      return cold_cleaner.get();
+    }
+
+    bool is_hot_device(device_id_t id) const {
+      return !cold_cleaner ||
+        (cleaner_by_device_id[id] &&
+         cleaner_by_device_id[id] == major_cleaner.get());
+    }
+
     using mount_ret = ExtentPlacementManager::mount_ret;
     mount_ret mount() {
       ceph_assert(state == state_t::STOP);
@@ -583,6 +601,9 @@ private:
         blocking_io->set_value();
         blocking_io = std::nullopt;
       }
+    }
+
+    void maybe_wake_write_cache() final {
     }
 
   private:

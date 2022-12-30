@@ -97,3 +97,18 @@ options:
   level: advanced
   desc: stop evicting cold data when used ratio is less than this value
   default: 0.6
+- name: seastore_evict_size_per_cycle
+  type: size
+  level: advanced
+  desc: Size in bytes of extents to evict
+  default: 2097152
+- name: seastore_cached_extents_size_limit
+  type: size
+  level: advanced
+  desc: Size in bytes of extents to cache
+  default: 2097152
+- name: seastore_onode_cache_memory_capacity
+  type: size
+  level: advanced
+  desc: Size in bytes of extents to cache
+  default: 104857600

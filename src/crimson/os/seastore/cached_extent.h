@@ -23,6 +23,7 @@ using CachedExtentRef = boost::intrusive_ptr<CachedExtent>;
 class SegmentedAllocator;
 class TransactionManager;
 class ExtentPlacementManager;
+class OnodeCache;
 
 // #define DEBUG_CACHED_EXTENT_REF
 #ifdef DEBUG_CACHED_EXTENT_REF
@@ -406,8 +407,12 @@ public:
   void reset_user_hint() {
     if (p_user_hint != PLACEMENT_HINT_NULL) {
       user_hint = p_user_hint;
-      p_user_hint = PLACEMENT_HINT_NULL;
+    } else if (user_hint == placement_hint_t::EVICT) {
+      user_hint = placement_hint_t::COLD;
+    } else if (user_hint == placement_hint_t::READ_CACHE) {
+      user_hint = placement_hint_t::HOT;
     }
+    p_user_hint = PLACEMENT_HINT_NULL;
   }
 
   rewrite_gen_t get_rewrite_generation() const {
@@ -423,7 +428,9 @@ public:
   void set_target_rewrite_generation(rewrite_gen_t gen) {
     assert(is_target_rewrite_generation(gen));
 
-    user_hint = placement_hint_t::REWRITE;
+    if (user_hint != placement_hint_t::EVICT) {
+      user_hint = placement_hint_t::REWRITE;
+    }
     rewrite_generation = gen;
   }
 
@@ -463,6 +470,10 @@ private:
     return extent_index_hook.is_linked();
   }
 
+  bool is_in_read_cache() {
+    return read_cache_hook.is_linked();
+  }
+
   /// hook for intrusive ref list (mainly dirty or lru list)
   boost::intrusive::list_member_hook<> primary_ref_list_hook;
   using primary_ref_list_member_options = boost::intrusive::member_hook<
@@ -472,6 +483,15 @@ private:
   using list = boost::intrusive::list<
     CachedExtent,
     primary_ref_list_member_options>;
+
+  boost::intrusive::list_member_hook<> read_cache_hook;
+  using read_cache_list_member_options = boost::intrusive::member_hook<
+    CachedExtent,
+    boost::intrusive::list_member_hook<>,
+    &CachedExtent::read_cache_hook>;
+  using read_list = boost::intrusive::list<
+    CachedExtent,
+    read_cache_list_member_options>;
 
   /**
    * dirty_from_or_retired_at
@@ -597,6 +617,7 @@ protected:
   friend class crimson::os::seastore::SegmentedAllocator;
   friend class crimson::os::seastore::TransactionManager;
   friend class crimson::os::seastore::ExtentPlacementManager;
+  friend class crimson::os::seastore::OnodeCache;
 };
 
 std::ostream &operator<<(std::ostream &, CachedExtent::extent_state_t);
