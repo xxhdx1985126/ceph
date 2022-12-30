@@ -605,6 +605,9 @@ private:
       if (background_should_run()) {
         do_wake_background();
       }
+      if (onode_cache->should_write_out_extents()) {
+        do_wake_write_cache();
+      }
     }
 
     void maybe_wake_blocked_io() final {
@@ -618,6 +621,12 @@ private:
     }
 
     void maybe_wake_write_cache() final {
+      if (!is_ready()) {
+        return;
+      }
+      if (onode_cache && onode_cache->should_write_out_extents()) {
+        do_wake_write_cache();
+      }
     }
 
   private:
@@ -634,11 +643,19 @@ private:
     void log_state(const char *caller) const;
 
     seastar::future<> run();
+    seastar::future<> run_write_cache();
 
     void do_wake_background() {
       if (blocking_background) {
 	blocking_background->set_value();
 	blocking_background = std::nullopt;
+      }
+    }
+
+    void do_wake_write_cache() {
+      if (blocking_write_cache) {
+        blocking_write_cache->set_value();
+        blocking_write_cache = std::nullopt;
       }
     }
 
@@ -657,7 +674,13 @@ private:
       auto stat = major_cleaner->get_stat();
       double used_ratio = (double)stat.data_stored / (double)stat.total;
       return used_ratio > start_evict_ratio ||
-        (used_ratio >= stop_evict_ratio && start_evict);
+        (used_ratio >= stop_evict_ratio && start_evict) ||
+        (onode_cache && onode_cache->should_evict());
+    }
+
+    bool should_write_cache() const {
+      return cold_cleaner && onode_cache &&
+        onode_cache->should_write_out_extents();
     }
 
     bool should_block_io() const {
@@ -681,6 +704,7 @@ private:
     reserve_result_t try_reserve(const projected_usage_t &usage);
 
     seastar::future<> do_background_cycle();
+    seastar::future<> do_write_cache();
 
     void update_generation_mappings();
 
@@ -715,6 +739,9 @@ private:
     bool is_running_until_halt = false;
     bool start_evict = false;
     state_t state = state_t::STOP;
+
+    std::optional<seastar::future<>> write_cache_process_join;
+    std::optional<seastar::promise<>> blocking_write_cache;
   };
 
   bool prefer_ool;

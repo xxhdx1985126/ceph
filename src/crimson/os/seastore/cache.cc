@@ -1487,6 +1487,7 @@ void Cache::complete_commit(
       ERRORT("{}", t, *i);
       ceph_abort("not possible");
     }
+    i->reset_user_hint();
   });
 
   // Add new copy of mutated blocks, set_io_wait to block until written

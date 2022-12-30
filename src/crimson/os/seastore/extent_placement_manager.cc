@@ -405,27 +405,40 @@ void ExtentPlacementManager::BackgroundProcess::start_background()
   ceph_assert(state == state_t::SCAN_SPACE);
   assert(!is_running());
   process_join = seastar::now();
+  if (onode_cache) {
+    write_cache_process_join = seastar::now();
+  }
   state = state_t::RUNNING;
   assert(is_running());
   process_join = run();
+  if (onode_cache) {
+    write_cache_process_join = run_write_cache();
+  }
 }
 
 seastar::future<>
 ExtentPlacementManager::BackgroundProcess::stop_background()
 {
-  return seastar::futurize_invoke([this] {
+  return seastar::do_with(std::vector<seastar::future<>>(),
+                          [this](auto &futs) {
     if (!is_running()) {
       if (state != state_t::HALT) {
         state = state_t::STOP;
       }
       return seastar::now();
     }
-    auto ret = std::move(*process_join);
+    futs.emplace_back(std::move(*process_join));
     process_join.reset();
+    if (onode_cache) {
+      futs.emplace_back(std::move(*write_cache_process_join));
+      write_cache_process_join.reset();
+    }
     state = state_t::HALT;
     assert(!is_running());
     do_wake_background();
-    return ret;
+    do_wake_write_cache();
+    return seastar::when_all(futs.begin(), futs.end()
+    ).discard_result();
   }).then([this] {
     LOG_PREFIX(BackgroundProcess::stop_background);
     INFO("done, {}, {}",
@@ -609,6 +622,7 @@ ExtentPlacementManager::BackgroundProcess::do_background_cycle()
   } else {
     bool clean_hot = false;
     bool clean_cold = false;
+    bool evict = false;
     bool major_cleaner_should_run =
       major_cleaner->should_clean_space() ||
       should_evict() ||
@@ -625,16 +639,21 @@ ExtentPlacementManager::BackgroundProcess::do_background_cycle()
         // multiple tiers
         clean_hot = cold_cleaner->try_reserve_projected_usage(
             major_cleaner->get_reclaim_size_per_cycle());
+        if (should_evict() && onode_cache) {
+          evict = cold_cleaner->try_reserve_projected_usage(
+              onode_cache->get_evict_size_per_cycle());
+        }
       }
     }
 
     if (has_cold_tier() &&
         (cold_cleaner->should_clean_space() ||
-         (major_cleaner_should_run && !clean_hot))) {
+         (major_cleaner_should_run && !clean_hot) ||
+         (should_evict() && !evict))) {
       clean_cold = true;
     }
 
-    ceph_assert(clean_hot || clean_cold);
+    ceph_assert(clean_hot || clean_cold || evict);
     return seastar::when_all(
       [this, clean_hot] {
         if (!clean_hot) {
@@ -662,8 +681,63 @@ ExtentPlacementManager::BackgroundProcess::do_background_cycle()
             "do_background_cycle encountered invalid error in cold clean_space"
           }
         );
+      },
+      [this, evict] {
+        if (!evict || !onode_cache) {
+          return seastar::now();
+        }
+        return onode_cache->evict(
+        ).finally([this] {
+          assert(cold_cleaner);
+          cold_cleaner->release_projected_usage(
+              onode_cache->get_evict_size_per_cycle());
+        });
       }
     ).discard_result();
+  }
+}
+
+seastar::future<>
+ExtentPlacementManager::BackgroundProcess::run_write_cache()
+{
+  assert(is_running());
+  return seastar::repeat([this] {
+    if (!is_running()) {
+      log_state("run_write_cache(exit)");
+      return seastar::make_ready_future<seastar::stop_iteration>(
+          seastar::stop_iteration::yes);
+    }
+    return seastar::futurize_invoke([this] {
+      if (should_write_cache()) {
+        log_state("run_write_cache(background)");
+        return do_write_cache();
+      } else {
+        log_state("run_write(block)");
+        ceph_assert(!blocking_write_cache);
+        blocking_write_cache = seastar::promise<>();
+        return blocking_write_cache->get_future();
+      }
+    }).then([] {
+      return seastar::stop_iteration::no;
+    });
+  });
+}
+
+seastar::future<>
+ExtentPlacementManager::BackgroundProcess::do_write_cache() {
+  ceph_assert(cold_cleaner && onode_cache);
+  auto size = onode_cache->get_cached_extents_size();
+  if (major_cleaner->try_reserve_projected_usage(size)) {
+    return onode_cache->write_cache(
+    ).finally([this, size] {
+      onode_cache->reset_cached_extents();
+      major_cleaner->release_projected_usage(size);
+    });
+  } else {
+    maybe_wake_background();
+    ceph_assert(!blocking_write_cache);
+    blocking_write_cache = seastar::promise<>();
+    return blocking_write_cache->get_future();
   }
 }
 
