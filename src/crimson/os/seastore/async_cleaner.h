@@ -1513,12 +1513,25 @@ private:
     const segment_header_t& header,
     segment_id_t segment_id);
 
-  void adjust_segment_util(double old_usage, double new_usage) {
+  void adjust_segment_util(data_category_t category,
+			   double old_usage, double new_usage) {
     auto old_index = get_bucket_index(old_usage);
     auto new_index = get_bucket_index(new_usage);
     assert(stats.segment_util.buckets[old_index].count > 0);
     stats.segment_util.buckets[old_index].count--;
     stats.segment_util.buckets[new_index].count++;
+    seastar::metrics::histogram* h = nullptr;
+    if (category == data_category_t::METADATA) {
+      h = &stats.md_segment_util;
+    } else {
+      h = &stats.data_segment_util;
+    }
+    if (h) {
+      if (h->buckets[old_index].count != 0) {
+       h->buckets[old_index].count--;
+      }
+      h->buckets[new_index].count++;
+    }
   }
 
   void init_mark_segment_closed(
@@ -1533,7 +1546,7 @@ private:
     auto old_usage = calc_utilization(segment);
     segments.init_closed(segment, seq, s_type, category, generation);
     auto new_usage = calc_utilization(segment);
-    adjust_segment_util(old_usage, new_usage);
+    adjust_segment_util(category, old_usage, new_usage);
     if (s_type == segment_type_t::OOL) {
       ool_segment_seq_allocator->set_next_segment_seq(seq);
     }
@@ -1577,6 +1590,8 @@ private:
     uint64_t reclaimed_segment_bytes = 0;
 
     seastar::metrics::histogram segment_util;
+    seastar::metrics::histogram md_segment_util;
+    seastar::metrics::histogram data_segment_util;
   } stats;
   seastar::metrics::metric_group metrics;
   void register_metrics();

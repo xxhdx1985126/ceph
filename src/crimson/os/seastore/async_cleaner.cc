@@ -846,15 +846,21 @@ SegmentCleaner::SegmentCleaner(
 void SegmentCleaner::register_metrics()
 {
   namespace sm = seastar::metrics;
-  stats.segment_util.buckets.resize(UTIL_BUCKETS);
-  std::size_t i;
-  for (i = 0; i < UTIL_BUCKETS; ++i) {
-    stats.segment_util.buckets[i].upper_bound = ((double)(i + 1)) / 10;
-    stats.segment_util.buckets[i].count = 0;
+  std::vector<sm::histogram*> hs;
+  hs.push_back(&stats.segment_util);
+  hs.push_back(&stats.md_segment_util);
+  hs.push_back(&stats.data_segment_util);
+  for (auto h : hs) {
+    h->buckets.resize(UTIL_BUCKETS);
+    std::size_t i;
+    for (i = 0; i < UTIL_BUCKETS; ++i) {
+      h->buckets[i].upper_bound = ((double)(i + 1)) / 10;
+      h->buckets[i].count = 0;
+    }
+    // NOTE: by default the segments are empty
+    i = get_bucket_index(UTIL_STATE_EMPTY);
+    h->buckets[i].count = segments.get_num_segments();
   }
-  // NOTE: by default the segments are empty
-  i = get_bucket_index(UTIL_STATE_EMPTY);
-  stats.segment_util.buckets[i].count = segments.get_num_segments();
 
   std::string prefix;
   if (is_cold) {
@@ -954,6 +960,16 @@ void SegmentCleaner::register_metrics()
 		       [this]() -> seastar::metrics::histogram& {
 		         return stats.segment_util;
 		       },
+		       sm::description("utilization distribution of all segments")),
+    sm::make_histogram("metadata_segment_utilization_distribution",
+		       [this]() -> seastar::metrics::histogram& {
+		         return stats.md_segment_util;
+		       },
+		       sm::description("utilization distribution of all segments")),
+    sm::make_histogram("data_segment_utilization_distribution",
+		       [this]() -> seastar::metrics::histogram& {
+		         return stats.data_segment_util;
+		       },
 		       sm::description("utilization distribution of all segments"))
   });
 }
@@ -978,7 +994,7 @@ segment_id_t SegmentCleaner::allocate_segment(
       segments.mark_open(seg_id, seq, type, category, generation);
       background_callback->maybe_wake_background();
       auto new_usage = calc_utilization(seg_id);
-      adjust_segment_util(old_usage, new_usage);
+      adjust_segment_util(category, old_usage, new_usage);
       INFO("opened, {}", stat_printer_t{*this, false});
       return seg_id;
     }
@@ -1004,7 +1020,7 @@ void SegmentCleaner::close_segment(segment_id_t segment)
     stats.closed_ool_total_bytes += segments.get_segment_size();
   }
   auto new_usage = calc_utilization(segment);
-  adjust_segment_util(old_usage, new_usage);
+  adjust_segment_util(seg_info.category, old_usage, new_usage);
   INFO("closed, {} -- {}", stat_printer_t{*this, false}, seg_info);
 }
 
@@ -1242,9 +1258,11 @@ SegmentCleaner::clean_space_ret SegmentCleaner::clean_space()
                        segment_to_release, old_usage);
                 ceph_abort();
               }
+              auto &seg_info = segments[segment_to_release];
+              auto category = seg_info.category;
               segments.mark_empty(segment_to_release);
               auto new_usage = calc_utilization(segment_to_release);
-              adjust_segment_util(old_usage, new_usage);
+              adjust_segment_util(category, old_usage, new_usage);
               INFO("released {}, {}",
                    segment_to_release, stat_printer_t{*this, false});
               background_callback->maybe_wake_blocked_io();
@@ -1462,7 +1480,7 @@ void SegmentCleaner::mark_space_used(
     seg_addr.get_segment_off(),
     len);
   auto new_usage = calc_utilization(seg_addr.get_segment_id());
-  adjust_segment_util(old_usage, new_usage);
+  adjust_segment_util(segments[seg_addr.get_segment_id()].category, old_usage, new_usage);
 
   background_callback->maybe_wake_background();
   assert(ret > 0);
@@ -1496,7 +1514,7 @@ void SegmentCleaner::mark_space_free(
     seg_addr.get_segment_off(),
     len);
   auto new_usage = calc_utilization(seg_addr.get_segment_id());
-  adjust_segment_util(old_usage, new_usage);
+  adjust_segment_util(segments[seg_addr.get_segment_id()].category, old_usage, new_usage);
   background_callback->maybe_wake_blocked_io();
   assert(ret >= 0);
   DEBUG("segment {} free len: {}~{}, live_bytes: {}",
