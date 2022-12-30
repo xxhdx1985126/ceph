@@ -398,6 +398,18 @@ public:
     return user_hint;
   }
 
+  void set_user_hint(placement_hint_t hint) {
+    p_user_hint = user_hint;
+    user_hint = hint;
+  }
+
+  void reset_user_hint() {
+    if (p_user_hint != PLACEMENT_HINT_NULL) {
+      user_hint = p_user_hint;
+      p_user_hint = PLACEMENT_HINT_NULL;
+    }
+  }
+
   rewrite_gen_t get_rewrite_generation() const {
     return rewrite_generation;
   }
@@ -503,6 +515,7 @@ private:
 
   read_set_item_t<Transaction>::list transactions;
 
+  placement_hint_t p_user_hint = PLACEMENT_HINT_NULL;
   placement_hint_t user_hint = PLACEMENT_HINT_NULL;
 
   // the target rewrite generation for the followup rewrite

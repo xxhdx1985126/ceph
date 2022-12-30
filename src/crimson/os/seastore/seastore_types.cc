@@ -403,6 +403,10 @@ std::ostream &operator<<(std::ostream &os, transaction_type_t type)
     return os << "CLEANER";
   case transaction_type_t::COLD_CLEANER:
     return os << "COLD_CLEANER";
+  case transaction_type_t::WRITE_CACHE:
+    return os << "WRITE_CACHE";
+  case transaction_type_t::EVICT:
+    return os << "EVICT";
   case transaction_type_t::MAX:
     return os << "TRANS_TYPE_NULL";
   default:
@@ -757,6 +761,10 @@ std::ostream& operator<<(std::ostream& out, placement_hint_t h)
     return out << "Hint(COLD)";
   case placement_hint_t::REWRITE:
     return out << "Hint(REWRITE)";
+  case placement_hint_t::READ_CACHE:
+    return out << "Hint(READ_CACHE)";
+  case placement_hint_t::EVICT:
+    return out << "Hint(EVICT)";
   case PLACEMENT_HINT_NULL:
     return out << "Hint(NULL)";
   default:

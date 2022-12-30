@@ -864,6 +864,8 @@ enum class placement_hint_t {
   HOT = 0,   // The default user hint that expects mutations or retirement
   COLD,      // Expect no mutations and no retirement in the near future
   REWRITE,   // Hint for the internal rewrites
+  READ_CACHE,// Cache read data to the hot tier
+  EVICT,     // Evict cold data in hot tier to the cold data
   NUM_HINTS  // Constant for number of hints or as NULL
 };
 
@@ -1094,6 +1096,13 @@ constexpr bool is_logical_type(extent_types_t type) {
   default:
     return true;
   }
+}
+
+constexpr bool is_cached_type(extent_types_t type) {
+  if (type == extent_types_t::OBJECT_DATA_BLOCK) {
+    return true;
+  }
+  return false;
 }
 
 constexpr bool is_retired_placeholder(extent_types_t type)
@@ -1742,6 +1751,8 @@ enum class transaction_type_t : uint8_t {
   TRIM_ALLOC,
   CLEANER,
   COLD_CLEANER,
+  WRITE_CACHE,
+  EVICT,
   MAX
 };
 
