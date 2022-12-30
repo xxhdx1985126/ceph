@@ -269,8 +269,23 @@ public:
       } else if (gen == INIT_GENERATION) {
         gen = OOL_GENERATION;
       }
-      return alloc_paddr(background_process.get_generation_mapping(gen),
-                         get_extent_category(type), length);
+      gen = background_process.get_generation_mapping(gen);
+      if (hint == placement_hint_t::EVICT &&
+          gen < MIN_COLD_GENERATION) {
+        ceph_assert(background_process.support_onode_cache());
+        gen = MIN_COLD_GENERATION;
+      } else if (hint == placement_hint_t::READ_CACHE) {
+        ceph_assert(background_process.support_onode_cache());
+        gen = MIN_COLD_GENERATION - 1;
+      } else if (hint == placement_hint_t::REWRITE &&
+                 // it must be from hot tier
+                 gen == MIN_COLD_GENERATION &&
+                 background_process.support_onode_cache()) {
+        // only evict process could rewrite data from hot device
+        // to the cold device
+        --gen;
+      }
+      return alloc_paddr(gen, get_extent_category(type), length);
     }
   }
 
