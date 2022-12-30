@@ -143,6 +143,11 @@ TransactionManager::mount_ertr::future<> TransactionManager::mount()
             cache->update_tree_extents_num(type, -1);
             epm->mark_space_free(paddr, len);
           } else {
+	    if (onode_cache &&
+		epm->is_hot_device(paddr.get_device_id()) &&
+		type == extent_types_t::OBJECT_DATA_BLOCK) {
+              onode_cache->touch(laddr);
+            }
             cache->update_tree_extents_num(type, 1);
             epm->mark_space_used(paddr, len);
           }
@@ -367,6 +372,9 @@ TransactionManager::do_submit_transaction(
           tref,
           submit_result.record_block_base,
           start_seq);
+      if (tref.onode_base) {
+        touch_onode_cache(*tref.onode_base);
+      }
 
       std::vector<CachedExtentRef> lba_to_clear;
       std::vector<CachedExtentRef> backref_to_clear;

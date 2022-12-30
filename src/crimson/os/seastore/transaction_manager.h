@@ -128,7 +128,8 @@ public:
   template <typename T>
   pin_to_extent_ret<T> pin_to_extent(
     Transaction &t,
-    LBAPinRef pin) {
+    LBAPinRef pin,
+    bool add_to_cache = false) {
     LOG_PREFIX(TransactionManager::pin_to_extent);
     SUBTRACET(seastore_tm, "getting extent {}", t, *pin);
     static_assert(is_logical_type(T::TYPE));
@@ -145,7 +146,18 @@ public:
 	extent.set_pin(std::move(pin));
 	lba_manager->add_pin(extent.get_pin());
       }
-    ).si_then([FNAME, &t](auto ref) mutable -> ret {
+    ).si_then([FNAME, &t, add_to_cache, this](auto ref) mutable -> ret {
+      if constexpr (T::TYPE == extent_types_t::OBJECT_DATA_BLOCK) {
+	if (add_to_cache && onode_cache) {
+	  onode_cache->add(ref->template cast<LogicalCachedExtent>()->get_laddr());
+	  if (!epm->is_hot_device(ref->get_paddr().get_device_id())) {
+	    onode_cache->add_extent(ref);
+	  }
+	}
+      } else {
+	boost::ignore_unused(add_to_cache);
+	boost::ignore_unused(this);
+      }
       SUBTRACET(seastore_tm, "got extent -- {}", t, *ref);
       return pin_to_extent_ret<T>(
 	interruptible::ready_future_marker{},
@@ -619,6 +631,18 @@ public:
 
   store_statfs_t store_stat() const {
     return epm->get_stat();
+  }
+
+  void touch_onode_cache(laddr_t laddr) {
+    if (onode_cache) {
+      onode_cache->touch(laddr);
+    }
+  }
+
+  void remove_onode_cache(laddr_t laddr) {
+    if (onode_cache) {
+      onode_cache->remove(laddr);
+    }
   }
 
   ~TransactionManager();

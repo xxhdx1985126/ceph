@@ -1010,6 +1010,7 @@ ObjectDataHandler::write_ret ObjectDataHandler::write(
 	  bl.length()
 	).si_then([this, ctx,logical_offset, &bl](
 		   auto pins) {
+	  ctx.t.onode_base = pins.front()->get_key();
 	  return overwrite(
 	    ctx, logical_offset, bl.length(),
 	    bufferlist(bl), std::move(pins));
@@ -1071,7 +1072,8 @@ ObjectDataHandler::read_ret ObjectDataHandler::read(
 		    } else {
 		      return ctx.tm.pin_to_extent<ObjectDataBlock>(
 			ctx.t,
-			std::move(pin)
+			std::move(pin),
+			true
 		      ).si_then([&ret, &current, end](auto extent) {
 			ceph_assert(
 			  (extent->get_laddr() + extent->get_length()) >= end);

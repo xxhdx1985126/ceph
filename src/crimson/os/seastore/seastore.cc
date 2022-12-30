@@ -1266,6 +1266,8 @@ SeaStore::tm_ret SeaStore::_remove(
 {
   LOG_PREFIX(SeaStore::_remove);
   DEBUGT("onode={}", *ctx.transaction, *onode);
+  transaction_manager->remove_onode_cache(
+    onode->get_layout().object_data.get().get_reserved_data_base());
   return onode_manager->erase_onode(*ctx.transaction, onode);
 }
 

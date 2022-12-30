@@ -384,6 +384,7 @@ public:
     backref_tree_stats = {};
     ool_write_stats = {};
     rewrite_version_stats = {};
+    onode_base = std::nullopt;
     conflicted = false;
     if (!has_reset) {
       has_reset = true;
@@ -468,6 +469,8 @@ public:
   existing_block_stats_t& get_existing_block_stats() {
     return existing_block_stats;
   }
+
+  std::optional<laddr_t> onode_base;
 
 private:
   friend class Cache;
