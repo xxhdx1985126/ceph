@@ -4,6 +4,7 @@
 #pragma once
 
 #include "crimson/os/seastore/cached_extent.h"
+#include "seastar/core/metrics_registration.hh"
 
 namespace crimson::os::seastore {
 
@@ -124,6 +125,7 @@ private:
     remove_from_lru(*e);
     laddr_set.erase(laddr_set.s_iterator_to(*e));
     intrusive_ptr_release(&*e);
+    stats.onode_counts--;
   }
 
   void move_to_top(entry_t &e) {
@@ -156,6 +158,18 @@ private:
   std::size_t onode_cache_memory_capacity;
   std::size_t evict_size_per_cycle;
   std::size_t cached_extents_size_limit;
+
+  // metrics
+  struct {
+    std::size_t object_data_block_counts;
+    std::size_t onode_counts;
+    std::size_t read_counts;
+    std::size_t read_size;
+    std::size_t evicted_counts;
+    std::size_t evicted_size;
+  } stats;
+  seastar::metrics::metric_group metrics;
+  void register_metrics();
 };
 using OnodeCacheRef = std::unique_ptr<OnodeCache>;
 }

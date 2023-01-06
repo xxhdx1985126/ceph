@@ -5,6 +5,7 @@
 #include "crimson/os/seastore/async_cleaner.h"
 #include "crimson/os/seastore/extent_placement_manager.h"
 #include "crimson/os/seastore/transaction_manager.h"
+#include "seastar/core/metrics.hh"
 
 SET_SUBSYS(seastore_cache);
 
@@ -14,7 +15,9 @@ OnodeCache::OnodeCache()
   : onode_length_and_alignment(16777216),
     onode_cache_memory_capacity(104857600),
     evict_size_per_cycle(2097152),
-    cached_extents_size_limit(2097152) {}
+    cached_extents_size_limit(2097152) {
+  register_metrics();
+}
 
 OnodeCache::~OnodeCache() {}
 
@@ -40,6 +43,7 @@ auto OnodeCache::find_laddr(laddr_t laddr)
 
 void OnodeCache::touch(laddr_t l)
 {
+  stats.object_data_block_counts++;
   auto laddr = get_base_laddr(l);
   auto p = find_laddr(laddr);
   if (!p.second) {
@@ -93,6 +97,7 @@ OnodeCache::entry_ref_t OnodeCache::create_entry(laddr_t laddr)
   if (should_evict()) {
     background_callback->maybe_wake_background();
   }
+  stats.onode_counts++;
   return e;
 }
 
@@ -169,8 +174,11 @@ seastar::future<> OnodeCache::write_cache()
 	  size += ext->get_length();
 	  ext->set_user_hint(placement_hint_t::READ_CACHE);
 	  return tm->rewrite_extent(t, ext, MIN_REWRITE_GENERATION, mtime);
-	}).si_then([this, &t, FNAME, &size] {
+	}).si_then([this, &t, FNAME, &size, &list] {
 	  INFO("write {}bytes cached exents from read", size);
+	  stats.object_data_block_counts += list.size();
+	  stats.read_counts += list.size();
+	  stats.read_size += size;
 	  return tm->submit_transaction_direct(t);
 	});
       });
@@ -249,6 +257,9 @@ seastar::future<> OnodeCache::evict()
       }).si_then([this, &t] {
 	return tm->submit_transaction_direct(t);
       }).si_then([this, FNAME] {
+	stats.object_data_block_counts -= evict_state.cold_extents.size();
+	stats.evicted_size += evict_state.write_size;
+	stats.evicted_counts += evict_state.cold_extents.size();
 	auto size = lru.size();
 	for (auto l : evict_state.completed) {
 	  remove_direct(l);
@@ -261,6 +272,24 @@ seastar::future<> OnodeCache::evict()
       });
     });
   }).handle_error(crimson::ct_error::assert_all{ "impossible" });
+}
+
+void OnodeCache::register_metrics() {
+  namespace sm = seastar::metrics;
+  metrics.add_group("onode_cache", {
+      sm::make_counter("object_data_block_counts",
+		       stats.object_data_block_counts,
+		       sm::description("")),
+      sm::make_counter("onode_counts",
+		       stats.onode_counts,
+		       sm::description("")),
+      sm::make_counter("read_size",
+		       stats.read_size,
+		       sm::description("")),
+      sm::make_counter("evicted_size",
+		       stats.evicted_size,
+		       sm::description("")),
+  });
 }
 
 }
