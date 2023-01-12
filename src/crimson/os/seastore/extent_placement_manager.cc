@@ -626,6 +626,7 @@ ExtentPlacementManager::BackgroundProcess::do_background_cycle()
     bool major_cleaner_should_run =
       major_cleaner->should_clean_space() ||
       should_evict() ||
+      read_reserve_failed ||
       // make sure cleaner will start
       // when the trimmer should run but
       // failed to reserve space.
@@ -639,7 +640,7 @@ ExtentPlacementManager::BackgroundProcess::do_background_cycle()
         // multiple tiers
         clean_hot = cold_cleaner->try_reserve_projected_usage(
             major_cleaner->get_reclaim_size_per_cycle());
-        if (should_evict() && onode_cache) {
+        if ((should_evict() || read_reserve_failed) && onode_cache) {
           evict = cold_cleaner->try_reserve_projected_usage(
               onode_cache->get_evict_size_per_cycle());
         }
@@ -649,7 +650,7 @@ ExtentPlacementManager::BackgroundProcess::do_background_cycle()
     if (has_cold_tier() &&
         (cold_cleaner->should_clean_space() ||
          (major_cleaner_should_run && !clean_hot) ||
-         (should_evict() && !evict))) {
+         ((should_evict() || read_reserve_failed) && !evict))) {
       clean_cold = true;
     }
 
@@ -728,12 +729,14 @@ ExtentPlacementManager::BackgroundProcess::do_write_cache() {
   ceph_assert(cold_cleaner && onode_cache);
   auto size = onode_cache->get_cached_extents_size();
   if (major_cleaner->try_reserve_projected_usage(size)) {
+    read_reserve_failed = false;
     return onode_cache->write_cache(
     ).finally([this, size] {
       onode_cache->reset_cached_extents();
       major_cleaner->release_projected_usage(size);
     });
   } else {
+    read_reserve_failed = true;
     maybe_wake_background();
     ceph_assert(!blocking_write_cache);
     blocking_write_cache = seastar::promise<>();

@@ -679,6 +679,7 @@ private:
       return major_cleaner->should_clean_space()
         || (has_cold_tier() && cold_cleaner->should_clean_space())
         || should_evict()
+        || read_reserve_failed
         || trimmer->should_trim();
     }
 
@@ -754,6 +755,7 @@ private:
     bool is_running_until_halt = false;
     bool start_evict = false;
     state_t state = state_t::STOP;
+    bool read_reserve_failed = false;
 
     std::optional<seastar::future<>> write_cache_process_join;
     std::optional<seastar::promise<>> blocking_write_cache;
