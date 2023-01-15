@@ -823,6 +823,8 @@ $DAEMONOPTS
         bluestore fsck on mount = true
         bluestore block create = true
 $BLUESTORE_OPTS
+        seastore_segment_size = 1073741824
+        seastore_cache_lru_size = 16106127360
 
         ; kstore
         kstore fsck on mount = true
