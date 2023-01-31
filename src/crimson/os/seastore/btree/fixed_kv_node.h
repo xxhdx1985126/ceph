@@ -1164,7 +1164,11 @@ struct FixedKVLeafNode
     if (this->parent_tracker) {
       out << ", parent=" << (void*)this->parent_tracker->get_parent().get();
     }
-    return out;
+    out << ", my_tracker=" << (void*)this->my_tracker;
+    if (this->my_tracker) {
+      out << ", my_tracker->parent=" << (void*)this->my_tracker->get_parent().get();
+    }
+    return out << ", root_block=" << (void*)this->root_block.get();
   }
 
   constexpr static size_t get_min_capacity() {
