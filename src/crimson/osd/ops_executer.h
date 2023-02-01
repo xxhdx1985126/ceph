@@ -482,6 +482,8 @@ OpsExecuter::flush_changes_n_do_ops_effects(
     maybe_mutated = interruptor::make_ready_future<rep_op_fut_tuple>(
 	std::move(submitted),
 	osd_op_ierrorator::future<>(std::move(all_completed)));
+  } else {
+    apply_stats();
   }
   if (__builtin_expect(op_effects.empty(), true)) {
     return maybe_mutated;
