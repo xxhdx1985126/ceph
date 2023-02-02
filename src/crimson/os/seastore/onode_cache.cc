@@ -218,15 +218,38 @@ seastar::future<> OnodeCache::evict()
 	      auto paddr = pin->get_val();
 	      if (paddr.is_absolute() &&
 		  epm->is_hot_device(paddr.get_device_id())) {
-		return tm->pin_to_extent_by_type(
-		  t, pin->duplicate(), extent_types_t::OBJECT_DATA_BLOCK
-		).si_then([this](auto extent) {
-		  evict_state.write_size += extent->get_length();
-		  evict_state.cold_extents.emplace_back(extent);
+		return tm->get_extent_type_at_paddr(t, paddr, pin->get_length())
+		  .si_then([this, &t, FNAME](auto &&type) {
+		  if (type == extent_types_t::OBJECT_DATA_BLOCK) {
+		    return trans_intr::do_for_each(evict_state.pins, [this, &t, FNAME](auto &pin) {
+		      auto paddr = pin->get_val();
+		      if (paddr.is_absolute() &&
+			  epm->is_hot_device(paddr.get_device_id())) {
+			return tm->get_extent_type_at_paddr(t, pin->get_val(), pin->get_length()
+		        ).si_then([&pin, FNAME](auto &&type) {
+			  ERROR("pin laddr {}, paddr {}, length {}, type {}",
+				pin->get_key(), pin->get_val(), pin->get_length(), type);
+			  return BackrefManager::get_mapping_iertr::make_ready_future();
+			});
+		      }
+		      return BackrefManager::get_mapping_iertr::make_ready_future();
+		    }).si_then([] {
+		      ceph_abort();
+		      return BackrefManager::get_mapping_iertr::make_ready_future();
+		    });
+		  }
+		  return BackrefManager::get_mapping_iertr::make_ready_future();
+		}).si_then([this, &t, &pin] {
+		  return tm->pin_to_extent_by_type(
+		    t, pin->duplicate(), extent_types_t::OBJECT_DATA_BLOCK
+		  ).si_then([this](auto extent) {
+		    evict_state.write_size += extent->get_length();
+		    evict_state.cold_extents.emplace_back(extent);
+		  });
 		});
 	      }
 	    }
-	    return TransactionManager::pin_to_extent_iertr::make_ready_future();
+	    return BackrefManager::get_mapping_iertr::make_ready_future();
 	  });
 	}).si_then([this, FNAME] {
 	  TRACE("consume one onode, {}", evict_state);
