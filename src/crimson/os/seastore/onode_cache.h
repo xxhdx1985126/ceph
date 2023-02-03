@@ -81,6 +81,9 @@ public:
       processed_pin_size = 0;
       write_size = 0;
     }
+    bool is_empty() {
+      return cold_onode.empty();
+    }
   } evict_state;
 
 private:

@@ -171,7 +171,7 @@ seastar::future<> SeaStore::stop()
 SeaStore::mount_ertr::future<> SeaStore::test_mount()
 {
   init_managers();
-  return transaction_manager->mount(
+  return transaction_manager->mount([] { return seastar::now(); }
   ).handle_error(
     crimson::ct_error::assert_all{
       "Invalid error in SeaStore::test_mount"
@@ -202,7 +202,33 @@ SeaStore::mount_ertr::future<> SeaStore::mount()
     });
   }).safe_then([this] {
     init_managers();
-    return transaction_manager->mount();
+    return transaction_manager->mount([this] {
+      LOG_PREFIX(SeaStore::mount);
+      TRACE("To scan onodes");
+      return transaction_manager->with_transaction_weak(
+	"scan_onode_tree",
+	[this](auto &t) {
+	return onode_manager->scan_onodes(
+	  t,
+	  [this, &t](auto &&onode)
+	  -> TransactionManager::maybe_load_onode_ret {
+	  auto object_data = onode.get_layout().object_data.get();
+	  if (object_data.is_null()) {
+	    return seastar::now();
+	  }
+	  LOG_PREFIX(SeaStore::mount);
+	  TRACET("found object_data: {}", t, object_data.get_reserved_data_base());
+	  return transaction_manager->maybe_load_onode(
+	    t,
+	    object_data.get_reserved_data_base(),
+	    object_data.get_reserved_data_len());
+	});
+      }).handle_error(
+	crimson::ct_error::assert_all{
+	  "Invalid error in SeaStore::mount"
+	}
+      );
+    });
   }).handle_error(
     crimson::ct_error::assert_all{
       "Invalid error in SeaStore::mount"
@@ -263,7 +289,7 @@ seastar::future<> SeaStore::_mkfs(uuid_d new_osd_fsid)
   return transaction_manager->mkfs(
   ).safe_then([this] {
     init_managers();
-    return transaction_manager->mount();
+    return transaction_manager->mount([] { return seastar::now(); });
   }).safe_then([this] {
     return repeat_eagain([this] {
       return transaction_manager->with_transaction_intr(

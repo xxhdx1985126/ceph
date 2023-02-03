@@ -87,7 +87,8 @@ TransactionManager::mkfs_ertr::future<> TransactionManager::mkfs()
   });
 }
 
-TransactionManager::mount_ertr::future<> TransactionManager::mount()
+TransactionManager::mount_ertr::future<> TransactionManager::mount(
+  on_tm_init_complete_func_t &&func)
 {
   LOG_PREFIX(TransactionManager::mount);
   INFO("enter");
@@ -154,6 +155,8 @@ TransactionManager::mount_ertr::future<> TransactionManager::mount()
         });
       });
     });
+  }).safe_then([func=std::move(func)] {
+    return func();
   }).safe_then([this] {
     return epm->open_for_write();
   }).safe_then([FNAME, this] {
@@ -497,6 +500,27 @@ TransactionManager::rewrite_logical_extent(
     lextent->get_laddr(),
     lextent->get_paddr(),
     nlextent->get_paddr());
+}
+
+TransactionManager::maybe_load_onode_ret
+TransactionManager::maybe_load_onode(
+  Transaction &t,
+  laddr_t laddr,
+  extent_len_t length)
+{
+  return lba_manager->get_mappings(t, laddr, length
+  ).si_then([this, laddr, &t](auto pin_list) {
+    LOG_PREFIX(TransactionManager::maybe_load_onode);
+    for (auto &pin : pin_list) {
+      TRACET("found extent: {}", t, pin->get_key());
+      if (epm->is_hot_device(pin->get_val().get_device_id())) {
+        TRACET("add onode to cache: {}", t, laddr);
+        touch_onode_cache(laddr);
+        return seastar::now();
+      }
+    }
+    return seastar::now();
+  });
 }
 
 TransactionManager::rewrite_extent_ret TransactionManager::rewrite_extent(

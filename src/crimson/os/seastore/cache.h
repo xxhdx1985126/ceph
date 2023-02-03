@@ -1212,6 +1212,7 @@ private:
 
     version_stat_t committed_dirty_version;
     version_stat_t committed_reclaim_version;
+    version_stat_t committed_evict_version;
     uint64_t hit_hot;
     uint64_t hit_cold;
     uint64_t read_hot;

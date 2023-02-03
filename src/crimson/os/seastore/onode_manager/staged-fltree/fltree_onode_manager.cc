@@ -171,6 +171,44 @@ FLTreeOnodeManager::list_onodes_ret FLTreeOnodeManager::list_onodes(
   });
 }
 
+FLTreeOnodeManager::scan_onodes_ret FLTreeOnodeManager::scan_onodes(
+  Transaction &trans,
+  scan_onodes_func_t &&func)
+{
+  return tree.lower_bound(trans, ghobject_t()
+  ).si_then([this, &trans, func=std::move(func)](auto &&cursor) mutable {
+    return seastar::do_with(
+      std::move(cursor),
+      [this, &trans, func=std::move(func)](auto &current_cursor) mutable {
+      return trans_intr::repeat([this, &trans, func=std::move(func),
+				&current_cursor]()
+				-> eagain_ifuture<seastar::stop_iteration> {
+	if (current_cursor.is_end()) {
+	  return seastar::make_ready_future<seastar::stop_iteration>(
+            seastar::stop_iteration::yes);
+	}
+	LOG_PREFIX(FLTreeOnodeManager::scan_onodes);
+	TRACET("scanning object: {}", trans, current_cursor.get_ghobj());
+	assert(current_cursor.get_ghobj() > ghobject_t());
+	return func(FLTreeOnode(
+	  default_data_reservation,
+	  default_metadata_range,
+	  current_cursor.value())
+	).si_then([this, &trans, &current_cursor] {
+	  return tree.get_next(trans, current_cursor
+	  ).si_then([&current_cursor] (auto&& next_cursor) mutable {
+	    // we intentionally hold the current_cursor during get_next() to
+	    // accelerate tree lookup.
+	    current_cursor = next_cursor;
+	    return seastar::make_ready_future<seastar::stop_iteration>(
+		  seastar::stop_iteration::no);
+	  });
+	});
+      });
+    });
+  });
+}
+
 FLTreeOnodeManager::~FLTreeOnodeManager() {}
 
 }

@@ -275,7 +275,7 @@ protected:
   }
 
   virtual FuturizedStore::mount_ertr::future<> _mount() {
-    return tm->mount(
+    return tm->mount([] { return seastar::now(); }
     ).handle_error(
       crimson::ct_error::assert_all{"Error in mount"}
     ).then([this] {

@@ -73,7 +73,10 @@ public:
 
   /// Reads initial metadata from disk
   using mount_ertr = base_ertr;
-  mount_ertr::future<> mount();
+  using on_tm_init_complete_func_t =
+    std::function<seastar::future<> ()>;
+  mount_ertr::future<> mount(
+    on_tm_init_complete_func_t &&func);
 
   /// Closes transaction_manager
   using close_ertr = base_ertr;
@@ -658,6 +661,10 @@ public:
       onode_cache->remove(laddr);
     }
   }
+
+  using maybe_load_onode_iertr = base_iertr;
+  using maybe_load_onode_ret = maybe_load_onode_iertr::future<>;
+  maybe_load_onode_ret maybe_load_onode(Transaction&, laddr_t, extent_len_t);
 
   void may_queue_for_hot_tier(CachedExtentRef extent) {
     if (onode_cache &&
