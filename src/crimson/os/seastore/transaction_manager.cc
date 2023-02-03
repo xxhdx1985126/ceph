@@ -372,8 +372,8 @@ TransactionManager::do_submit_transaction(
           tref,
           submit_result.record_block_base,
           start_seq);
-      if (tref.onode_base) {
-        touch_onode_cache(*tref.onode_base);
+      for (auto onode_base : tref.onode_bases) {
+        add_to_onode_cache(onode_base);
       }
 
       std::vector<CachedExtentRef> lba_to_clear;

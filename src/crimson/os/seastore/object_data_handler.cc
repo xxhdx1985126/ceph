@@ -1004,14 +1004,15 @@ ObjectDataHandler::write_ret ObjectDataHandler::write(
 	object_data,
 	p2roundup(offset + bl.length(), ctx.tm.get_block_size())
       ).si_then([this, ctx, offset, &object_data, &bl] {
-	auto logical_offset = object_data.get_reserved_data_base() + offset;
+	auto onode_base = object_data.get_reserved_data_base();
+	ctx.t.onode_bases.insert(onode_base);
+	auto logical_offset = onode_base + offset;
 	return ctx.tm.get_pins(
 	  ctx.t,
 	  logical_offset,
 	  bl.length()
 	).si_then([this, ctx,logical_offset, &bl](
 		   auto pins) {
-	  ctx.t.onode_base = pins.front()->get_key();
 	  return overwrite(
 	    ctx, logical_offset, bl.length(),
 	    bufferlist(bl), std::move(pins));
@@ -1041,8 +1042,9 @@ ObjectDataHandler::read_ret ObjectDataHandler::read(
 	  ceph_assert(!object_data.is_null());
 	  ceph_assert((obj_offset + len) <= object_data.get_reserved_data_len());
 	  ceph_assert(len > 0);
-	  laddr_t loffset =
-	    object_data.get_reserved_data_base() + obj_offset;
+	  auto onode_base = object_data.get_reserved_data_base();
+	  ctx.tm.add_to_onode_cache(onode_base);
+	  laddr_t loffset = onode_base + obj_offset;
 	  return ctx.tm.get_pins(
 	    ctx.t,
 	    loffset,
@@ -1076,10 +1078,11 @@ ObjectDataHandler::read_ret ObjectDataHandler::read(
 			ctx.t,
 			std::move(pin),
 			true
-		      ).si_then([&ret, &current, end](auto extent) {
+		      ).si_then([&ret, &current, end, ctx](auto extent) {
 			ceph_assert(
 			  (extent->get_laddr() + extent->get_length()) >= end);
 			ceph_assert(end > current);
+			ctx.tm.may_queue_for_hot_tier(extent);
 			ret.append(
 			  bufferptr(
 			    extent->get_bptr(),

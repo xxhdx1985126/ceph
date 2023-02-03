@@ -147,17 +147,6 @@ public:
 	lba_manager->add_pin(extent.get_pin());
       }
     ).si_then([FNAME, &t, add_to_cache, this](auto ref) mutable -> ret {
-      if constexpr (T::TYPE == extent_types_t::OBJECT_DATA_BLOCK) {
-	if (add_to_cache && onode_cache) {
-	  onode_cache->add(ref->template cast<LogicalCachedExtent>()->get_laddr());
-	  if (!epm->is_hot_device(ref->get_paddr().get_device_id())) {
-	    onode_cache->add_extent(ref);
-	  }
-	}
-      } else {
-	boost::ignore_unused(add_to_cache);
-	boost::ignore_unused(this);
-      }
       SUBTRACET(seastore_tm, "got extent -- {}", t, *ref);
       return pin_to_extent_ret<T>(
 	interruptible::ready_future_marker{},
@@ -658,9 +647,22 @@ public:
     }
   }
 
+  void add_to_onode_cache(laddr_t laddr) {
+    if (onode_cache) {
+      onode_cache->add(laddr);
+    }
+  }
+
   void remove_onode_cache(laddr_t laddr) {
     if (onode_cache) {
       onode_cache->remove(laddr);
+    }
+  }
+
+  void may_queue_for_hot_tier(CachedExtentRef extent) {
+    if (onode_cache &&
+	!epm->is_hot_device(extent->get_paddr().get_device_id())) {
+      onode_cache->add_extent(extent);
     }
   }
 

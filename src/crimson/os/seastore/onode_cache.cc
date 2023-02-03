@@ -12,7 +12,9 @@ SET_SUBSYS(seastore_cache);
 namespace crimson::os::seastore {
 
 OnodeCache::OnodeCache()
-  : onode_length_and_alignment(16777216),
+  : onode_reservation_length(
+      crimson::common::get_conf<uint64_t>(
+	"seastore_default_max_object_size")),
     onode_cache_memory_capacity(104857600),
     evict_size_per_cycle(2097152),
     cached_extents_size_limit(2097152) {
@@ -28,7 +30,7 @@ auto OnodeCache::find_laddr(laddr_t laddr)
   //     (p == laddr_set.end() ||
   //      p->laddr > laddr)) {
   //   --p;
-  //   if (p->laddr + onode_length_and_alignment <= laddr) {
+  //   if (p->laddr + onode_reservation_length <= laddr) {
   //     ++p;
   //   }
   // }
@@ -36,15 +38,14 @@ auto OnodeCache::find_laddr(laddr_t laddr)
   //   p,
   //   p != laddr_set.end() &&
   //   p->laddr <= laddr &&
-  //   p->laddr + onode_length_and_alignment > laddr);
+  //   p->laddr + onode_reservation_length > laddr);
   auto p = laddr_set.find(laddr);
   return std::make_pair(p, p != laddr_set.end());
 }
 
-void OnodeCache::touch(laddr_t l)
+void OnodeCache::touch(laddr_t laddr)
 {
   stats.object_data_block_counts++;
-  auto laddr = get_base_laddr(l);
   auto p = find_laddr(laddr);
   if (!p.second) {
     auto e = create_entry(laddr);
@@ -52,8 +53,7 @@ void OnodeCache::touch(laddr_t l)
   }
 }
 
-void OnodeCache::add(laddr_t l) {
-  auto laddr = get_base_laddr(l);
+void OnodeCache::add(laddr_t laddr) {
   auto p = find_laddr(laddr);
   if (p.second) {
     auto &e = const_cast<entry_t&>(*p.first);
@@ -64,9 +64,8 @@ void OnodeCache::add(laddr_t l) {
   }
 }
 
-void OnodeCache::remove(laddr_t l)
+void OnodeCache::remove(laddr_t laddr)
 {
-  auto laddr = get_base_laddr(l);
   auto p = find_laddr(laddr);
   if (p.second) {
     entry_ref_t e = const_cast<entry_t*>(&*p.first);
@@ -75,8 +74,7 @@ void OnodeCache::remove(laddr_t l)
   }
 }
 
-void OnodeCache::remove_direct(laddr_t l) {
-  auto laddr = get_base_laddr(l);
+void OnodeCache::remove_direct(laddr_t laddr) {
   auto p = laddr_set.find(laddr);
   ceph_assert(p != laddr_set.end());
   entry_ref_t e = const_cast<entry_t*>(&*p);
@@ -207,7 +205,7 @@ seastar::future<> OnodeCache::evict()
 	[this, FNAME](auto &t) {
       return trans_intr::repeat([this, &t, FNAME] {
 	return tm->get_pins(
-	  t, *evict_state.cold_onode_cursor, onode_length_and_alignment
+	  t, *evict_state.cold_onode_cursor, onode_reservation_length
 	).si_then([this, &t, FNAME](auto pins) {
 	  std::swap(evict_state.pins, pins);
 	  evict_state.processed_pin_size = 0;

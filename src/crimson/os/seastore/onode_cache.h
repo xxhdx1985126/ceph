@@ -85,9 +85,6 @@ public:
 
 private:
   auto find_laddr(laddr_t laddr);
-  laddr_t get_base_laddr(laddr_t laddr) {
-    return laddr - laddr % onode_length_and_alignment;
-  }
 
   struct entry_t : public boost::intrusive_ref_counter<
     entry_t, boost::thread_unsafe_counter> {
@@ -154,7 +151,7 @@ private:
   uint64_t read_size;
 
   // config
-  std::size_t onode_length_and_alignment;
+  std::size_t onode_reservation_length;
   std::size_t onode_cache_memory_capacity;
   std::size_t evict_size_per_cycle;
   std::size_t cached_extents_size_limit;
