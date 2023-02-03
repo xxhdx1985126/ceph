@@ -212,7 +212,9 @@ public:
   ) {
     assert(hint < placement_hint_t::NUM_HINTS);
     assert(is_target_rewrite_generation(gen));
-    assert(gen == INIT_GENERATION || hint == placement_hint_t::REWRITE);
+    assert(gen == INIT_GENERATION
+           || hint == placement_hint_t::REWRITE
+           || hint == placement_hint_t::EVICT);
 
     // XXX: bp might be extended to point to different memory (e.g. PMem)
     // according to the allocator.
