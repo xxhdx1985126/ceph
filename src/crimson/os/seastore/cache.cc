@@ -241,6 +241,28 @@ void Cache::register_metrics()
         );
       }
 
+      auto &read_effort = get_by_src(stats.blocks_read_by_ext, src);
+      for (auto& [ext, ext_label] : labels_by_ext) {
+	auto &counter = get_by_ext(read_effort, ext);
+        metrics.add_group(
+          "cache",
+          {
+            sm::make_counter(
+              "blocks_read",
+              counter.num,
+              sm::description("total number of extents read from disk"),
+              {src_label, ext_label}
+            ),
+            sm::make_counter(
+              "blocks_read_bytes",
+              counter.bytes,
+              sm::description("total number of bytes of extents read from disk"),
+              {src_label, ext_label}
+            ),
+          }
+        );
+      }
+
       if (src == src_t::READ) {
         // read transaction won't have non-read efforts
         auto read_effort_label = effort_label("READ");
