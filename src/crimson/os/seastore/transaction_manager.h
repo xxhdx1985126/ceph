@@ -202,30 +202,6 @@ public:
     });
   }
 
-  BackrefManager::get_mapping_iertr::future<extent_types_t>
-  get_extent_type_at_paddr(Transaction &t, paddr_t addr, extent_len_t len) {
-    auto cached_backref_entries =
-      backref_manager->get_cached_backref_entries_in_range(
-        addr, addr.add_offset(len));
-    std::optional<extent_types_t> type = std::nullopt;
-    for (auto &cached_backref : cached_backref_entries) {
-      if (cached_backref.paddr == addr) {
-	if (type.has_value()) {
-	  ceph_assert(*type == cached_backref.type);
-	}
-	type = cached_backref.type;
-      }
-    }
-    if (type) {
-      return BackrefManager::get_mapping_iertr::make_ready_future<extent_types_t>(*type);
-    } else {
-      return backref_manager->get_mapping(t, addr
-      ).si_then([](auto &&pin) {
-        return BackrefManager::get_mapping_iertr::make_ready_future<extent_types_t>(pin->get_type());
-      });
-    }
-  }
-
   /**
    * read_extent
    *
