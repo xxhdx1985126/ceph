@@ -201,7 +201,7 @@ seastar::future<> TMDriver::mount()
     return device->mount();
   }).safe_then([this] {
     init();
-    return tm->mount();
+    return tm->mount([] { return seastar::now(); });
   }).handle_error(
     crimson::ct_error::assert_all{
       "Invalid errror during TMDriver::mount"

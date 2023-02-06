@@ -112,9 +112,6 @@ void OnodeCache::add_extent(CachedExtentRef extent)
   read_cache.push_back(*extent);
   read_size += extent->get_length();
   read_cache_paddr.insert(extent->get_paddr());
-  if (should_write_out_extents()) {
-    background_callback->maybe_wake_write_cache();
-  }
 }
 
 void OnodeCache::remove_extent(CachedExtentRef extent)
@@ -153,11 +150,13 @@ std::list<CachedExtentRef> OnodeCache::get_cached_extents(Transaction &t)
 
 void OnodeCache::reset_cached_extents()
 {
-  for (auto &ext : pending_write) {
+  for (auto it = pending_write.begin(); it != pending_write.end();) {
+    auto &ext = *it;
+    it = pending_write.erase(it);
     read_size -= ext.get_length();
     intrusive_ptr_release(&ext);
   }
-  pending_write.clear();
+  assert(pending_write.empty());
 }
 
 seastar::future<> OnodeCache::write_cache()

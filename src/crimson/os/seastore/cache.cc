@@ -725,6 +725,16 @@ void Cache::register_metrics()
         sm::description("sum of the version from rewrite-dirty extents")
       ),
       sm::make_counter(
+        "version_count_write_cache",
+        stats.committed_write_cache_version.num,
+        sm::description("total number of rewrite-dirty extents")
+      ),
+      sm::make_counter(
+        "version_sum_write_cache",
+        stats.committed_write_cache_version.version,
+        sm::description("sum of the version from rewrite-dirty extents")
+      ),
+      sm::make_counter(
         "version_count_reclaim",
         stats.committed_reclaim_version.num,
         sm::description("total number of rewrite-reclaim extents")
@@ -1446,6 +1456,8 @@ record_t Cache::prepare_record(
     stats.committed_reclaim_version.increment_stat(rewrite_version_stats);
   } else if (trans_src == Transaction::src_t::EVICT) {
     stats.committed_evict_version.increment_stat(rewrite_version_stats);
+  } else if (trans_src == Transaction::src_t::WRITE_CACHE) {
+    stats.committed_write_cache_version.increment_stat(rewrite_version_stats);
   } else {
     assert(rewrite_version_stats.is_clear());
   }
