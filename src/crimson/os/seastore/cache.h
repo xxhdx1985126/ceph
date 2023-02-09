@@ -289,6 +289,12 @@ public:
           "{} {}~{} is absent, add extent and reading ... -- {}",
           T::TYPE, offset, length, *ret);
       const auto p_src = p_src_ext ? &p_src_ext->first : nullptr;
+      if (p_src) {
+       auto &read_effort = get_by_src(stats.blocks_read_by_ext, *p_src);
+       auto &counter = get_by_ext(read_effort, T::TYPE);
+       counter.num++;
+       counter.bytes += length;
+      }
       add_extent(ret, p_src);
       on_cache(*ret);
       extent_init_func(*ret);
@@ -1166,6 +1172,7 @@ private:
     counter_by_src_t<commit_trans_efforts_t> committed_efforts_by_src;
     counter_by_src_t<invalid_trans_efforts_t> invalidated_efforts_by_src;
     counter_by_src_t<query_counters_t> cache_query_by_src;
+    counter_by_src_t<counter_by_extent_t<io_stat_t>> blocks_read_by_ext;
     success_read_trans_efforts_t success_read_efforts;
     uint64_t dirty_bytes = 0;
 
