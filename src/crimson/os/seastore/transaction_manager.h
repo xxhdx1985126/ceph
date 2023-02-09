@@ -65,7 +65,8 @@ public:
     CacheRef cache,
     LBAManagerRef lba_manager,
     ExtentPlacementManagerRef &&epm,
-    BackrefManagerRef&& backref_manager);
+    BackrefManagerRef&& backref_manager,
+    extent_len_t max_extent_size);
 
   /// Writes initial metadata to disk
   using mkfs_ertr = base_ertr;
@@ -335,6 +336,59 @@ public:
   }
 
   /**
+   * alloc_extent
+   *
+   * Allocates a new block of type T with the minimum lba range of size len
+   * greater than laddr_hint.
+   */
+  using alloc_extents_iertr = LBAManager::alloc_extents_iertr;
+  template <typename T>
+  using alloc_extents_ret =
+    alloc_extent_iertr::future<
+      std::list<TCachedExtentRef<T>>>;
+  template <typename T>
+  alloc_extents_ret<T> alloc_extents(
+    Transaction &t,
+    laddr_t laddr_hint,
+    extent_len_t len,
+    placement_hint_t placement_hint = placement_hint_t::HOT) {
+    LOG_PREFIX(TransactionManager::alloc_extents);
+    SUBTRACET(seastore_tm, "{} len={}, placement_hint={}, laddr_hint={}",
+              t, T::TYPE, len, placement_hint, laddr_hint);
+    ceph_assert(is_aligned(laddr_hint, epm->get_block_size()));
+    std::list<TCachedExtentRef<T>> ret;
+    auto num_extents = (len + max_extent_size - 1) / max_extent_size;
+    for (uint64_t i = 0; i < num_extents; i++) {
+      auto ext = cache->alloc_new_extent<T>(
+	t,
+	(i == num_extents - 1) ? len - i * max_extent_size : max_extent_size,
+	placement_hint,
+	INIT_GENERATION);
+      ret.emplace_back(std::move(ext));
+    }
+    return lba_manager->alloc_extents(
+      t,
+      laddr_hint,
+      len,
+      ret.front()->get_paddr(),
+      max_extent_size
+    ).si_then([ret=std::move(ret), laddr_hint, &t, FNAME](auto &&pin_list) mutable {
+      assert(ret.size() == pin_list.size());
+      for (auto it1 = ret.begin(), it2 = pin_list.begin();
+	   it1 != ret.end() && it2 != pin_list.end();
+	   it1++, it2++)
+      {
+	auto &ext = *it1;
+	auto &ref = *it2;
+	ext->set_pin(std::move(ref));
+	SUBDEBUGT(seastore_tm, "new extent: {}, laddr_hint: {}", t, *ext, laddr_hint);
+      }
+      return alloc_extent_iertr::make_ready_future<std::list<TCachedExtentRef<T>>>(
+	std::move(ret));
+    });
+  }
+
+  /**
    * map_existing_extent
    *
    * Allocates a new extent at given existing_paddr that must be absolute and
@@ -415,7 +469,6 @@ public:
    *
    * allocates more than one new blocks of type T.
    */
-   using alloc_extents_iertr = alloc_extent_iertr;
    template<class T>
    alloc_extents_iertr::future<std::vector<TCachedExtentRef<T>>>
    alloc_extents(
@@ -633,6 +686,8 @@ private:
   BackrefManagerRef backref_manager;
 
   WritePipeline write_pipeline;
+
+  const extent_len_t max_extent_size = 0;
 
   rewrite_extent_ret rewrite_logical_extent(
     Transaction& t,
