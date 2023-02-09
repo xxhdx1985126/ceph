@@ -112,3 +112,8 @@ options:
   level: advanced
   desc: Size in bytes of extents to cache
   default: 104857600
+- name: seastore_max_extent_size
+  type: uint
+  level: advanced
+  desc: maximum size of an extent in seastore
+  default: 16384

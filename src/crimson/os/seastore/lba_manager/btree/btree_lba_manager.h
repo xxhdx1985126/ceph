@@ -86,6 +86,13 @@ public:
     extent_len_t len,
     paddr_t addr) final;
 
+  alloc_extents_ret alloc_extents(
+    Transaction &t,
+    laddr_t hint,
+    extent_len_t len,
+    paddr_t addr,
+    extent_len_t max_extent_size) final;
+
   ref_ret decref_extent(
     Transaction &t,
     laddr_t addr) final {

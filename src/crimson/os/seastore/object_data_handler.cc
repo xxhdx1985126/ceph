@@ -189,22 +189,17 @@ ObjectDataHandler::write_ret do_insertions(
 	       ctx.t,
 	       region.addr,
 	       region.len);
-	return ctx.tm.alloc_extent<ObjectDataBlock>(
+	return ctx.tm.alloc_extents<ObjectDataBlock>(
 	  ctx.t,
 	  region.addr,
 	  region.len
-	).si_then([&region](auto extent) {
-	  if (extent->get_laddr() != region.addr) {
-	    logger().debug(
-	      "object_data_handler::do_insertions alloc got addr {},"
-	      " should have been {}",
-	      extent->get_laddr(),
-	      region.addr);
-	  }
-	  ceph_assert(extent->get_laddr() == region.addr);
-	  ceph_assert(extent->get_length() == region.len);
+	).si_then([&region](auto extents) {
 	  auto iter = region.to_write->cbegin();
-	  iter.copy(region.len, extent->get_bptr().c_str());
+	  assert(extents.front()->get_laddr() == region.addr);
+	  for (auto &extent : extents) {
+	    iter.copy(extent->get_length(), extent->get_bptr().c_str());
+	  }
+	  assert(iter == region.to_write->end());
 	  return ObjectDataHandler::write_iertr::now();
 	});
       } else if (region.is_zero()) {
