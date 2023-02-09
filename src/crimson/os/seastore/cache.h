@@ -1374,6 +1374,7 @@ private:
     }
   }
 
+  friend class crimson::os::seastore::TransactionManager;
 };
 using CacheRef = std::unique_ptr<Cache>;
 
