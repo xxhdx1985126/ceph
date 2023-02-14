@@ -460,10 +460,10 @@ public:
     ).si_then([ext=std::move(ext), laddr_hint, this, &t](auto &&ref) {
       ceph_assert(laddr_hint == ref->get_key());
       ext->set_pin(std::move(ref));
-      auto &read_effort = get_by_src(cache->stats.blocks_read_by_ext, t.get_src());
-      auto &counter = get_by_ext(read_effort, T::TYPE);
+      auto &read_effort = cache->get_by_src(cache->stats.blocks_read_by_ext, t.get_src());
+      auto &counter = cache->get_by_ext(read_effort, T::TYPE);
       counter.num++;
-      counter.bytes += length;
+      counter.bytes += ext->get_length();
       return epm->read(
         ext->get_paddr(),
 	ext->get_length(),
