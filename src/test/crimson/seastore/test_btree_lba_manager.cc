@@ -143,7 +143,7 @@ struct btree_test_base :
     }).safe_then([this] {
       return seastar::do_with(
 	cache->create_transaction(
-            Transaction::src_t::MUTATE, "test_set_up_fut", false),
+            Transaction::src_t::MUTATE, "test_set_up_fut", {}, false),
 	[this](auto &ref_t) {
 	  return with_trans_intr(*ref_t, [&](auto &t) {
 	    cache->init();
@@ -214,7 +214,7 @@ struct lba_btree_test : btree_test_base {
   template <typename F>
   auto lba_btree_update(F &&f) {
     auto tref = cache->create_transaction(
-        Transaction::src_t::MUTATE, "test_btree_update", false);
+        Transaction::src_t::MUTATE, "test_btree_update", {}, false);
     auto &t = *tref;
     with_trans_intr(
       t,
@@ -241,7 +241,7 @@ struct lba_btree_test : btree_test_base {
   template <typename F>
   auto lba_btree_read(F &&f) {
     auto t = cache->create_transaction(
-        Transaction::src_t::READ, "test_btree_read", false);
+        Transaction::src_t::READ, "test_btree_read", {}, false);
     return with_trans_intr(
       *t,
       [this, f=std::forward<F>(f)](auto &t) mutable {
@@ -381,7 +381,7 @@ struct btree_lba_manager_test : btree_test_base {
   auto create_transaction(bool create_fake_extent=true) {
     auto t = test_transaction_t{
       cache->create_transaction(
-          Transaction::src_t::MUTATE, "test_mutate_lba", false),
+          Transaction::src_t::MUTATE, "test_mutate_lba", {}, false),
       test_lba_mappings
     };
     if (create_fake_extent) {
@@ -397,7 +397,7 @@ struct btree_lba_manager_test : btree_test_base {
   auto create_weak_transaction() {
     auto t = test_transaction_t{
       cache->create_transaction(
-          Transaction::src_t::READ, "test_read_weak", true),
+          Transaction::src_t::READ, "test_read_weak", {}, true),
       test_lba_mappings
     };
     return t;

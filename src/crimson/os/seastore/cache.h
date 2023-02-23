@@ -193,6 +193,7 @@ public:
   TransactionRef create_transaction(
       Transaction::src_t src,
       const char* name,
+      std::initializer_list<extent_types_t> types_may_conflict,
       bool is_weak) {
     LOG_PREFIX(Cache::create_transaction);
 
@@ -203,6 +204,7 @@ public:
       is_weak,
       src,
       last_commit,
+      std::move(types_may_conflict),
       [this](Transaction& t) {
         return on_transaction_destruct(t);
       }

@@ -468,8 +468,10 @@ public:
   TransactionRef create_transaction(
       Transaction::src_t src,
       const char* name,
+      std::initializer_list<extent_types_t> types_may_conflict,
       bool is_weak=false) final {
-    return cache->create_transaction(src, name, is_weak);
+    return cache->create_transaction(
+      src, name, std::move(types_may_conflict), is_weak);
   }
 
   using ExtentCallbackInterface::submit_transaction_direct_ret;

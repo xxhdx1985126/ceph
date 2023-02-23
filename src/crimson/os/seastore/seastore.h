@@ -229,7 +229,7 @@ private:
     return seastar::do_with(
       internal_context_t(
 	ch, std::move(t),
-	transaction_manager->create_transaction(src, tname)),
+	transaction_manager->create_transaction(src, tname, {})),
       std::forward<F>(f),
       [this, op_type](auto &ctx, auto &f) {
 	return ctx.transaction->get_handle().take_collection_lock(

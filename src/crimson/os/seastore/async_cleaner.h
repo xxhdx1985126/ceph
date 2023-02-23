@@ -280,16 +280,20 @@ public:
   /// Creates empty transaction
   /// weak transaction should be type READ
   virtual TransactionRef create_transaction(
-      Transaction::src_t, const char *name, bool is_weak=false) = 0;
+      Transaction::src_t,
+      const char *name,
+      std::initializer_list<extent_types_t> types_may_conflict,
+      bool is_weak=false) = 0;
 
   /// Creates empty transaction with interruptible context
   template <typename Func>
   auto with_transaction_intr(
       Transaction::src_t src,
       const char* name,
-      Func &&f) {
+      Func &&f,
+      std::initializer_list<extent_types_t> types_may_conflict = {}) {
     return do_with_transaction_intr<Func, false>(
-        src, name, std::forward<Func>(f));
+        src, name, std::move(types_may_conflict), std::forward<Func>(f));
   }
 
   template <typename Func>
@@ -297,7 +301,10 @@ public:
       const char* name,
       Func &&f) {
     return do_with_transaction_intr<Func, true>(
-        Transaction::src_t::READ, name, std::forward<Func>(f)
+        Transaction::src_t::READ,
+	name,
+	std::initializer_list<extent_types_t>(),
+	std::forward<Func>(f)
     ).handle_error(
       crimson::ct_error::eagain::handle([] {
         ceph_assert(0 == "eagain impossible");
@@ -368,9 +375,10 @@ private:
   auto do_with_transaction_intr(
       Transaction::src_t src,
       const char* name,
+      std::initializer_list<extent_types_t> types_may_conflict,
       Func &&f) {
     return seastar::do_with(
-      create_transaction(src, name, IsWeak),
+      create_transaction(src, name, std::move(types_may_conflict), IsWeak),
       [f=std::forward<Func>(f)](auto &ref_t) mutable {
         return with_trans_intr(
           *ref_t,

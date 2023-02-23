@@ -819,6 +819,7 @@ void Cache::invalidate_extent(
         do_conflict_log = false;
       }
       assert(!i.t->is_weak());
+      ceph_assert(i.t->may_conflict_on(extent.get_type()));
       account_conflict(t.get_src(), i.t->get_src());
       mark_transaction_conflicted(*i.t, extent);
     }

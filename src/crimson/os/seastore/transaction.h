@@ -139,6 +139,7 @@ public:
 
   void add_to_read_set(CachedExtentRef ref) {
     if (is_weak()) return;
+    if (!may_conflict_on(ref->get_type())) return;
 
     auto [iter, inserted] = read_set.emplace(this, ref);
     ceph_assert(inserted);
@@ -337,12 +338,24 @@ public:
     bool weak,
     src_t src,
     journal_seq_t initiated_after,
+    std::initializer_list<extent_types_t> types_may_conflict,
     on_destruct_func_t&& f
   ) : weak(weak),
       handle(std::move(handle)),
       on_destruct(std::move(f)),
       src(src)
-  {}
+  {
+    if (std::empty(types_may_conflict)) {
+      extent_types_may_conflict.fill(true);
+    } else {
+      extent_types_may_conflict.fill(false);
+      for (auto type : types_may_conflict) {
+	auto index = static_cast<uint8_t>(type);
+	assert(index < static_cast<uint8_t>(extent_types_t::NONE));
+	extent_types_may_conflict[index] = true;
+      }
+    }
+  }
 
   void invalidate_clear_write_set() {
     for (auto &&i: write_set) {
@@ -468,6 +481,12 @@ public:
     return existing_block_stats;
   }
 
+  bool may_conflict_on(extent_types_t type) {
+    auto index = static_cast<uint8_t>(type);
+    assert(index < static_cast<uint8_t>(extent_types_t::NONE));
+    return extent_types_may_conflict[index];
+  }
+
 private:
   friend class Cache;
   friend Ref make_test_transaction();
@@ -553,6 +572,8 @@ private:
   on_destruct_func_t on_destruct;
 
   const src_t src;
+
+  std::array<bool, (size_t)extent_types_t::NONE> extent_types_may_conflict;
 };
 using TransactionRef = Transaction::Ref;
 
@@ -563,6 +584,7 @@ inline TransactionRef make_test_transaction() {
     false,
     Transaction::src_t::MUTATE,
     JOURNAL_SEQ_NULL,
+    std::initializer_list<extent_types_t>(),
     [](Transaction&) {}
   );
 }
