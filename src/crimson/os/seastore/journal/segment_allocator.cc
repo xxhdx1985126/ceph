@@ -150,6 +150,8 @@ SegmentAllocator::open(bool is_mkfs)
 SegmentAllocator::roll_ertr::future<>
 SegmentAllocator::roll()
 {
+  LOG_PREFIX(SegmentAllocator::roll);
+  INFO("rolling");
   ceph_assert(can_write());
   return close_segment().safe_then([this] {
     return do_open(false).discard_result();
@@ -409,6 +411,7 @@ RecordSubmitter::RecordSubmitter(
 bool RecordSubmitter::is_available() const
 {
   auto ret = !wait_available_promise.has_value() &&
+             !rolling_segment_promise.has_value() &&
              !has_io_error;
 #ifndef NDEBUG
   if (ret) {
@@ -436,8 +439,14 @@ RecordSubmitter::wait_available()
     ERROR("{} I/O is failed before wait", get_name());
     return crimson::ct_error::input_output_error::make();
   }
-  return wait_available_promise->get_shared_future(
-  ).then([FNAME, this]() -> wa_ertr::future<> {
+  return seastar::when_all_succeed(
+    wait_available_promise.has_value()
+      ? wait_available_promise->get_shared_future()
+      : seastar::now(),
+    rolling_segment_promise.has_value()
+      ? rolling_segment_promise->get_shared_future()
+      : seastar::now()
+  ).then([FNAME, this](auto) -> wa_ertr::future<> {
     if (has_io_error) {
       ERROR("{} I/O is failed after wait", get_name());
       return crimson::ct_error::input_output_error::make();
@@ -468,49 +477,58 @@ RecordSubmitter::roll_segment()
   LOG_PREFIX(RecordSubmitter::roll_segment);
   assert(is_available());
   // #1 block concurrent submissions due to rolling
-  wait_available_promise = seastar::shared_promise<>();
-  ceph_assert(!wait_unfull_flush_promise.has_value());
+  if (rolling_segment_promise) {
+    return rolling_segment_promise->get_shared_future();
+  }
+  rolling_segment_promise = seastar::shared_promise<>();
   return [FNAME, this] {
     if (p_current_batch->is_pending()) {
       if (state == state_t::FULL) {
-        DEBUG("{} wait flush ...", get_name());
-        wait_unfull_flush_promise = seastar::promise<>();
-        return wait_unfull_flush_promise->get_future();
+        INFO("{} wait flush ...", get_name());
+        if (!wait_unfull_flush_promise.has_value()) {
+          wait_unfull_flush_promise = seastar::shared_promise<>();
+        }
+        return seastar::when_all_succeed(
+          wait_unfull_flush_promise->get_shared_future(),
+          wait_available_promise.has_value() ?
+            wait_available_promise->get_shared_future() :
+            seastar::now());
       } else { // IDLE/PENDING
         DEBUG("{} flush", get_name());
         flush_current_batch();
-        return seastar::now();
+        return seastar::make_ready_future<std::tuple<>>();
       }
     } else {
       assert(p_current_batch->is_empty());
-      return seastar::now();
+      return seastar::make_ready_future<std::tuple<>>();
     }
   }().then_wrapped([FNAME, this](auto fut) {
     if (fut.failed()) {
       ERROR("{} rolling is skipped unexpectedly, available", get_name());
       has_io_error = true;
-      wait_available_promise->set_value();
-      wait_available_promise.reset();
+      rolling_segment_promise->set_value();
+      rolling_segment_promise.reset();
       return roll_segment_ertr::now();
     } else {
       // start rolling in background
+      ceph_assert(!wait_available_promise.has_value());
+      wait_available_promise = seastar::shared_promise<>();
       std::ignore = segment_allocator.roll(
       ).safe_then([FNAME, this] {
         // good
-        DEBUG("{} rolling done, available", get_name());
+        INFO("{} rolling done, available", get_name());
         assert(!has_io_error);
-        wait_available_promise->set_value();
-        wait_available_promise.reset();
       }).handle_error(
         crimson::ct_error::all_same_way([FNAME, this](auto e) {
           ERROR("{} got error {}, available", get_name(), e);
           has_io_error = true;
-          wait_available_promise->set_value();
-          wait_available_promise.reset();
         })
       ).handle_exception([FNAME, this](auto e) {
         ERROR("{} got exception {}, available", get_name(), e);
         has_io_error = true;
+      }).finally([this] {
+        rolling_segment_promise->set_value();
+        rolling_segment_promise.reset();
         wait_available_promise->set_value();
         wait_available_promise.reset();
       });
@@ -570,17 +588,17 @@ RecordSubmitter::submit(record_t&& record)
   if (needs_flush) {
     if (state == state_t::FULL) {
       // #2 block concurrent submissions due to lack of resource
-      DEBUG("{} added with {} pending, outstanding_io={}, unavailable, wait flush ...",
+      INFO("{} added with {} pending, outstanding_io={}, unavailable, wait flush ...",
             get_name(),
             p_current_batch->get_num_records(),
             num_outstanding_io);
       wait_available_promise = seastar::shared_promise<>();
       ceph_assert(!wait_unfull_flush_promise.has_value());
-      wait_unfull_flush_promise = seastar::promise<>();
+      wait_unfull_flush_promise = seastar::shared_promise<>();
       // flush and mark available in background
-      std::ignore = wait_unfull_flush_promise->get_future(
+      std::ignore = wait_unfull_flush_promise->get_shared_future(
       ).finally([FNAME, this] {
-        DEBUG("{} flush done, available", get_name());
+        INFO("{} flush done, available", get_name());
         wait_available_promise->set_value();
         wait_available_promise.reset();
       });

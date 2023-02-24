@@ -408,10 +408,11 @@ private:
 
   // blocked for rolling or lack of resource
   std::optional<seastar::shared_promise<> > wait_available_promise;
+  std::optional<seastar::shared_promise<>> rolling_segment_promise;
   bool has_io_error = false;
   // when needs flush but io depth is full,
   // wait for decrement_io_with_flush()
-  std::optional<seastar::promise<> > wait_unfull_flush_promise;
+  std::optional<seastar::shared_promise<> > wait_unfull_flush_promise;
 
   struct {
     grouped_io_stats record_batch_stats;
