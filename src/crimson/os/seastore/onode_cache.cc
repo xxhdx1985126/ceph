@@ -175,7 +175,7 @@ seastar::future<> OnodeCache::write_cache()
 	  return tm->rewrite_extent(t, ext, MIN_REWRITE_GENERATION, mtime);
         }).si_then([this, &t] {
 	  return tm->submit_transaction_direct(t);
-	}).si_then([this, &t, &size, &list] {
+	}).si_then([this, &t, &size, &list, FNAME] {
 	  INFO("write {}bytes cached exents from read", size);
 	  stats.object_data_block_counts += list.size();
 	  stats.read_counts += list.size();
