@@ -60,8 +60,7 @@ public:
     std::vector<laddr_t> cold_onode;
     std::vector<laddr_t>::iterator cold_onode_cursor;
     std::vector<laddr_t> completed;
-    lba_pin_list_t pins;
-    std::size_t processed_pin_size;
+    lba_pin_list_t cold_pins_list;
     std::size_t write_size;
     friend std::ostream& operator<<(std::ostream& out, const evict_state_t& s) {
       return out << "evict_state_t(cold_extents_length=" << s.cold_extents.size()
@@ -69,16 +68,14 @@ public:
 		 << ", current_cold_onodes=" << *s.cold_onode_cursor
 		 << ", completed_size=" << s.completed.size()
 		 << ", write_size=" << s.write_size
-		 << ", current_pins_length=" << s.pins.size()
-		 << ", processed_pin_size=" << s.processed_pin_size << ")";
+		 << ", cold_pins_length=" << s.cold_pins_list.size() << ")";
     }
     void reset() {
       cold_extents.clear();
       cold_onode.clear();
       cold_onode_cursor = cold_onode.end();
       completed.clear();
-      pins.clear();
-      processed_pin_size = 0;
+      cold_pins_list.clear();
       write_size = 0;
     }
     bool is_empty() {
@@ -152,6 +149,8 @@ private:
   CachedExtent::read_list pending_write;
   std::set<paddr_t> read_cache_paddr;
   uint64_t read_size;
+  uint64_t added_size;
+  uint64_t retired_size;
 
   // config
   std::size_t onode_reservation_length;

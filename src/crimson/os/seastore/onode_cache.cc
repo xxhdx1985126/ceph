@@ -111,6 +111,7 @@ void OnodeCache::add_extent(CachedExtentRef extent)
   intrusive_ptr_add_ref(&*extent);
   read_cache.push_back(*extent);
   read_size += extent->get_length();
+  added_size += extent->get_length();
   read_cache_paddr.insert(extent->get_paddr());
 }
 
@@ -124,6 +125,7 @@ void OnodeCache::remove_extent(CachedExtentRef extent)
       pending_write.erase(pending_write.s_iterator_to(*extent));
     }
     read_size -= extent->get_length();
+    retired_size += extent->get_length();
     intrusive_ptr_release(&*extent);
   }
 }
@@ -171,12 +173,13 @@ seastar::future<> OnodeCache::write_cache()
 	  size += ext->get_length();
 	  ext->set_user_hint(placement_hint_t::READ_CACHE);
 	  return tm->rewrite_extent(t, ext, MIN_REWRITE_GENERATION, mtime);
-	}).si_then([this, &t, FNAME, &size, &list] {
+        }).si_then([this, &t] {
+	  return tm->submit_transaction_direct(t);
+	}).si_then([this, &t, &size, &list] {
 	  INFO("write {}bytes cached exents from read", size);
 	  stats.object_data_block_counts += list.size();
 	  stats.read_counts += list.size();
 	  stats.read_size += size;
-	  return tm->submit_transaction_direct(t);
 	});
       });
     });
@@ -206,28 +209,25 @@ seastar::future<> OnodeCache::evict()
 	return tm->get_pins(
 	  t, *evict_state.cold_onode_cursor, onode_reservation_length
 	).si_then([this, &t, FNAME](auto pins) {
-	  std::swap(evict_state.pins, pins);
-	  evict_state.processed_pin_size = 0;
-	  return trans_intr::do_for_each(evict_state.pins, [this, &t, FNAME](auto &pin) {
+	  auto processed_pin_size = 0;
+	  for (auto iter = pins.begin(); iter != pins.end(); ++iter) {
+	    auto &pin = *iter;
 	    if (evict_state.write_size < evict_size_per_cycle) {
-	      evict_state.processed_pin_size++;
 	      TRACE("consume one pin, {}", evict_state);
+	      processed_pin_size++;
 	      auto paddr = pin->get_val();
 	      if (paddr.is_absolute() &&
 		  epm->is_hot_device(paddr.get_device_id())) {
-		return tm->pin_to_extent_by_type(
-		  t, pin->duplicate(), extent_types_t::OBJECT_DATA_BLOCK
-		).si_then([this](auto extent) {
-		  evict_state.write_size += extent->get_length();
-		  evict_state.cold_extents.emplace_back(extent);
-		});
+		evict_state.write_size += pin->get_length();
+		evict_state.cold_pins_list.emplace_back(std::move(*iter));
 	      }
+	    } else {
+	      break;
 	    }
-	    return TransactionManager::pin_to_extent_iertr::make_ready_future();
-	  });
-	}).si_then([this, FNAME] {
+	  }
+
 	  TRACE("consume one onode, {}", evict_state);
-	  if (evict_state.processed_pin_size == evict_state.pins.size()) {
+	  if (processed_pin_size == pins.size()) {
 	    evict_state.completed.push_back(*evict_state.cold_onode_cursor);
 	  }
 	  evict_state.cold_onode_cursor++;
@@ -239,6 +239,16 @@ seastar::future<> OnodeCache::evict()
 	    return seastar::make_ready_future<seastar::stop_iteration>(
 	      seastar::stop_iteration::no);
 	  }
+	});
+      }).si_then([this, &t, FNAME] {
+	return trans_intr::parallel_for_each(evict_state.cold_pins_list,
+					     [this, &t, FNAME](auto &pin) {
+	  return tm->pin_to_extent_by_type(
+	      t, pin->duplicate(), extent_types_t::OBJECT_DATA_BLOCK
+	  ).si_then([this, &t, FNAME](auto extent) {
+	    TRACET("evict cold extent {}", t, *extent);
+	    evict_state.cold_extents.emplace_back(extent);
+	  });
 	});
       }).si_then([this, &t, FNAME] {
 	DEBUG("rewrite {}", evict_state.write_size);
@@ -278,10 +288,19 @@ void OnodeCache::register_metrics() {
 		       stats.object_data_block_counts,
 		       sm::description("")),
       sm::make_counter("onode_counts",
-		       stats.onode_counts,
+		       [this] { return lru.size(); },
 		       sm::description("")),
-      sm::make_counter("read_size",
+      sm::make_counter("added_size",
+	               added_size,
+		       sm::description("")),
+      sm::make_counter("retired_size",
+	               retired_size,
+		       sm::description("")),
+      sm::make_counter("cold_to_hot_write_size",
 		       stats.read_size,
+		       sm::description("")),
+      sm::make_counter("in_memory_extents_size",
+		       read_size,
 		       sm::description("")),
       sm::make_counter("evicted_size",
 		       stats.evicted_size,
