@@ -140,10 +140,10 @@ TransactionManager::mount_ertr::future<> TransactionManager::mount(
           if (is_backref_node(type)) {
             assert(laddr == L_ADDR_NULL);
             backref_manager->cache_new_backref_extent(paddr, type);
-            cache->update_tree_extents_num(type, 1);
+            cache->update_tree_extents_num(type, len);
             epm->mark_space_used(paddr, len);
           } else if (laddr == L_ADDR_NULL) {
-            cache->update_tree_extents_num(type, -1);
+            cache->update_tree_extents_num(type, -static_cast<int>(len));
             epm->mark_space_free(paddr, len);
           } else {
 	    if (onode_cache &&
@@ -151,7 +151,7 @@ TransactionManager::mount_ertr::future<> TransactionManager::mount(
 		type == extent_types_t::OBJECT_DATA_BLOCK) {
               onode_cache->touch(laddr);
             }
-            cache->update_tree_extents_num(type, 1);
+            cache->update_tree_extents_num(type, len);
             epm->mark_space_used(paddr, len);
           }
         });

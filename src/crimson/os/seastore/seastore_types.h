@@ -21,6 +21,13 @@
 
 namespace crimson::os::seastore {
 
+constexpr size_t BACKREF_BLOCK_SIZE = 4096;
+constexpr size_t OMAP_INNER_BLOCK_SIZE = 4096;
+constexpr size_t OMAP_LEAF_BLOCK_SIZE = 8192;
+constexpr size_t LBA_BLOCK_SIZE = 4096;
+constexpr size_t ONODE_INTERNAL_SIZE = 8192;
+constexpr size_t ONODE_LEAF_SIZE = 16384;
+
 /* using a special xattr key "omap_header" to store omap header */
   const std::string OMAP_HEADER_XATTR_KEY = "omap_header";
 

@@ -9,8 +9,6 @@
 
 namespace crimson::os::seastore::backref {
 
-constexpr size_t BACKREF_BLOCK_SIZE = 4096;
-
 class BtreeBackrefPin : public BtreeNodePin<paddr_t, laddr_t> {
   extent_types_t type;
 public:

@@ -71,6 +71,7 @@ OMapInnerNode::make_split_insert(
                                   right->maybe_get_delta_buffer());
     }
     ++(oc.t.get_omap_tree_stats().extents_num_delta);
+    oc.t.get_omap_tree_stats().extents_num_size += OMAP_INNER_BLOCK_SIZE;
     return make_split_insert_ret(
            interruptible::ready_future_marker{},
            mutation_result_t(mutation_status_t::WAS_SPLIT, tuple, std::nullopt));
@@ -411,6 +412,7 @@ OMapInnerNode::merge_entry(
         return dec_ref(oc, dec_laddrs
 	).si_then([this, oc] {
 	  --(oc.t.get_omap_tree_stats().extents_num_delta);
+	  oc.t.get_omap_tree_stats().extents_num_size -= OMAP_INNER_BLOCK_SIZE;
           if (extent_is_below_min()) {
             return merge_entry_ret(
                    interruptible::ready_future_marker{},
@@ -563,6 +565,7 @@ OMapLeafNode::insert(
         }
       }
       ++(oc.t.get_omap_tree_stats().extents_num_delta);
+      oc.t.get_omap_tree_stats().extents_num_delta += OMAP_LEAF_BLOCK_SIZE;
       return dec_ref(oc, get_laddr())
         .si_then([tuple = std::move(tuple)] {
         return insert_ret(

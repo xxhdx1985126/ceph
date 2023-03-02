@@ -322,6 +322,7 @@ public:
     root_leaf->pin.set_range(meta);
     get_tree_stats<self_type>(c.trans).depth = 1u;
     get_tree_stats<self_type>(c.trans).extents_num_delta++;
+    get_tree_stats<self_type>(c.trans).extents_num_size += LBA_BLOCK_SIZE;
     return phy_tree_root_t{root_leaf->get_paddr(), 1u};
   }
 
@@ -1424,6 +1425,7 @@ private:
       ceph_assert(root.get_depth() <= MAX_FIXEDKVBTREE_DEPTH);
       get_tree_stats<self_type>(c.trans).depth = iter.get_depth();
       get_tree_stats<self_type>(c.trans).extents_num_delta++;
+      get_tree_stats<self_type>(c.trans).extents_num_size += LBA_BLOCK_SIZE;
       root_dirty = true;
     }
 
@@ -1454,6 +1456,7 @@ private:
       c.cache.retire_extent(c.trans, pos.node);
 
       get_tree_stats<self_type>(c.trans).extents_num_delta++;
+      get_tree_stats<self_type>(c.trans).extents_num_size += LBA_BLOCK_SIZE;
       return std::make_pair(left, right);
     };
 
@@ -1570,6 +1573,7 @@ private:
                   root.set_depth(iter.get_depth());
                   get_tree_stats<self_type>(c.trans).depth = iter.get_depth();
                   get_tree_stats<self_type>(c.trans).extents_num_delta--;
+                  get_tree_stats<self_type>(c.trans).extents_num_size -= LBA_BLOCK_SIZE;
                   root_dirty = true;
                 } else {
                   SUBTRACET(seastore_fixedkv_tree, "no need to collapse root", c.trans);
@@ -1681,6 +1685,7 @@ private:
         c.cache.retire_extent(c.trans, l);
         c.cache.retire_extent(c.trans, r);
         get_tree_stats<self_type>(c.trans).extents_num_delta--;
+        get_tree_stats<self_type>(c.trans).extents_num_size -= LBA_BLOCK_SIZE;
       } else {
         LOG_PREFIX(FixedKVBtree::merge_level);
         auto [replacement_l, replacement_r, pivot] =

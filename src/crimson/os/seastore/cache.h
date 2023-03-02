@@ -953,28 +953,38 @@ public:
     };
   };
 
-  void update_tree_extents_num(extent_types_t type, int64_t delta) {
+  void update_tree_extents_num(extent_types_t type, int64_t len) {
+    int delta;
+    if (len > 0) {
+      delta = 1;
+    } else {
+      delta = -1;
+    }
     switch (type) {
     case extent_types_t::LADDR_INTERNAL:
       [[fallthrough]];
     case extent_types_t::LADDR_LEAF:
       stats.lba_tree_extents_num += delta;
+      stats.lba_tree_extents_size += len;
       ceph_assert(stats.lba_tree_extents_num >= 0);
       return;
     case extent_types_t::OMAP_INNER:
       [[fallthrough]];
     case extent_types_t::OMAP_LEAF:
       stats.omap_tree_extents_num += delta;
+      stats.omap_tree_extents_size += len;
       ceph_assert(stats.lba_tree_extents_num >= 0);
       return;
     case extent_types_t::ONODE_BLOCK_STAGED:
       stats.onode_tree_extents_num += delta;
+      stats.onode_tree_extents_size += len;
       ceph_assert(stats.onode_tree_extents_num >= 0);
       return;
     case extent_types_t::BACKREF_INTERNAL:
       [[fallthrough]];
     case extent_types_t::BACKREF_LEAF:
       stats.backref_tree_extents_num += delta;
+      stats.backref_tree_extents_size += len;
       ceph_assert(stats.backref_tree_extents_num >= 0);
       return;
     default:
@@ -1189,21 +1199,25 @@ private:
 
     uint64_t onode_tree_depth = 0;
     int64_t onode_tree_extents_num = 0;
+    int64_t onode_tree_extents_size = 0;
     counter_by_src_t<tree_efforts_t> committed_onode_tree_efforts;
     counter_by_src_t<tree_efforts_t> invalidated_onode_tree_efforts;
 
     uint64_t omap_tree_depth = 0;
     int64_t omap_tree_extents_num = 0;
+    int64_t omap_tree_extents_size = 0;
     counter_by_src_t<tree_efforts_t> committed_omap_tree_efforts;
     counter_by_src_t<tree_efforts_t> invalidated_omap_tree_efforts;
 
     uint64_t lba_tree_depth = 0;
     int64_t lba_tree_extents_num = 0;
+    int64_t lba_tree_extents_size = 0;
     counter_by_src_t<tree_efforts_t> committed_lba_tree_efforts;
     counter_by_src_t<tree_efforts_t> invalidated_lba_tree_efforts;
 
     uint64_t backref_tree_depth = 0;
     int64_t backref_tree_extents_num = 0;
+    int64_t backref_tree_extents_size = 0;
     counter_by_src_t<tree_efforts_t> committed_backref_tree_efforts;
     counter_by_src_t<tree_efforts_t> invalidated_backref_tree_efforts;
 

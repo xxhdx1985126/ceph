@@ -410,13 +410,15 @@ public:
     uint64_t num_erases = 0;
     uint64_t num_updates = 0;
     int64_t extents_num_delta = 0;
+    int64_t extents_num_size = 0;
 
     bool is_clear() const {
       return (depth == 0 &&
               num_inserts == 0 &&
               num_erases == 0 &&
               num_updates == 0 &&
-	      extents_num_delta == 0);
+	      extents_num_delta == 0 &&
+	      extents_num_size == 0);
     }
   };
   tree_stats_t& get_onode_tree_stats() {

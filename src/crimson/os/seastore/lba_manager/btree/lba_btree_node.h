@@ -49,8 +49,6 @@ struct lba_map_val_t {
 
 std::ostream& operator<<(std::ostream& out, const lba_map_val_t&);
 
-constexpr size_t LBA_BLOCK_SIZE = 4096;
-
 using lba_node_meta_t = fixed_kv_node_meta_t<laddr_t>;
 
 using lba_node_meta_le_t = fixed_kv_node_meta_le_t<laddr_le_t>;

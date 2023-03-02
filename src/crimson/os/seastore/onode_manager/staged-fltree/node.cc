@@ -418,6 +418,7 @@ eagain_ifuture<> Node::mkfs(context_t c, RootNodeTracker& root_tracker)
   return LeafNode::allocate_root(c, root_tracker
   ).si_then([c, FNAME](auto ret) {
     c.t.get_onode_tree_stats().extents_num_delta++;
+    c.t.get_onode_tree_stats().extents_num_size += ONODE_LEAF_SIZE;
     INFOT("allocated root {}", c.t, ret->get_name());
   });
 }
@@ -623,6 +624,7 @@ Node::try_merge_adjacent(
         auto left_addr = left_for_merge->impl->laddr();
         return left_for_merge->rebuild_extent(c
         ).si_then([c, update_index_after_merge,
+                   this,
                      left_addr,
                      merge_stage = merge_stage,
                      merge_size = merge_size,
@@ -636,6 +638,10 @@ Node::try_merge_adjacent(
               left_mut, *right_for_merge->impl, merge_stage, merge_size);
           left_for_merge->track_merge(right_for_merge, merge_stage, left_last_pos);
 	  --(c.t.get_onode_tree_stats().extents_num_delta);
+          c.t.get_onode_tree_stats().extents_num_size -= ONODE_INTERNAL_SIZE;
+          if (level() == 0) {
+            c.t.get_onode_tree_stats().extents_num_size -= ONODE_INTERNAL_SIZE;
+          }
           return left_for_merge->parent_info().ptr->apply_children_merge(
               c, std::move(left_for_merge), left_addr,
               std::move(right_for_merge), update_index_after_merge);
@@ -1249,6 +1255,7 @@ eagain_ifuture<Ref<InternalNode>> InternalNode::allocate_root(
         const_cast<laddr_packed_t*>(p_value), old_root_addr);
     root->make_root_from(c, std::move(super), old_root_addr);
     ++(c.t.get_onode_tree_stats().extents_num_delta);
+    c.t.get_onode_tree_stats().extents_num_size += ONODE_INTERNAL_SIZE;
     return root;
   });
 }
@@ -1459,6 +1466,7 @@ eagain_ifuture<> InternalNode::try_downgrade_root(
     auto super_to_move = deref_super();
     child->make_root_from(c, std::move(super_to_move), impl->laddr());
     --(c.t.get_onode_tree_stats().extents_num_delta);
+    c.t.get_onode_tree_stats().extents_num_size -= ONODE_INTERNAL_SIZE;
     return retire(c, std::move(this_ref));
   });
 }
@@ -1565,6 +1573,7 @@ eagain_ifuture<Ref<InternalNode>> InternalNode::insert_or_split(
       right_node->validate_tracked_children();
     }
     ++(c.t.get_onode_tree_stats().extents_num_delta);
+    c.t.get_onode_tree_stats().extents_num_size += ONODE_INTERNAL_SIZE;
     return right_node;
   });
 }
@@ -2130,6 +2139,7 @@ eagain_ifuture<Ref<tree_cursor_t>> LeafNode::insert_value(
     right_node->validate_tracked_cursors();
 
     ++(c.t.get_onode_tree_stats().extents_num_delta);
+    c.t.get_onode_tree_stats().extents_num_size += ONODE_LEAF_SIZE;
     return apply_split_to_parent(
         c, std::move(this_ref), std::move(right_node), false
     ).si_then([ret] {
