@@ -177,33 +177,43 @@ FLTreeOnodeManager::scan_onodes_ret FLTreeOnodeManager::scan_onodes(
 {
   return tree.lower_bound(trans, ghobject_t()
   ).si_then([this, &trans, func=std::move(func)](auto &&cursor) mutable {
-    return seastar::do_with(
-      std::move(cursor),
-      [this, &trans, func=std::move(func)](auto &current_cursor) mutable {
-      return trans_intr::repeat([this, &trans, func=std::move(func),
-				&current_cursor]()
-				-> eagain_ifuture<seastar::stop_iteration> {
-	if (current_cursor.is_end()) {
-	  return seastar::make_ready_future<seastar::stop_iteration>(
-            seastar::stop_iteration::yes);
-	}
-	LOG_PREFIX(FLTreeOnodeManager::scan_onodes);
-	TRACET("scanning object: {}", trans, current_cursor.get_ghobj());
-	assert(current_cursor.get_ghobj() > ghobject_t());
-	return func(FLTreeOnode(
-	  default_data_reservation,
-	  default_metadata_range,
-	  current_cursor.value())
-	).si_then([this, &trans, &current_cursor] {
-	  return tree.get_next(trans, current_cursor
-	  ).si_then([&current_cursor] (auto&& next_cursor) mutable {
-	    // we intentionally hold the current_cursor during get_next() to
-	    // accelerate tree lookup.
-	    current_cursor = next_cursor;
-	    return seastar::make_ready_future<seastar::stop_iteration>(
-		  seastar::stop_iteration::no);
-	  });
-	});
+    return seastar::do_with(std::move(cursor),
+                            std::vector<OnodeTree::Cursor>(),
+                            std::move(func),
+                            [this, &trans] (auto &cursor,
+                                            auto &cursors,
+                                            auto &func) {
+      return trans_intr::repeat([this, &trans, &cursor, &cursors, &func] {
+        cursors.clear();
+        return trans_intr::do_for_each(boost::make_counting_iterator(0),
+                                       boost::make_counting_iterator(10),
+                                       [this, &trans, &cursor, &cursors](auto) {
+          if (!cursor.is_end()) {
+            cursors.push_back(cursor);
+            return tree.get_next(trans, cursor
+            ).si_then([&cursor](auto &&next) {
+              cursor = next;
+              return eagain_iertr::make_ready_future();
+            });
+          } else {
+            return eagain_iertr::make_ready_future();
+          }
+        }).si_then([this, &cursors, &func] {
+          return trans_intr::parallel_for_each(cursors, [this, &func](auto &cursor) {
+            return func(FLTreeOnode(
+              default_data_reservation,
+              default_metadata_range,
+              cursor.value()));
+          });
+        }).si_then([&cursor] {
+          if (cursor.is_end()) {
+            return seastar::make_ready_future<seastar::stop_iteration>(
+              seastar::stop_iteration::yes);
+          } else {
+            return seastar::make_ready_future<seastar::stop_iteration>(
+              seastar::stop_iteration::no);
+          }
+        });
       });
     });
   });
