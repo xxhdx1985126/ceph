@@ -132,7 +132,7 @@ BtreeLBAManager::get_mappings(
 	  TRACET("{}~{} got {}, {}, repeat ...",
 	         c.trans, offset, length, pos.get_key(), pos.get_val());
 	  ceph_assert((pos.get_key() + pos.get_val().len) > offset);
-	  ret.push_back(pos.get_pin());
+	  ret.push_back(pos.get_pin(c));
 	  return typename LBABtree::iterate_repeat_ret_inner(
 	    interruptible::ready_future_marker{},
 	    seastar::stop_iteration::no);
@@ -185,7 +185,7 @@ BtreeLBAManager::get_mapping(
 	} else {
 	  TRACET("{} got {}, {}",
 	         c.trans, offset, iter.get_key(), iter.get_val());
-	  auto e = iter.get_pin();
+	  auto e = iter.get_pin(c);
 	  return get_mapping_ret(
 	    interruptible::ready_future_marker{},
 	    std::move(e));
@@ -275,8 +275,8 @@ BtreeLBAManager::alloc_extent(
 	    state.ret = iter;
 	  });
 	});
-    }).si_then([](auto &&state) {
-      return state.ret->get_pin();
+    }).si_then([c](auto &&state) {
+      return state.ret->get_pin(c);
     });
 }
 
@@ -304,7 +304,7 @@ _init_cached_extent(
 	  iter.get_val().paddr == logn->get_paddr()) {
 	assert(!iter.get_leaf_node()->is_pending());
 	iter.get_leaf_node()->link_child(logn.get(), iter.get_leaf_pos());
-	logn->set_laddr(iter.get_pin()->get_key());
+	logn->set_laddr(iter.get_pin(c)->get_key());
 	ceph_assert(iter.get_val().len == e->get_length());
 	DEBUGT("logical extent {} live", c.trans, *logn);
 	ret = true;

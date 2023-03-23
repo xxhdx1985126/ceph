@@ -7,16 +7,22 @@
 namespace crimson::os::seastore {
 
 template <typename key_t, typename val_t>
-void BtreeNodeMapping<key_t, val_t>::init_child_pos(
+get_child_ret_t<LogicalCachedExtent>
+BtreeNodeMapping<key_t, val_t>::get_logical_extent(
   Transaction &t)
 {
   assert(parent);
   assert(parent->is_valid());
   assert(pos != std::numeric_limits<uint16_t>::max());
   auto &p = (FixedKVNode<key_t>&)*parent;
-  this->child_pos = p.get_logical_child(t, pos);
+  auto v = p.get_logical_child(ctx, pos);
+  if (!v.has_child()) {
+    this->child_pos = v.get_child_pos();
+  }
+  return v;
 }
 
-template void BtreeNodeMapping<laddr_t, paddr_t>::init_child_pos(Transaction &t);
-template void BtreeNodeMapping<paddr_t, laddr_t>::init_child_pos(Transaction &t);
+template class BtreeNodeMapping<laddr_t, paddr_t>;
+template class BtreeNodeMapping<paddr_t, laddr_t>;
+
 } // namespace crimson::os::seastore

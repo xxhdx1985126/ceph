@@ -359,6 +359,7 @@ public:
       [](T &){}, [](T &) {});
   }
 
+
   /**
    * get_extent_if_cached
    *
@@ -475,6 +476,24 @@ public:
     paddr_t offset,
     extent_len_t length) {
     return get_extent<need_check_trans, T>(t, offset, length, [](T &){});
+  }
+
+  template <typename T>
+  seastar::future<TCachedExtentRef<T>> get_extent_viewable_by_trans(
+    Transaction &t,
+    TCachedExtentRef<T> extent)
+  {
+    auto p_extent = extent->get_transactional_view(t);
+    if (!p_extent->is_pending_in_trans(t.get_trans_id())) {
+      t.add_to_read_set(p_extent);
+      if (!p_extent->is_mutation_pending()) {
+	touch_extent(*p_extent);
+      }
+    }
+    return p_extent->wait_io(
+    ).then([p_extent] {
+      return p_extent->template cast<T>();
+    });
   }
 
   extent_len_t get_block_size() const {

@@ -7,10 +7,17 @@
 
 #include "crimson/common/log.h"
 
+#include "crimson/os/seastore/cache.h"
 #include "crimson/os/seastore/cached_extent.h"
 #include "crimson/os/seastore/seastore_types.h"
 
 namespace crimson::os::seastore {
+
+template <typename node_key_t>
+struct op_context_t {
+  Cache &cache;
+  Transaction &trans;
+};
 
 constexpr uint16_t MAX_FIXEDKVBTREE_DEPTH = 8;
 
@@ -111,6 +118,7 @@ struct fixed_kv_node_meta_le_t {
 template <typename key_t, typename val_t>
 class BtreeNodeMapping : public PhysicalNodeMapping<key_t, val_t> {
 
+  op_context_t<key_t> ctx;
   /**
    * parent
    *
@@ -126,15 +134,22 @@ class BtreeNodeMapping : public PhysicalNodeMapping<key_t, val_t> {
 
 public:
   using val_type = val_t;
-  BtreeNodeMapping() = default;
+  BtreeNodeMapping(op_context_t<key_t> ctx) : ctx(ctx) {}
 
   BtreeNodeMapping(
+    op_context_t<key_t> ctx,
     CachedExtentRef parent,
     uint16_t pos,
     val_t &value,
     extent_len_t len,
     fixed_kv_node_meta_t<key_t> &&meta)
-    : parent(parent), value(value), len(len), range(std::move(meta)), pos(pos) {
+    : ctx(ctx),
+      parent(parent),
+      value(value),
+      len(len),
+      range(std::move(meta)),
+      pos(pos)
+  {
     if (!parent->is_pending()) {
       this->child_pos = {parent, pos};
     }
@@ -176,7 +191,7 @@ public:
 
   PhysicalNodeMappingRef<key_t, val_t> duplicate() const final {
     auto ret = std::unique_ptr<BtreeNodeMapping<key_t, val_t>>(
-      new BtreeNodeMapping<key_t, val_t>);
+      new BtreeNodeMapping<key_t, val_t>(ctx));
     ret->range = range;
     ret->value = value;
     ret->parent = parent;
@@ -189,8 +204,7 @@ public:
     return parent->has_been_invalidated();
   }
 
-protected:
-  void init_child_pos(Transaction&) final;
+  get_child_ret_t<LogicalCachedExtent> get_logical_extent(Transaction&) final;
 };
 
 }

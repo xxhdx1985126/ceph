@@ -13,6 +13,7 @@
 
 #include "include/buffer.h"
 #include "crimson/common/errorator.h"
+#include "crimson/common/interruptible_future.h"
 #include "crimson/os/seastore/seastore_types.h"
 
 struct btree_lba_manager_test;
@@ -884,7 +885,6 @@ class LogicalCachedExtent;
 
 class child_pos_t {
 public:
-  child_pos_t(CachedExtentRef child) : child(child) {}
   child_pos_t(CachedExtentRef stable_parent, uint16_t pos)
     : stable_parent(stable_parent), pos(pos) {}
 
@@ -896,19 +896,33 @@ public:
   uint16_t get_pos() {
     return pos;
   }
-  template <typename child_t>
-  TCachedExtentRef<child_t> get_child() {
-    if (child) {
-      return child->template cast<child_t>();
-    } else {
-      return nullptr;
-    }
-  }
   void link_child(ChildableCachedExtent *c);
 private:
   CachedExtentRef stable_parent;
   uint16_t pos = std::numeric_limits<uint16_t>::max();
-  CachedExtentRef child;
+};
+
+template <typename T>
+struct get_child_ret_t {
+  std::variant<child_pos_t, seastar::future<TCachedExtentRef<T>>> ret;
+  get_child_ret_t(child_pos_t pos)
+    : ret(std::move(pos)) {}
+  get_child_ret_t(seastar::future<TCachedExtentRef<T>> child)
+    : ret(std::move(child)) {}
+
+  bool has_child() const {
+    return ret.index() == 1;
+  }
+
+  child_pos_t &get_child_pos() {
+    ceph_assert(ret.index() == 0);
+    return std::get<0>(ret);
+  }
+
+  seastar::future<TCachedExtentRef<T>> &get_child_fut() {
+    ceph_assert(ret.index() == 1);
+    return std::get<1>(ret);
+  }
 };
 
 template <typename key_t, typename>
@@ -929,13 +943,8 @@ public:
   virtual CachedExtentRef get_parent() const = 0;
   virtual uint16_t get_pos() const = 0;
 
-  template <typename child_t>
-  TCachedExtentRef<child_t> get_logical_extent(Transaction &t) {
-    if (!child_pos) {
-      init_child_pos(t);
-    }
-    return child_pos->template get_child<child_t>();
-  }
+  virtual get_child_ret_t<LogicalCachedExtent>
+  get_logical_extent(Transaction &t) = 0;
 
   void link_child(ChildableCachedExtent *c) {
     ceph_assert(child_pos);
@@ -945,8 +954,6 @@ public:
   virtual ~PhysicalNodeMapping() {}
 protected:
   std::optional<child_pos_t> child_pos = std::nullopt;
-
-  virtual void init_child_pos(Transaction&) = 0;
 };
 
 using LBAMapping = PhysicalNodeMapping<laddr_t, paddr_t>;
