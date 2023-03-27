@@ -87,6 +87,11 @@ struct FixedKVNode : ChildableCachedExtent {
   parent_tracker_t* my_tracker = nullptr;
   RootBlockRef root_block;
 
+  bool is_linked() {
+    assert(!has_parent_tracker() || !(bool)root_block);
+    return (bool)has_parent_tracker() || (bool)root_block;
+  }
+
   FixedKVNode(uint16_t capacity, ceph::bufferptr &&ptr)
     : ChildableCachedExtent(std::move(ptr)),
       pin(this),
@@ -351,10 +356,9 @@ struct FixedKVNode : ChildableCachedExtent {
       return;
     }
     ceph_assert(!root_block);
-    parent_tracker = prior.parent_tracker;
-    assert(parent_tracker->get_parent<FixedKVNode>());
-    auto parent = parent_tracker->get_parent<FixedKVNode>();
-    assert(parent->is_valid());
+    take_prior_parent_tracker();
+    assert(is_parent_valid());
+    auto parent = get_parent_node<FixedKVNode>();
     //TODO: can this search be avoided?
     auto off = parent->lower_bound_offset(get_node_meta().begin);
     assert(parent->get_key_from_idx(off) == get_node_meta().begin);
@@ -479,7 +483,7 @@ struct FixedKVNode : ChildableCachedExtent {
   }
 
   void on_invalidated(Transaction &t) final {
-    parent_tracker.reset();
+    reset_parent_tracker();
   }
 
   bool is_rewrite() {
@@ -490,12 +494,9 @@ struct FixedKVNode : ChildableCachedExtent {
     // All in-memory relative addrs are necessarily block-relative
     resolve_relative_addrs(get_paddr());
     if (pin.is_root()) {
-      parent_tracker.reset();
+      reset_parent_tracker();
     }
-    assert(parent_tracker
-	? (parent_tracker->get_parent()
-	  && parent_tracker->get_parent()->is_valid())
-	: true);
+    assert(has_parent_tracker() ? (is_parent_valid()) : true);
   }
 
   void set_child_ptracker(ChildableCachedExtent *child) {
@@ -618,10 +619,8 @@ struct FixedKVInternalNode
 	ceph_assert(this->root_block);
 	unlink_phy_tree_root_node<NODE_KEY>(this->root_block);
       } else {
-	ceph_assert(this->parent_tracker);
-	assert(this->parent_tracker->get_parent());
-	auto parent = this->parent_tracker->template get_parent<
-	  FixedKVNode<NODE_KEY>>();
+	ceph_assert(this->is_parent_valid());
+	auto parent = this->template get_parent_node<FixedKVNode<NODE_KEY>>();
 	auto off = parent->lower_bound_offset(this->get_meta().begin);
 	assert(parent->get_key_from_idx(off) == this->get_meta().begin);
 	assert(parent->children[off] == this);
@@ -855,15 +854,11 @@ struct FixedKVInternalNode
     }
   }
 
-  std::ostream &print_detail(std::ostream &out) const
+  std::ostream &_print_detail(std::ostream &out) const
   {
     out << ", size=" << this->get_size()
 	<< ", meta=" << this->get_meta()
-	<< ", parent_tracker=" << (void*)this->parent_tracker.get();
-    if (this->parent_tracker) {
-      out << ", parent=" << (void*)this->parent_tracker->get_parent().get();
-    }
-    out << ", my_tracker=" << (void*)this->my_tracker;
+	<< ", my_tracker=" << (void*)this->my_tracker;
     if (this->my_tracker) {
       out << ", my_tracker->parent=" << (void*)this->my_tracker->get_parent().get();
     }
@@ -975,10 +970,8 @@ struct FixedKVLeafNode
 	ceph_assert(this->root_block);
 	unlink_phy_tree_root_node<NODE_KEY>(this->root_block);
       } else {
-	ceph_assert(this->parent_tracker);
-	assert(this->parent_tracker->get_parent());
-	auto parent = this->parent_tracker->template get_parent<
-	  FixedKVNode<NODE_KEY>>();
+	ceph_assert(this->is_parent_valid());
+	auto parent = this->template get_parent_node<FixedKVNode<NODE_KEY>>();
 	auto off = parent->lower_bound_offset(this->get_meta().begin);
 	assert(parent->get_key_from_idx(off) == this->get_meta().begin);
 	assert(parent->children[off] == this);
@@ -1163,15 +1156,10 @@ struct FixedKVLeafNode
     this->resolve_relative_addrs(base);
   }
 
-  std::ostream &print_detail(std::ostream &out) const
+  std::ostream &_print_detail(std::ostream &out) const
   {
-    out << ", size=" << this->get_size()
-	<< ", meta=" << this->get_meta()
-	<< ", parent_tracker=" << (void*)this->parent_tracker.get();
-    if (this->parent_tracker) {
-      out << ", parent=" << (void*)this->parent_tracker->get_parent().get();
-    }
-    return out;
+    return out << ", size=" << this->get_size()
+	       << ", meta=" << this->get_meta();
   }
 
   constexpr static size_t get_min_capacity() {

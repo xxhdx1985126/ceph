@@ -33,16 +33,6 @@ template <
   size_t node_size,
   bool leaf_has_children>
 class FixedKVBtree;
-template <
-  size_t CAPACITY,
-  typename NODE_KEY,
-  typename NODE_KEY_LE,
-  typename VAL,
-  typename VAL_LE,
-  size_t node_size,
-  typename node_type_t,
-  bool has_children>
-struct FixedKVLeafNode;
 template <typename, typename>
 class BtreeNodePin;
 
@@ -564,6 +554,8 @@ public:
 
   void set_invalid(Transaction &t);
 
+  // a rewrite extent has an invalid prior_instance,
+  // and a mutation_pending extent has a valid prior_instance
   CachedExtentRef get_prior_instance() {
     return prior_instance;
   }
@@ -986,7 +978,7 @@ public:
     : parent(parent) {}
   ~parent_tracker_t();
   template <typename T = CachedExtent>
-  TCachedExtentRef<T> get_parent() {
+  TCachedExtentRef<T> get_parent() const {
     ceph_assert(parent);
     if constexpr (std::is_same_v<T, CachedExtent>) {
       return parent;
@@ -997,9 +989,14 @@ public:
   void reset_parent(CachedExtentRef p) {
     parent = p;
   }
+  bool is_valid() const {
+    return parent && parent->is_valid();
+  }
 private:
   CachedExtentRef parent;
 };
+
+std::ostream &operator<<(std::ostream &, const parent_tracker_t &);
 
 using parent_tracker_ref = boost::intrusive_ptr<parent_tracker_t>;
 
@@ -1007,14 +1004,30 @@ class ChildableCachedExtent : public CachedExtent {
 public:
   template <typename... T>
   ChildableCachedExtent(T&&... t) : CachedExtent(std::forward<T>(t)...) {}
-  parent_tracker_ref get_parent_tracker() {
-    return parent_tracker;
+  bool has_parent_tracker() const {
+    return (bool)parent_tracker;
   }
-  void reset_parent_tracker(parent_tracker_t *p) {
+  void reset_parent_tracker(parent_tracker_t *p = nullptr) {
     parent_tracker.reset(p);
   }
-protected:
+  bool is_parent_valid() const {
+    return parent_tracker && parent_tracker->is_valid();
+  }
+  template <typename T = CachedExtent>
+  TCachedExtentRef<T> get_parent_node() const {
+    assert(parent_tracker);
+    return parent_tracker->template get_parent<T>();
+  }
+  void take_prior_parent_tracker() {
+    auto &prior = (ChildableCachedExtent&)(*get_prior_instance());
+    parent_tracker = prior.parent_tracker;
+  }
+  std::ostream &print_detail(std::ostream &out) const final;
+private:
   parent_tracker_ref parent_tracker;
+  virtual std::ostream &_print_detail(std::ostream &out) const {
+    return out;
+  }
 };
 /**
  * LogicalCachedExtent
@@ -1066,7 +1079,7 @@ public:
     return true;
   }
 
-  std::ostream &print_detail(std::ostream &out) const final;
+  std::ostream &_print_detail(std::ostream &out) const final;
 
   void on_replace_prior(Transaction &t) final;
 
@@ -1094,15 +1107,14 @@ private:
   LBAPinRef pin;
 
   template <
-    size_t CAPACITY,
-    typename NODE_KEY,
-    typename NODE_KEY_LE,
-    typename VAL,
-    typename VAL_LE,
+    typename node_key_t,
+    typename node_val_t,
+    typename internal_node_t,
+    typename leaf_node_t,
+    typename pin_t,
     size_t node_size,
-    typename node_type_t,
-    bool has_children>
-  friend struct FixedKVLeafNode;
+    bool leaf_has_children>
+  friend class FixedKVBtree;
 };
 
 using LogicalCachedExtentRef = TCachedExtentRef<LogicalCachedExtent>;

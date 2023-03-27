@@ -93,7 +93,22 @@ CachedExtent* CachedExtent::get_transactional_view(transaction_id_t tid) {
   }
 }
 
-std::ostream &LogicalCachedExtent::print_detail(std::ostream &out) const
+std::ostream &operator<<(std::ostream &out, const parent_tracker_t &tracker) {
+  return out << "parent_tracker=" << (void*)&tracker
+	     << ", parent=" << (void*)tracker.get_parent().get();
+}
+
+std::ostream &ChildableCachedExtent::print_detail(std::ostream &out) const {
+  if (parent_tracker) {
+    out << *parent_tracker;
+  } else {
+    out << ", parent_tracker=" << (void*)nullptr;
+  }
+  _print_detail(out);
+  return out;
+}
+
+std::ostream &LogicalCachedExtent::_print_detail(std::ostream &out) const
 {
   out << ", laddr=" << laddr;
   if (pin) {
@@ -113,9 +128,9 @@ void CachedExtent::set_invalid(Transaction &t) {
 }
 
 LogicalCachedExtent::~LogicalCachedExtent() {
-  if (parent_tracker && is_valid() && !is_pending()) {
-    assert(parent_tracker->get_parent());
-    auto parent = parent_tracker->get_parent<FixedKVNode<laddr_t>>();
+  if (has_parent_tracker() && is_valid() && !is_pending()) {
+    assert(get_parent_node());
+    auto parent = get_parent_node<FixedKVNode<laddr_t>>();
     auto off = parent->lower_bound_offset(laddr);
     assert(parent->get_key_from_idx(off) == laddr);
     assert(parent->children[off] == this);
@@ -125,10 +140,9 @@ LogicalCachedExtent::~LogicalCachedExtent() {
 
 void LogicalCachedExtent::on_replace_prior(Transaction &t) {
   assert(is_mutation_pending());
-  auto &prior = (LogicalCachedExtent&)(*get_prior_instance());
-  parent_tracker = prior.parent_tracker;
-  assert(parent_tracker->get_parent());
-  auto parent = parent_tracker->get_parent<FixedKVNode<laddr_t>>();
+  take_prior_parent_tracker();
+  assert(get_parent_node());
+  auto parent = get_parent_node<FixedKVNode<laddr_t>>();
   //TODO: can this search be avoided?
   auto off = parent->lower_bound_offset(laddr);
   assert(parent->get_key_from_idx(off) == laddr);
@@ -139,7 +153,7 @@ parent_tracker_t::~parent_tracker_t() {
   // this is parent's tracker, reset it
   auto &p = (FixedKVNode<laddr_t>&)*parent;
   if (p.my_tracker == this) {
-   p.my_tracker = nullptr;
+    p.my_tracker = nullptr;
   }
 }
 

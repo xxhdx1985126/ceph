@@ -192,6 +192,7 @@ struct LBALeafNode
 	this->pending_for_transaction,
 	iter.get_offset(),
 	*nextent);
+      // child-ptr may already be correct, see LBAManager::update_mappings()
       this->update_child_ptr(iter, nextent);
     }
     val.paddr = this->maybe_generate_relative(val.paddr);
@@ -273,7 +274,7 @@ struct LBALeafNode
     return TYPE;
   }
 
-  std::ostream &print_detail(std::ostream &out) const final;
+  std::ostream &_print_detail(std::ostream &out) const final;
 };
 using LBALeafNodeRef = TCachedExtentRef<LBALeafNode>;
 
