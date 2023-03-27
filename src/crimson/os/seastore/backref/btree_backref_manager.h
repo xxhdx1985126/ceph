@@ -11,16 +11,16 @@ namespace crimson::os::seastore::backref {
 
 constexpr size_t BACKREF_BLOCK_SIZE = 4096;
 
-class BtreeBackrefPin : public BtreeNodePin<paddr_t, laddr_t> {
+class BtreeBackrefMapping : public BtreeNodeMapping<paddr_t, laddr_t> {
   extent_types_t type;
 public:
-  BtreeBackrefPin() = default;
-  BtreeBackrefPin(
+  BtreeBackrefMapping() = default;
+  BtreeBackrefMapping(
     CachedExtentRef parent,
     uint16_t pos,
     backref_map_val_t &val,
     backref_node_meta_t &&meta)
-    : BtreeNodePin(
+    : BtreeNodeMapping(
 	parent,
 	pos,
 	val.laddr,
@@ -35,7 +35,7 @@ public:
 
 using BackrefBtree = FixedKVBtree<
   paddr_t, backref_map_val_t, BackrefInternalNode,
-  BackrefLeafNode, BtreeBackrefPin, BACKREF_BLOCK_SIZE, false>;
+  BackrefLeafNode, BtreeBackrefMapping, BACKREF_BLOCK_SIZE, false>;
 
 class BtreeBackrefManager : public BackrefManager {
 public:
@@ -80,24 +80,9 @@ public:
     Transaction &t,
     CachedExtentRef e) final;
 
-  void complete_transaction(
-    Transaction &t,
-    std::vector<CachedExtentRef> &,
-    std::vector<CachedExtentRef> &) final;
-
   rewrite_extent_ret rewrite_extent(
     Transaction &t,
     CachedExtentRef extent) final;
-
-  void add_pin(BackrefPin &pin) final {
-    auto *bpin = reinterpret_cast<BtreeBackrefPin*>(&pin);
-    pin_set.add_pin(bpin->get_range_pin());
-    bpin->set_parent(nullptr);
-  }
-  void remove_pin(BackrefPin &pin) final {
-    auto *bpin = reinterpret_cast<BtreeBackrefPin*>(&pin);
-    pin_set.retire(bpin->get_range_pin());
-  }
 
   Cache::backref_entry_query_mset_t
   get_cached_backref_entries_in_range(
@@ -118,10 +103,8 @@ public:
 private:
   Cache &cache;
 
-  btree_pin_set_t<paddr_t> pin_set;
-
   op_context_t<paddr_t> get_context(Transaction &t) {
-    return op_context_t<paddr_t>{cache, t, &pin_set};
+    return op_context_t<paddr_t>{cache, t};
   }
 };
 

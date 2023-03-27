@@ -7,7 +7,7 @@
 namespace crimson::os::seastore {
 
 template <typename key_t, typename val_t>
-void BtreeNodePin<key_t, val_t>::init_child_pos(
+void BtreeNodeMapping<key_t, val_t>::init_child_pos(
   Transaction &t)
 {
   assert(parent);
@@ -17,6 +17,6 @@ void BtreeNodePin<key_t, val_t>::init_child_pos(
   this->child_pos = p.get_logical_child(t, pos);
 }
 
-template void BtreeNodePin<laddr_t, paddr_t>::init_child_pos(Transaction &t);
-template void BtreeNodePin<paddr_t, laddr_t>::init_child_pos(Transaction &t);
+template void BtreeNodeMapping<laddr_t, paddr_t>::init_child_pos(Transaction &t);
+template void BtreeNodeMapping<paddr_t, laddr_t>::init_child_pos(Transaction &t);
 } // namespace crimson::os::seastore

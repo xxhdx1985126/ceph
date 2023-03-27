@@ -25,15 +25,15 @@
 
 namespace crimson::os::seastore::lba_manager::btree {
 
-class BtreeLBAPin : public BtreeNodePin<laddr_t, paddr_t> {
+class BtreeLBAMapping : public BtreeNodeMapping<laddr_t, paddr_t> {
 public:
-  BtreeLBAPin() = default;
-  BtreeLBAPin(
+  BtreeLBAMapping() = default;
+  BtreeLBAMapping(
     CachedExtentRef parent,
     uint16_t pos,
     lba_map_val_t &val,
     lba_node_meta_t &&meta)
-    : BtreeNodePin(
+    : BtreeNodeMapping(
 	parent,
 	pos,
 	val.paddr,
@@ -44,7 +44,7 @@ public:
 
 using LBABtree = FixedKVBtree<
   laddr_t, lba_map_val_t, LBAInternalNode,
-  LBALeafNode, BtreeLBAPin, LBA_BLOCK_SIZE, true>;
+  LBALeafNode, BtreeLBAMapping, LBA_BLOCK_SIZE, true>;
 
 /**
  * BtreeLBAManager
@@ -105,11 +105,6 @@ public:
     return update_refcount(t, addr, 1);
   }
 
-  void complete_transaction(
-    Transaction &t,
-    std::vector<CachedExtentRef> &,
-    std::vector<CachedExtentRef> &) final;
-
   /**
    * init_cached_extent
    *
@@ -145,24 +140,9 @@ public:
     paddr_t addr,
     laddr_t laddr,
     extent_len_t len) final;
-
-  void add_pin(LBAPin &pin) final {
-    auto *bpin = reinterpret_cast<BtreeLBAPin*>(&pin);
-    pin_set.add_pin(bpin->get_range_pin());
-    bpin->set_parent(nullptr);
-  }
-
-  ~BtreeLBAManager() {
-    pin_set.scan([](auto &i) {
-      LOG_PREFIX(BtreeLBAManager::~BtreeLBAManager);
-      SUBERROR(seastore_lba, "Found {}, has_ref={} -- {}",
-	    i, i.has_ref(), i.get_extent());
-    });
-  }
 private:
   Cache &cache;
 
-  btree_pin_set_t<laddr_t> pin_set;
 
   struct {
     uint64_t num_alloc_extents = 0;
@@ -170,10 +150,8 @@ private:
   } stats;
 
   op_context_t<laddr_t> get_context(Transaction &t) {
-    return op_context_t<laddr_t>{cache, t, &pin_set};
+    return op_context_t<laddr_t>{cache, t};
   }
-
-  static btree_range_pin_t<laddr_t> &get_pin(CachedExtent &e);
 
   seastar::metrics::metric_group metrics;
   void register_metrics();
