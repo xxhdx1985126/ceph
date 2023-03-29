@@ -7,6 +7,7 @@
 #include <system_error>
 
 #include <seastar/core/future-util.hh>
+#include <seastar/core/when_all.hh>
 
 #include "crimson/common/utility.h"
 #include "include/ceph_assert.h"
@@ -384,6 +385,9 @@ static constexpr auto composer(FuncHead&& head, FuncTail&&... tail) {
 template <class ValueT>
 struct errorated_future_marker{};
 
+template <typename ValueT>
+struct errorated_value_marker {};
+
 template <class... AllowedErrors>
 class parallel_for_each_state;
 
@@ -421,6 +425,18 @@ struct errorator {
   struct ready_future_marker{};
   struct exception_future_marker{};
 
+  template <typename ValueT>
+  struct future_value_wrapper_t {};
+
+  template <typename ValueT>
+  struct future_value_wrapper_t<errorated_value_marker<ValueT>> {
+    using errorator_type = ::crimson::errorator<AllowedErrors...>;
+    ValueT val;
+
+    operator bool() const {
+      return (bool)val;
+    }
+  };
 private:
   // see the comment for `using future = _future` below.
   template <class>
@@ -519,6 +535,7 @@ private:
     using base_t::failed;
     // need this because of the legacy in PG::do_osd_ops().
     using base_t::handle_exception_type;
+    using base_t::ignore_ready_future;
 
     [[gnu::always_inline]]
     _future(base_t&& base)
@@ -592,6 +609,12 @@ private:
             errorator_type::make_exception_ptr(e))) {
       static_assert(errorator_type::contains_once_v<DecayedT>,
                     "ErrorT is not enlisted in errorator");
+    }
+
+    future_value_wrapper_t<errorated_value_marker<ValueT>> get0() {
+      return future_value_wrapper_t<
+        errorated_value_marker<ValueT>>{
+          seastar::future<ValueT>::get0()};
     }
 
     template <class ValueFuncT, class ErrorVisitorT>
@@ -820,6 +843,10 @@ private:
     friend class ::crimson::parallel_for_each_state<AllowedErrors...>;
     template <typename IC, typename FT>
     friend class ::crimson::interruptible::parallel_for_each_state;
+    template <typename Future>
+    friend class ::seastar::internal::when_all_state_component;
+    template <typename... Futures>
+    friend class ::seastar::internal::extract_values_from_futures_tuple;
   };
 
   class Enabler {};
@@ -1352,5 +1379,43 @@ template <template <class> class Container,
 struct continuation_base_from_future<Container<::crimson::errorated_future_marker<Value>>> {
   using type = continuation_base<Value>;
 };
+
+namespace internal {
+
+template <template <typename...> typename ValueWrapper, typename... Elements>
+struct tuple_to_future<
+         std::tuple<
+           ValueWrapper<::crimson::errorated_value_marker<Elements>>...>> {
+  template <template <typename...> typename ValueWrapperI, typename T, typename... Ts>
+  struct errorator_extractor {
+    using errorator_type = typename ValueWrapperI<
+      ::crimson::errorated_value_marker<T>>::errorator_type;
+  };
+  using errorator_type = typename errorator_extractor<ValueWrapper, Elements...>::errorator_type;
+  using value_type = std::tuple<Elements...>;
+  using type = typename errorator_type::template future<value_type>;
+  using promise_type = seastar::promise<value_type>;
+
+  template <typename TupleT, std::size_t... Is>
+  static auto _make_ready(TupleT&& t, std::index_sequence<Is...>) {
+    return errorator_type::template make_ready_future<value_type>(
+      std::make_tuple(std::get<Is>(t).val...));
+  }
+
+  static auto make_ready(
+    std::tuple<ValueWrapper<
+      ::crimson::errorated_value_marker<Elements>>...> t) noexcept {
+    return _make_ready(
+      t,
+      std::make_index_sequence<std::tuple_size_v<decltype(t)>>());
+  }
+
+  static auto make_failed(std::exception_ptr excp) noexcept {
+    return errorator_type::template make_exception_future2<value_type>(
+      std::move(excp));
+  }
+};
+
+}
 
 } // namespace seastar

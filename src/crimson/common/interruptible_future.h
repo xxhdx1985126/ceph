@@ -687,6 +687,7 @@ public:
   using interrupt_errorator_type =
     interruptible_errorator<InterruptCond, errorator_type>;
   using interrupt_cond_type = InterruptCond;
+  using tuple_type = typename core_type::tuple_type;
 
   template <typename U>
   using interrupt_futurize_t =
@@ -696,6 +697,8 @@ public:
   using core_type::failed;
   using core_type::core_type;
   using core_type::get_exception;
+  using core_type::get0;
+  using core_type::ignore_ready_future;
 
   using value_type = typename core_type::value_type;
 
@@ -1042,6 +1045,8 @@ private:
   friend inline auto seastar::with_lock(Lock& lock, Func&& f);
   template <typename IC, typename FT>
   friend class parallel_for_each_state;
+  template <typename Future>
+  friend class ::seastar::internal::when_all_state_component;
 };
 
 template <typename InterruptCond, typename T = void>
@@ -1552,6 +1557,21 @@ struct futurize<
       InterruptCond,
       typename ErroratedFuture<
 	::crimson::errorated_future_marker<T...>>::errorator_type>;
+;
+  using value_type = typename type::value_type;
+  using tuple_type = typename type::tuple_type;
+  static type from_tuple(tuple_type&& value) {
+    return type(ready_future_marker(), std::move(value));
+  }
+  static type from_tuple(const tuple_type& value) {
+    return type(ready_future_marker(), value);
+  }
+  static type from_tuple(value_type&& value) {
+    return type(ready_future_marker(), std::move(value));
+  }
+  static type from_tuple(const value_type& value) {
+    return type(ready_future_marker(), value);
+  }
 
   template<typename Func, typename... FuncArgs>
   static inline type invoke(Func&& func, FuncArgs&&... args) noexcept {
