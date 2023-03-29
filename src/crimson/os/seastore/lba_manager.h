@@ -80,8 +80,20 @@ public:
     Transaction &t,
     laddr_t hint,
     extent_len_t len,
-    paddr_t addr,
+    pladdr_t addr,
     LogicalCachedExtent *nextent) = 0;
+
+  virtual alloc_extent_ret clone_extent(
+    Transaction &t,
+    laddr_t hint,
+    extent_len_t len,
+    pladdr_t addr,
+    paddr_t actual_addr) = 0;
+
+  virtual alloc_extent_ret reserve_region(
+    Transaction &t,
+    laddr_t hint,
+    extent_len_t len) = 0;
 
   struct ref_update_result_t {
     unsigned refcount = 0;
