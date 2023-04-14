@@ -282,6 +282,7 @@ public:
       laddr_hint,
       len,
       ext->get_paddr(),
+      P_ADDR_NULL,
       ext.get()
     ).si_then([ext=std::move(ext), laddr_hint, &t](auto &&) mutable {
       LOG_PREFIX(TransactionManager::alloc_extent);
@@ -367,6 +368,7 @@ public:
       hint,
       len,
       P_ADDR_ZERO,
+      P_ADDR_NULL,
       nullptr);
   }
 
@@ -384,16 +386,19 @@ public:
     Transaction &t,
     laddr_t hint,
     laddr_t clone_offset,
-    extent_len_t len) {
+    extent_len_t len,
+    paddr_t actual_addr) {
     LOG_PREFIX(TransactionManager::clone_extent);
-    SUBDEBUGT(seastore_tm, "len={}, laddr_hint={}, clone_offset {}",
-      t, len, hint, clone_offset);
+    SUBDEBUGT(seastore_tm, "len={}, laddr_hint={}, clone_offset {}, actual_addr {}",
+      t, len, hint, clone_offset, actual_addr);
     ceph_assert(is_aligned(hint, epm->get_block_size()));
     return lba_manager->alloc_extent(
       t,
       hint,
       len,
-      clone_offset
+      clone_offset,
+      actual_addr,
+      nullptr
     ).si_then([this, &t, clone_offset](auto pin) {
       return inc_ref(t, clone_offset
       ).si_then([pin=std::move(pin)](auto) mutable {

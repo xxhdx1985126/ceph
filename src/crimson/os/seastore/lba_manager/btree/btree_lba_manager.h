@@ -174,6 +174,7 @@ public:
     laddr_t hint,
     extent_len_t len,
     pladdr_t addr,
+    paddr_t actual_addr,
     LogicalCachedExtent*) final;
 
   ref_ret decref_extent(
@@ -219,6 +220,15 @@ public:
     paddr_t paddr,
     LogicalCachedExtent*) final;
 
+  split_mapping_ret split_mapping(
+    Transaction &t,
+    laddr_t laddr,
+    paddr_t paddr,
+    extent_len_t left_len,
+    extent_len_t right_len,
+    LogicalCachedExtent *lnextent,
+    LogicalCachedExtent *rnextent) final;
+
   get_physical_extent_if_live_ret get_physical_extent_if_live(
     Transaction &t,
     extent_types_t type,
@@ -257,8 +267,10 @@ private:
    *
    * Updates mapping, removes if f returns nullopt
    */
+  using _update_mapping_ret_bare =
+    std::variant<lba_map_val_t, BtreeLBAMappingRef>;
   using _update_mapping_iertr = ref_iertr;
-  using _update_mapping_ret = ref_iertr::future<lba_map_val_t>;
+  using _update_mapping_ret = ref_iertr::future<_update_mapping_ret_bare>;
   using update_func_t = std::function<
     lba_map_val_t(const lba_map_val_t &v)
     >;
@@ -277,6 +289,16 @@ private:
   _get_original_mappings_ret _get_original_mappings(
     op_context_t<laddr_t> c,
     std::list<BtreeLBAMappingRef> &pin_list);
+
+  using _alloc_extent_ret = alloc_extent_ret;
+  _alloc_extent_ret _alloc_extent(
+    Transaction &t,
+    laddr_t hint,
+    extent_len_t len,
+    pladdr_t addr,
+    paddr_t actual_addr,
+    uint32_t refcnt,
+    LogicalCachedExtent* nextent);
 
 };
 using BtreeLBAManagerRef = std::unique_ptr<BtreeLBAManager>;

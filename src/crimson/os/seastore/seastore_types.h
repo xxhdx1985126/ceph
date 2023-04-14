@@ -1035,6 +1035,11 @@ struct __attribute((packed)) laddr_le_t {
   }
 };
 
+// logical offset, see LBAManager, TransactionManager
+using extent_len_t = uint32_t;
+constexpr extent_len_t EXTENT_LEN_MAX =
+  std::numeric_limits<extent_len_t>::max();
+
 constexpr uint64_t PL_ADDR_NULL = std::numeric_limits<uint64_t>::max();
 
 struct pladdr_t {
@@ -1053,6 +1058,15 @@ struct pladdr_t {
 
   bool is_paddr() const {
     return pladdr.index() == 1;
+  }
+
+  pladdr_t operator+(extent_len_t len) {
+    if (is_laddr()) {
+      return get_laddr() + len;
+    } else {
+      assert(is_paddr());
+      return get_paddr() + len;
+    }
   }
 
   pladdr_t& operator=(paddr_t paddr) {
@@ -1131,11 +1145,6 @@ struct min_max_t<paddr_t> {
   static constexpr paddr_t min = P_ADDR_MIN;
   static constexpr paddr_t null = P_ADDR_NULL;
 };
-
-// logical offset, see LBAManager, TransactionManager
-using extent_len_t = uint32_t;
-constexpr extent_len_t EXTENT_LEN_MAX =
-  std::numeric_limits<extent_len_t>::max();
 
 using extent_len_le_t = ceph_le32;
 inline extent_len_le_t init_extent_len_le(extent_len_t len) {

@@ -289,12 +289,27 @@ BtreeLBAManager::_get_mapping(
     });
 }
 
-BtreeLBAManager::alloc_extent_ret
+BtreeLBAManager::alloc_extent_re
 BtreeLBAManager::alloc_extent(
   Transaction &t,
   laddr_t hint,
   extent_len_t len,
   pladdr_t addr,
+  paddr_t actual_addr,
+  LogicalCachedExtent* nextent)
+{
+  assert(addr.is_laddr() == (actual_addr != P_ADDR_NULL));
+  return _alloc_extent(t, hint, len, addr, actual_addr, 1, nextent);
+}
+
+BtreeLBAManager::_alloc_extent_ret
+BtreeLBAManager::_alloc_extent(
+  Transaction &t,
+  laddr_t hint,
+  extent_len_t len,
+  pladdr_t addr,
+  paddr_t actual_addr,
+  uint32_t refcnt,
   LogicalCachedExtent* nextent)
 {
   struct state_t {
@@ -306,7 +321,7 @@ BtreeLBAManager::alloc_extent(
     state_t(laddr_t hint) : last_end(hint) {}
   };
 
-  LOG_PREFIX(BtreeLBAManager::alloc_extent);
+  LOG_PREFIX(BtreeLBAManager::_alloc_extent);
   TRACET("{}~{}, hint={}", t, addr, len, hint);
   auto c = get_context(t);
   ++stats.num_alloc_extents;
@@ -315,8 +330,8 @@ BtreeLBAManager::alloc_extent(
     cache,
     c,
     hint,
-    [this, FNAME, c, hint, len, addr, lookup_attempts,
-    &t, nextent](auto &btree, auto &state) {
+    [this, FNAME, c, hint, len, addr, lookup_attempts, actual_addr,
+    &t, refcnt, nextent](auto &btree, auto &state) {
       return LBABtree::iterate_repeat(
 	c,
 	btree.upper_bound_right(c, hint),
@@ -352,27 +367,35 @@ BtreeLBAManager::alloc_extent(
 	      interruptible::ready_future_marker{},
 	      seastar::stop_iteration::no);
 	  }
-	}).si_then([FNAME, c, addr, len, hint, &btree, &state, nextent] {
+	}).si_then([FNAME, c, addr, len, hint, &btree, &state, refcnt, nextent] {
 	  return btree.insert(
 	    c,
 	    *state.insert_iter,
 	    state.last_end,
-	    lba_map_val_t{len, pladdr_t(addr), 1, 0}
+	    lba_map_val_t{len, pladdr_t(addr), refcnt, 0},
 	    nextent
 	  ).si_then([&state, FNAME, c, addr, len, hint, nextent](auto &&p) {
 	    auto [iter, inserted] = std::move(p);
 	    TRACET("{}~{}, hint={}, inserted at {}",
 	           c.trans, addr, len, hint, state.last_end);
 	    if (nextent) {
+	      ceph_assert(addr.is_paddr());
 	      nextent->set_laddr(iter.get_key());
 	    }
 	    ceph_assert(inserted);
 	    state.ret = iter;
 	  });
 	});
-    }).si_then([c](auto &&state) {
-      return alloc_extent_iertr::make_ready_future<LBAPinRef>(
-	state.ret->get_pin(c).release());
+    }).si_then([c, actual_addr, addr](auto &&state) {
+      auto ret_pin = state.ret->get_pin(c);
+      if (actual_addr != P_ADDR_NULL) {
+	ceph_assert(addr.is_laddr());
+	ret_pin->set_paddr(actual_addr);
+      } else {
+	ceph_assert(addr.is_paddr());
+      }
+      return alloc_extent_iertr::make_ready_future<LBAMappingRef>(
+	state.ret->get_pin(c));
     });
 }
 
@@ -533,7 +556,10 @@ BtreeLBAManager::update_mapping(
     nextent
   ).si_then([&t, laddr, prev_addr, addr, FNAME](auto result) {
       DEBUGT("laddr={}, paddr {} => {} done -- {}",
-             t, laddr, prev_addr, addr, result);
+             t, laddr, prev_addr, addr,
+	     result.index() == 0
+	      ? std::get<0>(result)
+	      : std::get<1>(result)->get_map_val());
     },
     update_mapping_iertr::pass_further{},
     /* ENOENT in particular should be impossible */
@@ -541,6 +567,62 @@ BtreeLBAManager::update_mapping(
       "Invalid error in BtreeLBAManager::update_mapping"
     }
   );
+}
+
+BtreeLBAManager::split_mapping_ret
+BtreeLBAManager::split_mapping(
+  Transaction &t,
+  laddr_t laddr,
+  paddr_t paddr,
+  extent_len_t left_len,
+  extent_len_t right_len,
+  LogicalCachedExtent *lnextent,
+  LogicalCachedExtent *rnextent)
+{
+  LOG_PREFIX(BtreeLBAManager::split_mapping);
+  TRACET("splitting mapping: {}~{} to {}~{} and {}~{}",
+    t, laddr, left_len + right_len, laddr, left_len,
+    laddr + left_len, right_len);
+  return _update_mapping(
+    t,
+    laddr,
+    [left_len, right_len, &t](const lba_map_val_t &in) {
+      lba_map_val_t ret = in;
+      ceph_assert(left_len + right_len == in.len);
+      LOG_PREFIX(BtreeLBAManager::split_mapping);
+      TRACET("left val: {}, indirect: {}", t, ret, ret.pladdr.is_laddr());
+      ret.len = left_len;
+      return ret;
+    },
+    lnextent
+  ).si_then([&t, laddr, left_len, right_len, this, rnextent, paddr](auto v) {
+    ceph_assert(v.index() == 1);
+    auto &mapping = std::get<1>(v);
+    auto left_val = mapping->get_map_val();
+    auto pladdr = mapping->get_raw_val();
+    LOG_PREFIX(BtreeLBAManager::split_mapping);
+    TRACET("allocating for pladdr {}, indirect: {}",
+      t, pladdr, std::get<1>(v)->is_indirect());
+
+    return _alloc_extent(
+      t,
+      laddr + left_len,
+      right_len,
+      pladdr + left_len,
+      (pladdr.is_paddr() ? P_ADDR_NULL : paddr),
+      left_val.refcount,
+      rnextent
+    ).si_then([v=std::move(v)](auto ret) mutable {
+      return std::make_pair<LBAMappingRef, LBAMappingRef>(
+	LBAMappingRef(std::get<1>(v).release()),
+	std::move(ret));
+    });
+  },
+  update_mapping_iertr::pass_further{},
+  /* ENOENT in particular should be impossible */
+  crimson::ct_error::assert_all{
+    "Invalid error in BtreeLBAManager::split_mapping"
+  });
 }
 
 BtreeLBAManager::get_physical_extent_if_live_ret
@@ -612,12 +694,14 @@ BtreeLBAManager::update_refcount(
     },
     nullptr
   ).si_then([&t, addr, delta, FNAME](auto result) {
-    DEBUGT("laddr={}, delta={} done -- {}", t, addr, delta, result);
+    auto ret_val = (result.index() == 0) ? std::get<0>(result)
+					 : std::get<1>(result)->get_map_val();
+    DEBUGT("laddr={}, delta={} done -- {}", t, addr, delta, ret_val);
     return ref_update_result_t{
-      result.refcount,
-      result.pladdr,
-      result.len
-     };
+      ret_val.refcount,
+      ret_val.pladdr,
+      ret_val.len
+    };
   });
 }
 
@@ -629,7 +713,7 @@ BtreeLBAManager::_update_mapping(
   LogicalCachedExtent* nextent)
 {
   auto c = get_context(t);
-  return with_btree_ret<LBABtree, lba_map_val_t>(
+  return with_btree_ret<LBABtree, _update_mapping_ret_bare>(
     cache,
     c,
     [f=std::move(f), c, addr, nextent](auto &btree) mutable {
@@ -649,7 +733,7 @@ BtreeLBAManager::_update_mapping(
 	    c,
 	    iter
 	  ).si_then([ret] {
-	    return ret;
+	    return _update_mapping_ret_bare(ret);
 	  });
 	} else {
 	  return btree.update(
@@ -657,8 +741,8 @@ BtreeLBAManager::_update_mapping(
 	    iter,
 	    ret,
 	    nextent
-	  ).si_then([ret](auto) {
-	    return ret;
+	  ).si_then([c](auto iter) {
+	    return _update_mapping_ret_bare(iter.get_pin(c));
 	  });
 	}
       });

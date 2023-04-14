@@ -1260,7 +1260,8 @@ ObjectDataHandler::clone_ret ObjectDataHandler::clone_extents(
 	      pin->is_indirect()
 		? pin->get_intermediate_key()
 		: pin->get_key(),
-	      pin->get_length()
+	      pin->get_length(),
+	      pin->get_val()
 	    ).si_then([&last_pos, &pin, offset](auto) {
 	      last_pos = offset + pin->get_length();
 	      return seastar::now();

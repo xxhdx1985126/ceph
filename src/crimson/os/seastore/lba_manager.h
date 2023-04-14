@@ -86,7 +86,8 @@ public:
     Transaction &t,
     laddr_t hint,
     extent_len_t len,
-    pladdr_t addr
+    pladdr_t addr,
+    paddr_t actual_addr,
     LogicalCachedExtent *nextent) = 0;
 
   struct ref_update_result_t {
@@ -181,6 +182,23 @@ public:
   update_mappings_ret update_mappings(
     Transaction& t,
     const std::list<LogicalCachedExtentRef>& extents);
+
+  /**
+   * split_mapping
+   *
+   * split an lba entry into two
+   */
+  using split_mapping_iertr = alloc_extent_iertr;
+  using split_mapping_ret = split_mapping_iertr::future<
+    std::pair<LBAMappingRef, LBAMappingRef>>;
+  virtual split_mapping_ret split_mapping(
+    Transaction &t,
+    laddr_t laddr,
+    paddr_t paddr,
+    extent_len_t left_len,
+    extent_len_t right_len,
+    LogicalCachedExtent *lnextent,
+    LogicalCachedExtent *rnextent) = 0;
 
   /**
    * get_physical_extent_if_live
