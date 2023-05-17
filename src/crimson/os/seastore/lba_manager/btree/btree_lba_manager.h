@@ -303,6 +303,11 @@ private:
     uint32_t refcnt,
     LogicalCachedExtent* nextent);
 
+  ref_iertr::future<std::list<std::pair<paddr_t, extent_len_t>>>
+  _decref_intermediate(
+    Transaction &t,
+    laddr_t addr,
+    extent_len_t len);
 };
 using BtreeLBAManagerRef = std::unique_ptr<BtreeLBAManager>;
 
