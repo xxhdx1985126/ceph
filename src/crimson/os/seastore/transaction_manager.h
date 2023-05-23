@@ -23,6 +23,7 @@
 #include "crimson/os/seastore/logging.h"
 #include "crimson/os/seastore/seastore_types.h"
 #include "crimson/os/seastore/cache.h"
+#include "crimson/os/seastore/cache/non_volatile_cache.h"
 #include "crimson/os/seastore/lba_manager.h"
 #include "crimson/os/seastore/backref_manager.h"
 #include "crimson/os/seastore/journal.h"
@@ -693,6 +694,7 @@ private:
   BackrefManagerRef backref_manager;
 
   WritePipeline write_pipeline;
+  NonVolatileCache *nv_cache;
 
   rewrite_extent_ret rewrite_logical_extent(
     Transaction& t,
@@ -878,6 +880,9 @@ private:
     });
   }
 
+  bool support_non_volatile_cache() const {
+    return nv_cache != nullptr;
+  }
 
 public:
   // Testing interfaces
