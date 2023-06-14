@@ -146,6 +146,7 @@ BtreeLBAManager::get_mappings(
 {
   LOG_PREFIX(BtreeLBAManager::get_mappings);
   TRACET("{}~{}", t, offset, length);
+  offset = reset_shadow_mapping(offset);
   auto c = get_context(t);
   return with_btree_state<LBABtree, lba_pin_list_t>(
     cache,
@@ -205,6 +206,9 @@ BtreeLBAManager::_get_original_mappings(
 	  ).si_then([&pin, &ret, c, offset, length](auto new_pin_list) {
 	    auto off = 0;
 	    for (auto &new_pin : new_pin_list) {
+	      if (new_pin->is_shadow_mapping()) {
+		continue;
+	      }
 	      if (pin->get_key() + off + new_pin->get_length() <= offset) {
 		// exclude mappings outside `offset`~`length`
 		off += new_pin->get_length();
@@ -271,6 +275,7 @@ BtreeLBAManager::get_mapping(
 {
   LOG_PREFIX(BtreeLBAManager::get_mapping);
   TRACET("{}", t, offset);
+  offset = reset_shadow_mapping(offset);
   return _get_mapping(t, offset
   ).si_then([](auto pin) {
     return get_mapping_iertr::make_ready_future<LBAMappingRef>(pin.release());
@@ -463,13 +468,15 @@ BtreeLBAManager::alloc_shadow_extent(
 	assert(iter.get_key() == laddr);
         return iter.next(c
         ).si_then([c, laddr, len, paddr, nextent, iter, &btree](auto niter) {
+	  auto shadow_laddr = map_shadow_laddr(laddr, shadow_mapping_t::COLD_MIRROR);
+	  assert(niter.get_key() != shadow_laddr);
           auto val = iter.get_val();
 	  assert(len == val.len);
           val.pladdr = paddr;
           return btree.insert(
 	    c,
 	    niter,
-	    map_shadow_laddr(laddr, shadow_mapping_t::COLD_MIRROR),
+	    shadow_laddr,
 	    val,
 	    nextent
           ).si_then([c, nextent](auto iter) {

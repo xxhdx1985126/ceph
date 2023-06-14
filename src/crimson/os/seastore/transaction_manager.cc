@@ -794,6 +794,7 @@ TransactionManager::get_extents_if_live(
             [=, this, &list, &t](
               LBAMappingRef &pin) -> Cache::get_extent_iertr::future<>
           {
+	    ceph_assert(!pin->is_indirect());
             auto pin_paddr = pin->get_val();
             auto &pin_seg_paddr = pin_paddr.as_seg_paddr();
             auto pin_paddr_seg_id = pin_seg_paddr.get_segment_id();
