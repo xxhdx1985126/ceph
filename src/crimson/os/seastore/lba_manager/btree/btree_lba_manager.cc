@@ -162,7 +162,7 @@ BtreeLBAManager::get_mappings(
 BtreeLBAManager::_get_original_mappings_ret
 BtreeLBAManager::_get_original_mappings(
   op_context_t<laddr_t> c,
-  std::list<BtreeLBAPinRef> &pin_list)
+  std::list<BtreeLBAMappingRef> &pin_list)
 {
   return seastar::do_with(
     lba_pin_list_t(),

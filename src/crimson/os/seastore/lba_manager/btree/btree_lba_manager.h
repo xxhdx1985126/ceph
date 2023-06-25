@@ -113,6 +113,7 @@ protected:
   }
 private:
   void turn_indirect() {
+    assert(value.is_paddr());
     intermediate_key = key;
     indirect = true;
   }
