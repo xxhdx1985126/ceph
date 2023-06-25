@@ -289,7 +289,7 @@ BtreeLBAManager::_get_mapping(
     });
 }
 
-BtreeLBAManager::alloc_extent_re
+BtreeLBAManager::alloc_extent_ret
 BtreeLBAManager::alloc_extent(
   Transaction &t,
   laddr_t hint,
