@@ -292,67 +292,124 @@ public:
     });
   }
 
-  /**
-   * map_existing_extent
-   *
-   * Allocates a new extent at given existing_paddr that must be absolute and
-   * reads disk to fill the extent.
-   * The common usage is that remove the LogicalCachedExtent (laddr~length at paddr)
-   * and map extent to multiple new extents.
-   * placement_hint and generation should follow the original extent.
-   */
-  using map_existing_extent_iertr =
-    alloc_extent_iertr::extend_ertr<Device::read_ertr>;
-  template <typename T>
-  using map_existing_extent_ret =
-    map_existing_extent_iertr::future<TCachedExtentRef<T>>;
-  template <typename T>
-  map_existing_extent_ret<T> map_existing_extent(
+  using split_extent_iertr = alloc_extent_iertr;
+  using split_extent_ret = split_extent_iertr::future<
+    std::pair<LBAMappingRef, LBAMappingRef>>;
+  template<typename T>
+  split_extent_ret split_extent(
     Transaction &t,
-    laddr_t laddr_hint,
-    paddr_t existing_paddr,
-    extent_len_t length) {
-    LOG_PREFIX(TransactionManager::map_existing_extent);
-    // FIXME: existing_paddr can be absolute and pending
-    ceph_assert(existing_paddr.is_absolute());
-    assert(t.is_retired(existing_paddr, length));
+    laddr_t laddr,
+    paddr_t paddr,
+    extent_len_t left_len,
+    extent_len_t right_len,
+    bool mapping_only = false) {
+    auto fut = split_extent_iertr::make_ready_future<
+      std::pair<LBAMappingRef, LBAMappingRef>>();
+    if (mapping_only) {
+      fut = lba_manager->split_mapping(
+        t, laddr, paddr, left_len, right_len, nullptr, nullptr);
+    } else {
+      LOG_PREFIX(TransactionManager::split_extent);
+      auto lbp = ceph::bufferptr(buffer::create_page_aligned(left_len));
+      lbp.zero();
+      auto rbp = ceph::bufferptr(buffer::create_page_aligned(right_len));
+      rbp.zero();
 
-    SUBDEBUGT(seastore_tm, " laddr_hint: {} existing_paddr: {} length: {}",
-	      t, laddr_hint, existing_paddr, length);
-    auto bp = ceph::bufferptr(buffer::create_page_aligned(length));
-    bp.zero();
+      auto lext = CachedExtent::make_cached_extent_ref<T>(std::move(lbp));
+      lext->init(CachedExtent::extent_state_t::EXIST_CLEAN,
+                 P_ADDR_ZERO,
+                 PLACEMENT_HINT_NULL,
+                 NULL_GENERATION,
+                 t.get_trans_id());
+      auto rext = CachedExtent::make_cached_extent_ref<T>(std::move(rbp));
+      rext->init(CachedExtent::extent_state_t::EXIST_CLEAN,
+                 P_ADDR_ZERO,
+                 PLACEMENT_HINT_NULL,
+                 NULL_GENERATION,
+                 t.get_trans_id());
 
-    // ExtentPlacementManager::alloc_new_extent will make a new
-    // (relative/temp) paddr, so make extent directly
-    auto ext = CachedExtent::make_cached_extent_ref<T>(std::move(bp));
+      lext->set_laddr(laddr);
+      rext->set_laddr(laddr + left_len);
 
-    ext->init(CachedExtent::extent_state_t::EXIST_CLEAN,
-	      existing_paddr,
-	      PLACEMENT_HINT_NULL,
-	      NULL_GENERATION,
-	      t.get_trans_id());
+      SUBDEBUGT(seastore_tm,
+                " new extent, lext: {}, rext{}",
+                t, *lext, *rext);
+      fut = lba_manager->split_mapping(
+        t, laddr, paddr, left_len, right_len, lext.get(), rext.get()
+      ).si_then([this, &t, left_len, right_len](auto p) {
+        auto &pin = p.first;
+        //FIXME: currently, only splitting cloned extents will call
+        //this method, so no lba entry should be removed, which means
+        //both pins returned by LBAManager::split_mapping() shouldn't be
+        //null. However, in the future, if head extents are also splitted
+        //by this method, this line should be an 'if' clause instead of
+        //an assert.
+        ceph_assert(pin);
+        return cache->retire_extent_addr(
+          t, pin->get_val(), left_len + right_len
+        ).si_then([p=std::move(p)]() mutable {
+          return std::move(p);
+        });
+      }).si_then([this, &t, lext, rext](auto p) {
+        ceph_assert(p.first);
+        ceph_assert(p.second);
+        auto &lmapping = p.first;
+        auto &rmapping = p.second;
 
-    t.add_fresh_extent(ext);
+        lext->set_paddr(lmapping->get_val());
+        rext->set_paddr(rmapping->get_val());
+        t.add_fresh_extent(lext);
+        t.add_fresh_extent(rext);
 
-    return lba_manager->alloc_extent(
-      t,
-      laddr_hint,
-      length,
-      existing_paddr,
-      ext.get()
-    ).si_then([ext=std::move(ext), laddr_hint, this](auto &&ref) {
-      ceph_assert(laddr_hint == ref->get_key());
-      return epm->read(
-        ext->get_paddr(),
-	ext->get_length(),
-	ext->get_bptr()
-      ).safe_then([ext=std::move(ext)] {
-	return map_existing_extent_iertr::make_ready_future<TCachedExtentRef<T>>
-	  (std::move(ext));
+        std::vector<TCachedExtentRef<T>> ext_vec = {lext, rext};
+        return seastar::do_with(
+          std::move(ext_vec),
+          [this](auto &ext_vec) mutable {
+          return trans_intr::parallel_for_each(
+            ext_vec,
+            [this](auto ext) mutable {
+            return trans_intr::make_interruptible(
+              epm->read(
+                ext->get_paddr(),
+                ext->get_length(),
+                ext->get_bptr()
+              ).handle_error(
+                crimson::ct_error::input_output_error::pass_further(),
+                crimson::ct_error::assert_all("unexpected error splitting extents")
+              )
+            );
+          });
+        }).si_then([p=std::move(p)]() mutable {
+          return std::move(p);
+        });
       });
-    });
-  }
+    }
 
+    return fut.si_then([&t, this](auto p) {
+      auto &left_mapping = p.first;
+      auto &right_mapping = p.second;
+      if (left_mapping->is_indirect()) {
+	assert(right_mapping->is_indirect());
+	assert(right_mapping->get_intermediate_key() ==
+	  left_mapping->get_intermediate_key() + left_mapping->get_length());
+	assert(right_mapping->get_val() ==
+	  left_mapping->get_val() + left_mapping->get_length());
+	return inc_ref(t, left_mapping->get_intermediate_key()
+	).si_then([p=std::move(p)](auto) mutable {
+	  return std::move(p);
+	}).handle_error_interruptible(
+	  crimson::ct_error::input_output_error::pass_further{},
+	  crimson::ct_error::assert_all{"unexpected enoent"}
+	);
+      } else {
+	return split_extent_iertr::make_ready_future<
+	  std::pair<LBAMappingRef, LBAMappingRef>>(std::move(p));
+      }
+    }).handle_error_interruptible(
+      crimson::ct_error::input_output_error::pass_further(),
+      crimson::ct_error::assert_all("unexpected error splitting extents")
+    );
+  }
 
   using reserve_extent_iertr = alloc_extent_iertr;
   using reserve_extent_ret = reserve_extent_iertr::future<LBAMappingRef>;

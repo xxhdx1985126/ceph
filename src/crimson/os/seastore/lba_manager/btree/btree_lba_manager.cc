@@ -149,8 +149,8 @@ BtreeLBAManager::get_mappings(
 	    return LBABtree::iterate_repeat_ret_inner(
 	      interruptible::ready_future_marker{},
 	      seastar::stop_iteration::no);
-	  }).si_then([this, &ret, c, &pin_list] {
-	    return _get_original_mappings(c, pin_list
+	  }).si_then([this, &ret, c, &pin_list, offset, length] {
+	    return _get_original_mappings(c, pin_list, offset, length
 	    ).si_then([&ret](auto _ret) {
 	      ret = std::move(_ret);
 	    });
@@ -162,14 +162,16 @@ BtreeLBAManager::get_mappings(
 BtreeLBAManager::_get_original_mappings_ret
 BtreeLBAManager::_get_original_mappings(
   op_context_t<laddr_t> c,
-  std::list<BtreeLBAMappingRef> &pin_list)
+  std::list<BtreeLBAMappingRef> &pin_list,
+  laddr_t offset,
+  extent_len_t length)
 {
   return seastar::do_with(
     lba_pin_list_t(),
-    [this, c, &pin_list](auto &ret) {
+    [this, c, &pin_list, offset, length](auto &ret) {
     return trans_intr::do_for_each(
       pin_list,
-      [this, c, &ret](auto &pin) {
+      [this, c, &ret, offset, length](auto &pin) {
 	LOG_PREFIX(BtreeLBAManager::get_mappings);
 	if (pin->get_raw_val().is_laddr()) {
 	  TRACET(
@@ -177,9 +179,18 @@ BtreeLBAManager::_get_original_mappings(
 	    c.trans, pin->get_key(), pin->get_length());
 	  return this->get_mappings(
 	    c.trans, pin->get_raw_val().get_laddr(), pin->get_length()
-	  ).si_then([&pin, &ret, c](auto new_pin_list) {
+	  ).si_then([&pin, &ret, c, length, offset](auto new_pin_list) {
 	    auto off = 0;
 	    for (auto &new_pin : new_pin_list) {
+	      // exclude mappings outside `offset`~`length`
+              if (pin->get_key() + off + new_pin->get_length() <= offset) {
+                off += new_pin->get_length();
+                continue;
+              }
+              if (pin->get_key() + off >= offset + length) {
+                break;
+              }
+
 	      LOG_PREFIX(BtreeLBAManager::get_mappings);
 	      static_cast<BtreeLBAMapping&>(*new_pin).set_key_for_indirect(
 		pin->get_key() + off);
@@ -188,7 +199,7 @@ BtreeLBAManager::_get_original_mappings(
 		c.trans,
 		new_pin->get_intermediate_key(), new_pin->get_length(),
 		pin->get_key(), pin->get_length());
-	      ret.emplace_back(new_pin.release());
+	      ret.emplace_back(std::move(new_pin));
 	    }
 	  }).handle_error_interruptible(
 	    crimson::ct_error::input_output_error::pass_further{},
@@ -717,7 +728,7 @@ BtreeLBAManager::_update_mapping(
     cache,
     c,
     [f=std::move(f), c, addr, nextent](auto &btree) mutable {
-      return btree.lower_bound(
+      return btree.upper_bound_right(
 	c, addr
       ).si_then([&btree, f=std::move(f), c, addr, nextent](auto iter)
 		-> _update_mapping_ret {

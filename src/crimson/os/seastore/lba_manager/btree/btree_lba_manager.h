@@ -289,7 +289,9 @@ private:
   using _get_original_mappings_ret = get_mappings_ret;
   _get_original_mappings_ret _get_original_mappings(
     op_context_t<laddr_t> c,
-    std::list<BtreeLBAMappingRef> &pin_list);
+    std::list<BtreeLBAMappingRef> &pin_list,
+    laddr_t offset,
+    extent_len_t length);
 
   using _alloc_extent_ret = alloc_extent_ret;
   _alloc_extent_ret _alloc_extent(

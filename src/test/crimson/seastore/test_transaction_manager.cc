@@ -927,7 +927,7 @@ struct transaction_manager_test_t :
       test_gen("finish evict");
     });
   }
-
+/*
   std::optional<TestBlockRef> map_existing_extent(
     test_transaction_t &t,
     laddr_t hint,
@@ -1072,7 +1072,7 @@ struct transaction_manager_test_t :
       replay();
       check();
     });
-  }
+  }*/
 };
 
 struct tm_single_device_test_t :
@@ -1459,7 +1459,7 @@ TEST_P(tm_single_device_test_t, parallel_extent_read)
 {
   test_parallel_extent_read();
 }
-
+/*
 TEST_P(tm_single_device_test_t, test_map_existing_extent)
 {
   test_map_existing_extent();
@@ -1467,7 +1467,7 @@ TEST_P(tm_single_device_test_t, test_map_existing_extent)
 TEST_P(tm_single_device_test_t, test_map_existing_extent_concurrent)
 {
   test_map_existing_extent_concurrent();
-}
+}*/
 INSTANTIATE_TEST_SUITE_P(
   transaction_manager_test,
   tm_single_device_test_t,
