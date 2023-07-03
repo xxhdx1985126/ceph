@@ -180,33 +180,25 @@ BtreeLBAManager::_get_original_mappings(
 	  return this->get_mappings(
 	    c.trans, pin->get_raw_val().get_laddr(), pin->get_length()
 	  ).si_then([&pin, &ret, c, length, offset](auto new_pin_list) {
-	    auto off = 0;
-	    for (auto &new_pin : new_pin_list) {
-	      // exclude mappings outside `offset`~`length`
-              if (pin->get_key() + off + new_pin->get_length() <= offset) {
-                off += new_pin->get_length();
-                continue;
-              }
-              if (pin->get_key() + off >= offset + length) {
-                break;
-              }
+	    assert(new_pin_list.size() == 1);
+	    auto &new_pin = new_pin_list.front();
+	    assert(!new_pin->is_indirect());
+	    assert(new_pin->get_key() <= offset);
+	    assert(new_pin->get_key() + new_pin->get_lengt() >= offset + length);
 
-	      LOG_PREFIX(BtreeLBAManager::get_mappings);
-	      static_cast<BtreeLBAMapping&>(*new_pin).set_key_for_indirect(
-		pin->get_key() + off);
-	      off += new_pin->get_length();
-	      TRACET("Got mapping {}~{} for indirect mapping {}~{}",
-		c.trans,
-		new_pin->get_intermediate_key(), new_pin->get_length(),
-		pin->get_key(), pin->get_length());
-	      ret.emplace_back(std::move(new_pin));
-	    }
+	    LOG_PREFIX(BtreeLBAManager::get_mappings);
+	    static_cast<BtreeLBAMapping&>(*new_pin).set_key_for_indirect(pin->get_key());
+	    TRACET("Got mapping {}~{} for indirect mapping {}~{}",
+	      c.trans,
+	      new_pin->get_intermediate_key(), new_pin->get_length(),
+	      pin->get_key(), pin->get_length());
+	    ret.emplace_back(std::move(new_pin));
 	  }).handle_error_interruptible(
 	    crimson::ct_error::input_output_error::pass_further{},
 	    crimson::ct_error::assert_all("unexpected enoent")
 	  );
 	} else {
-	  ret.emplace_back(pin.release());
+	  ret.emplace_back(std::move(pin));
 	  return get_mappings_iertr::now();
 	}
       }
@@ -250,7 +242,7 @@ BtreeLBAManager::get_mapping(
   TRACET("{}", t, offset);
   return _get_mapping(t, offset
   ).si_then([](auto pin) {
-    return get_mapping_iertr::make_ready_future<LBAMappingRef>(pin.release());
+    return get_mapping_iertr::make_ready_future<LBAMappingRef>(std::move(pin));
   });
 }
 
