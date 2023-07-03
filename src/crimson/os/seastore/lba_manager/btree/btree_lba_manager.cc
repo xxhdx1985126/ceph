@@ -617,7 +617,7 @@ BtreeLBAManager::split_mapping(
       rnextent
     ).si_then([v=std::move(v)](auto ret) mutable {
       return std::make_pair<LBAMappingRef, LBAMappingRef>(
-	LBAMappingRef(std::get<1>(v).release()),
+	std::move(std::get<1>(v)),
 	std::move(ret));
     });
   },
