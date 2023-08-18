@@ -1047,13 +1047,19 @@ SeaStore::Shard::omap_get_values(
   const omap_keys_t &keys)
 {
   auto c = static_cast<SeastoreCollection*>(ch.get());
+  LOG_PREFIX(SeaStore::omap_get_values);
+  DEBUG("{} {} for keys", c->get_cid(), oid);
   return repeat_with_onode<omap_values_t>(
     c,
     oid,
     Transaction::src_t::READ,
     "omap_get_values",
     op_type_t::OMAP_GET_VALUES,
-    [this, keys](auto &t, auto &onode) {
+    [this, keys, oid](auto &t, auto &onode) {
+      LOG_PREFIX(SeaStore::omap_get_values);
+      for (auto &key : keys) {
+	DEBUGT("getting {} for {}", t, key, oid);
+      }
       omap_root_t omap_root = onode.get_layout().omap_root.get(
 	onode.get_metadata_hint(device->get_block_size()));
       return _omap_get_values(

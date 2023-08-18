@@ -907,6 +907,16 @@ $BLUESTORE_OPTS
         seastore_main_backend_type=$seastore_main_backend_type
         seastore_secondary_device_type=$seastore_secondary_device_type
         seastore_secondary_backend_type=$seastore_secondary_backend_type
+        debug_osd = 20
+        debug_seastore = 25
+        debug_seastore_t = 25
+        debug_seastore_tm = 25
+        debug_seastore_cache = 25
+        debug_seastore_lba = 25
+        debug_seastore_fixedkv_tree = 25
+        debug_seastore_odata = 25
+        debug_seastore_onode = 25
+        debug_seastore_omap = 25
 $COSDSHORT
         $(format_conf "${extra_conf}")
 [mon]
