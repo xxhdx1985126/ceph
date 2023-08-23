@@ -1093,6 +1093,7 @@ namespace {
     std::optional<std::string> next;
 
     void process_entry(const auto& key, const auto& value) {
+      ldpp_dout(dpp, 20) << "read_log_and_missing key: " << key << dendl;
       if (key[0] == '_')
         return;
       //Copy ceph::buffer::list before creating iterator
