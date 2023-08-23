@@ -50,6 +50,7 @@ class intrusive_lru_base {
   // is zero (aka unreferenced).
   intrusive_lru<Config> *lru = nullptr;
 
+  bool erase_on_unreference = false;
 public:
   bool is_referenced() const {
     return static_cast<bool>(lru);
@@ -145,6 +146,12 @@ class intrusive_lru {
     assert(b.is_referenced());
     unreferenced_list.push_back(b);
     b.lru = nullptr;
+    if (b.erase_on_unreference) {
+      unreferenced_list.erase(lru_list_t::s_iterator_to(b));
+      lru_set.erase_and_dispose(
+	lru_set_t::s_iterator_to(b),
+	[](auto *p) { delete p; });
+    }
     evict();
   }
 
@@ -167,6 +174,22 @@ public:
     } else {
       access(*iter);
       return {TRef(static_cast<T*>(&*iter)), true};
+    }
+  }
+
+  /*
+   * Clears all elements
+   */
+  void clear() {
+    for (auto i = lru_set.begin(); i != lru_set.end();) {
+      if (!(*i).lru) {
+	unreferenced_list.erase(lru_list_t::s_iterator_to(*i));
+	i = lru_set.erase_and_dispose(i, [](auto *p)
+	  { delete p; } );
+      } else {
+	i->erase_on_unreference = true;
+	i++;
+      }
     }
   }
 
