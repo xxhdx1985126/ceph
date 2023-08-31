@@ -924,6 +924,7 @@ ObjectDataHandler::write_ret ObjectDataHandler::prepare_data_reservation(
            object_data.get_reserved_data_len());
     return write_iertr::now();
   } else {
+    fmt::print("0x{:x}\n", ctx.onode.get_data_hint());
     DEBUGT("reserving: {}~{}",
            ctx.t,
            ctx.onode.get_data_hint(),
