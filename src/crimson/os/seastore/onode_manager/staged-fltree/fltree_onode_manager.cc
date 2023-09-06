@@ -242,6 +242,7 @@ FLTreeOnodeManager::erase_onode_ret FLTreeOnodeManager::erase_onode(
   OnodeRef &onode)
 {
   auto &flonode = static_cast<FLTreeOnode&>(*onode);
+  flonode.populate_recorder(trans);
   flonode.mark_delete();
   return tree.erase(trans, flonode);
 }
