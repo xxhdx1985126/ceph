@@ -218,7 +218,14 @@ ClientRequest::process_op(instance_handle_t &ihref, Ref<PG> &pg)
     [this, pg]() mutable {
     LOG_PREFIX(ClientRequest::process_op);
     if (pg->is_primary()) {
-      return do_recover_missing(pg, m->get_hobj());
+      auto fut = interruptor::now();
+      auto soid = m->get_hobj();
+      if (!soid.is_head()) {
+        fut = do_recover_missing(pg, soid.get_head());
+      }
+      return fut.then_interruptible([this, pg]() mutable {
+        return do_recover_missing(pg, m->get_hobj());
+      });
     } else {
       DEBUGI("process_op: Skipping do_recover_missing"
                      "on non primary pg");
