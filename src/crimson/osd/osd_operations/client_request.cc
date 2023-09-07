@@ -222,6 +222,9 @@ ClientRequest::process_op(instance_handle_t &ihref, Ref<PG> &pg)
       auto soid = m->get_hobj();
       if (!soid.is_head()) {
         fut = do_recover_missing(pg, soid.get_head());
+      } else if (auto snap = snap_need_to_recover(); snap) {
+        soid.snap = *snap;
+        fut = do_recover_missing(pg, soid);
       }
       return fut.then_interruptible([this, pg]() mutable {
         return do_recover_missing(pg, m->get_hobj());

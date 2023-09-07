@@ -160,6 +160,15 @@ public:
   }
   auto get_instance_handle() { return instance_handle; }
 
+  std::optional<snapid_t> snap_need_to_recover() {
+    for (auto &op : m->ops) {
+      if (op.op.op == CEPH_OSD_OP_ROLLBACK) {
+	return (snapid_t)op.op.snap.snapid;
+      }
+    }
+    return std::nullopt;
+  }
+
   using ordering_hook_t = boost::intrusive::list_member_hook<>;
   ordering_hook_t ordering_hook;
   class Orderer {
