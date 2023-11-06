@@ -1129,7 +1129,10 @@ struct transaction_manager_test_t :
                     std::move(lpin), std::move(ext), std::move(rpin)));
             });
           });
-        });
+        }).handle_error_interruptible(
+	  crimson::ct_error::enospc::assert_failure{"unexpected enospc"},
+	  crimson::ct_error::pass_further_all{}
+	);
       });
     } else if (new_offset == 0 && o_len != new_offset + new_len) {
       return tm->remap_pin<TestBlock, 1>(
@@ -1156,7 +1159,10 @@ struct transaction_manager_test_t :
                   nullptr, std::move(ext), std::move(rpin)));
           });
         });
-      });
+      }).handle_error_interruptible(
+	crimson::ct_error::enospc::assert_failure{"unexpected enospc"},
+	crimson::ct_error::pass_further_all{}
+      );
     } else if (new_offset != 0 && o_len == new_offset + new_len) {
       return tm->remap_pin<TestBlock, 1>(
         t,
@@ -1181,7 +1187,10 @@ struct transaction_manager_test_t :
                   std::move(lpin), std::move(ext), nullptr));
           });
         });
-      });
+      }).handle_error_interruptible(
+	crimson::ct_error::enospc::assert_failure{"unexpected enospc"},
+	crimson::ct_error::pass_further_all{}
+      );
     } else {
       ceph_abort("impossible");
         return _overwrite_pin_iertr::make_ready_future<
