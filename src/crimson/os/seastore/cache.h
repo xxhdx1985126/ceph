@@ -507,27 +507,49 @@ public:
     Func &&extent_init_func) {
     CachedExtentRef ret;
     LOG_PREFIX(Cache::get_absent_extent);
-
 #ifndef NDEBUG
     auto r = t.get_extent(offset, &ret);
     if (r != Transaction::get_extent_ret::ABSENT) {
       SUBERRORT(seastore_cache, "unexpected non-absent extent {}", t, *ret);
       ceph_abort();
     }
+    auto metric_key = std::make_pair(t.get_src(), T::TYPE);
+    assert(initiating_cached_extents || !query_cache(offset, &metric_key));
 #endif
 
     SUBTRACET(seastore_cache, "{} {}~{} is absent on t, query cache ...",
 	      t, T::TYPE, offset, length);
-    auto f = [&t, this](CachedExtent &ext) {
-      t.add_to_read_set(CachedExtentRef(&ext));
-      touch_extent(ext);
-    };
-    auto metric_key = std::make_pair(t.get_src(), T::TYPE);
-    return trans_intr::make_interruptible(
+
+    if (initiating_cached_extents) {
+      auto f = [&t, this](CachedExtent &ext) {
+        t.add_to_read_set(CachedExtentRef(&ext));
+        touch_extent(ext);
+      };
+      auto metric_key = std::make_pair(t.get_src(), T::TYPE);
+      return trans_intr::make_interruptible(
       get_extent<T>(
-	offset, length, &metric_key,
-	std::forward<Func>(extent_init_func), std::move(f))
-    );
+        offset, length, &metric_key,
+        std::forward<Func>(extent_init_func), std::move(f))
+      );
+    } else {
+      ret = CachedExtent::make_cached_extent_ref<T>(
+	alloc_cache_buf(length));
+      ret->init(CachedExtent::extent_state_t::CLEAN_PENDING,
+		offset,
+		PLACEMENT_HINT_NULL,
+		NULL_GENERATION,
+		TRANS_ID_NULL);
+      SUBDEBUG(seastore_cache,
+	  "{} {}~{} is absent, add extent and reading ... -- {}",
+	  T::TYPE, offset, length, *ret);
+      auto src = t.get_src();
+      add_extent(ret, &src);
+      t.add_to_read_set(ret);
+      touch_extent(*ret);
+      auto ext = ret->cast<T>();
+      extent_init_func(*ext);
+      return read_extent<T>(std::move(ext));
+    }
   }
 
   template <typename T>
@@ -1079,6 +1101,7 @@ public:
     for (auto &e : extents) {
       _dirty.push_back(CachedExtentRef(&e));
     }
+    initiating_cached_extents = true;
     return seastar::do_with(
       std::forward<F>(f),
       std::move(_dirty),
@@ -1114,6 +1137,7 @@ public:
           dirty.size(),
           get_oldest_dirty_from().value_or(JOURNAL_SEQ_NULL),
           get_oldest_backref_dirty_from().value_or(JOURNAL_SEQ_NULL));
+      initiating_cached_extents = false;
     });
   }
 
@@ -1300,6 +1324,8 @@ private:
   std::vector<SegmentProvider*> segment_providers_by_device_id;
 
   transaction_id_t next_id = 0;
+
+  bool initiating_cached_extents = false;
 
   /**
    * dirty
