@@ -125,6 +125,10 @@ public:
   // allocator, return start addr of allocated blocks
   virtual paddr_t alloc_extent(size_t size) = 0;
 
+  using allocate_ret_bare = std::list<std::pair<paddr_t, extent_len_t>>;
+  using allo_extents_ret = allocate_ertr::future<allocate_ret_bare>;
+  virtual allocate_ret_bare alloc_extents(size_t size) = 0;
+
   virtual void mark_space_used(paddr_t paddr, size_t len) = 0;
   virtual void mark_space_free(paddr_t paddr, size_t len) = 0;
 

@@ -59,6 +59,8 @@ public:
    */
   paddr_t alloc_extent(size_t size) final; // allocator, return blocks
 
+  allocate_ret_bare alloc_extents(size_t size) final; // allocator, return blocks
+
   void complete_allocation(paddr_t addr, size_t size) final;
 
   size_t get_start_rbm_addr() const {
