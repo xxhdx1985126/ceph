@@ -1695,6 +1695,15 @@ public:
     return paddr;
   }
 
+  using alloc_paddr_bare_ret = std::pair<paddr_t, extent_len_t>;
+  std::list<alloc_paddr_bare_ret> alloc_paddrs(extent_len_t length) {
+    // TODO: implement allocation strategy (dirty metadata and multiple devices)
+    auto rbs = rb_group->get_rb_managers();
+    auto ret = rbs[0]->alloc_extents(length);
+    stats.used_bytes += length;
+    return ret;
+  }
+
   size_t get_total_bytes() const {
     auto rbs = rb_group->get_rb_managers();
     size_t total = 0;

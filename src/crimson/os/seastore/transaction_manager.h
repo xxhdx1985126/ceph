@@ -316,6 +316,57 @@ public:
     });
   }
 
+  /**
+   * alloc_extents
+   *
+   * Allocates a new block of type T with the minimum lba range of size len
+   * greater than laddr_hint.
+   */
+  using alloc_extents_iertr = alloc_extent_iertr;
+  template <typename T>
+  using alloc_extents_ret = alloc_extents_iertr::future<
+    std::vector<TCachedExtentRef<T>>>;
+  template <typename T>
+  alloc_extents_ret<T> alloc_extents(
+    Transaction &t,
+    laddr_t laddr_hint,
+    extent_len_t len,
+    placement_hint_t placement_hint = placement_hint_t::HOT) {
+    LOG_PREFIX(TransactionManager::alloc_extents);
+    SUBTRACET(seastore_tm, "{} len={}, placement_hint={}, laddr_hint={}",
+              t, T::TYPE, len, placement_hint, laddr_hint);
+    ceph_assert(is_aligned(laddr_hint, epm->get_block_size()));
+    auto exts = cache->alloc_new_extents<T>(
+      t,
+      len,
+      placement_hint,
+      INIT_GENERATION);
+    return seastar::do_with(
+      std::move(exts),
+      laddr_hint,
+      [this, &t](auto &exts, auto &laddr_hint) {
+      return trans_intr::do_for_each(
+        exts,
+        [this, &t, &laddr_hint](auto &ext) {
+        return lba_manager->alloc_extent(
+          t,
+          laddr_hint,
+          ext->get_length(),
+          ext->get_paddr(),
+          *ext
+        ).si_then([&ext, &laddr_hint, &t](auto &&) mutable {
+          LOG_PREFIX(TransactionManager::alloc_extents);
+          SUBDEBUGT(seastore_tm, "new extent: {}, laddr_hint: {}", t, *ext, laddr_hint);
+          laddr_hint += ext->get_length();
+          return alloc_extent_iertr::now();
+        });
+      }).si_then([&exts] {
+        return alloc_extent_iertr::make_ready_future<
+          std::vector<TCachedExtentRef<T>>>(std::move(exts));
+      });
+    });
+  }
+
   template <typename T>
   read_extent_ret<T> get_mutable_extent_by_laddr(Transaction &t, laddr_t laddr, extent_len_t len) {
     return get_pin(t, laddr
@@ -536,7 +587,6 @@ public:
    *
    * allocates more than one new blocks of type T.
    */
-   using alloc_extents_iertr = alloc_extent_iertr;
    template<class T>
    alloc_extents_iertr::future<std::vector<TCachedExtentRef<T>>>
    alloc_extents(

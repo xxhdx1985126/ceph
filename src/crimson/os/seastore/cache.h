@@ -897,6 +897,49 @@ public:
               hint, rewrite_gen_printer_t{result.gen}, *ret);
     return ret;
   }
+  /**
+   * alloc_new_extents
+   *
+   * Allocates a fresh extent. if delayed is true, addr will be alloc'd later.
+   * Note that epaddr can only be fed by the btree lba unittest for now
+   */
+  template <typename T>
+  std::vector<TCachedExtentRef<T>> alloc_new_extents(
+    Transaction &t,         ///< [in, out] current transaction
+    extent_len_t length,    ///< [in] length
+    placement_hint_t hint,  ///< [in] user hint
+#ifdef UNIT_TESTS_BUILT
+    rewrite_gen_t gen,      ///< [in] rewrite generation
+    std::optional<paddr_t> epaddr = std::nullopt ///< [in] paddr fed by callers
+#else
+    rewrite_gen_t gen
+#endif
+  ) {
+    LOG_PREFIX(Cache::alloc_new_extents);
+    SUBTRACET(seastore_cache, "allocate {} {}B, hint={}, gen={}",
+              t, T::TYPE, length, hint, rewrite_gen_printer_t{gen});
+#ifdef UNIT_TESTS_BUILT
+    auto results = epm.alloc_new_extents(t, T::TYPE, length, hint, gen, epaddr);
+#else
+    auto results = epm.alloc_new_extents(t, T::TYPE, length, hint, gen);
+#endif
+    std::vector<TCachedExtentRef<T>> extents;
+    for (auto &result : results) {
+      auto ret = CachedExtent::make_cached_extent_ref<T>(std::move(result.bp));
+      ret->init(CachedExtent::extent_state_t::INITIAL_WRITE_PENDING,
+                result.paddr,
+                hint,
+                result.gen,
+                t.get_trans_id());
+      t.add_fresh_extent(ret);
+      SUBDEBUGT(seastore_cache,
+                "allocated {} {}B extent at {}, hint={}, gen={} -- {}",
+                t, T::TYPE, length, result.paddr,
+                hint, rewrite_gen_printer_t{result.gen}, *ret);
+      extents.emplace_back(std::move(ret));
+    }
+    return extents;
+  }
 
   /**
    * alloc_remapped_extent
@@ -946,6 +989,19 @@ public:
    * Allocates a fresh extent.  addr will be relative until commit.
    */
   CachedExtentRef alloc_new_extent_by_type(
+    Transaction &t,        ///< [in, out] current transaction
+    extent_types_t type,   ///< [in] type tag
+    extent_len_t length,   ///< [in] length
+    placement_hint_t hint, ///< [in] user hint
+    rewrite_gen_t gen      ///< [in] rewrite generation
+    );
+
+  /**
+   * alloc_new_extent
+   *
+   * Allocates a fresh extent.  addr will be relative until commit.
+   */
+  std::vector<CachedExtentRef> alloc_new_extents_by_type(
     Transaction &t,        ///< [in, out] current transaction
     extent_types_t type,   ///< [in] type tag
     extent_len_t length,   ///< [in] length
