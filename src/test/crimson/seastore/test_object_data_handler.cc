@@ -799,7 +799,7 @@ TEST_P(object_data_handler_test_t, overwrite_then_read_within_transaction) {
       auto pins = get_mappings(base, len);
       assert(pins.size() == 1);
       auto pin1 = remap_pin(*t, std::move(pins.front()), 4096, 8192);
-      auto ext = get_extent(*t, base + 4096, 4096 * 2);
+      auto ext = get_extent(*t, laddr_t::get_hint_from_offset(base + 4096), 4096 * 2);
       ASSERT_TRUE(ext->is_exist_clean());
       ext = tm->get_mutable_extent(*t, ext)->cast<ObjectDataBlock>();
 
