@@ -333,9 +333,38 @@ public:
   }
 
   template <typename F>
-  auto for_each_fresh_block(F &&f) const {
+  auto for_each_finalized_fresh_block(F &&f) const {
     std::for_each(written_ool_block_list.begin(), written_ool_block_list.end(), f);
     std::for_each(inline_block_list.begin(), inline_block_list.end(), f);
+  }
+
+  template <typename F>
+  void for_each_pre_submit_fresh_block(F &&f) {
+    auto for_each_func = [f=std::move(f)](auto &extent) {
+      if (extent->is_valid()) {
+	f(extent);
+      }
+    };
+    std::for_each(
+      inline_block_list.begin(),
+      inline_block_list.end(),
+      for_each_func);
+    std::for_each(
+      written_ool_block_list.begin(),
+      written_ool_block_list.end(),
+      for_each_func);
+    std::for_each(
+      existing_block_list.begin(),
+      existing_block_list.end(),
+      for_each_func);
+    std::for_each(
+      pre_alloc_list.begin(),
+      pre_alloc_list.end(),
+      for_each_func);
+    std::for_each(
+      pre_inplace_rewrite_list.begin(),
+      pre_inplace_rewrite_list.end(),
+      for_each_func);
   }
 
   const io_stat_t& get_fresh_block_stats() const {

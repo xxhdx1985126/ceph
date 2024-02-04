@@ -221,6 +221,7 @@ public:
       len,
       P_ADDR_ZERO,
       P_ADDR_NULL,
+      0,
       nullptr);
   }
 
@@ -240,6 +241,8 @@ public:
       len,
       intermediate_key,
       actual_addr,
+      0,	// crc will only be used and checked with LBA direct mappings
+		// also see pin_to_extent(_by_type)
       nullptr
     ).si_then([&t, this, intermediate_base](auto indirect_mapping) {
       assert(indirect_mapping->is_indirect());
@@ -265,6 +268,7 @@ public:
     laddr_t hint,
     extent_len_t len,
     paddr_t addr,
+    uint32_t checksum,
     LogicalCachedExtent &ext) final
   {
     return _alloc_extent(
@@ -273,6 +277,7 @@ public:
       len,
       addr,
       P_ADDR_NULL,
+      checksum,
       &ext);
   }
 
@@ -337,6 +342,7 @@ public:
     paddr_t prev_addr,
     extent_len_t len,
     paddr_t paddr,
+    uint32_t checksum,
     LogicalCachedExtent*) final;
 
   get_physical_extent_if_live_ret get_physical_extent_if_live(
@@ -399,6 +405,7 @@ private:
     extent_len_t len,
     pladdr_t addr,
     paddr_t actual_addr,
+    uint32_t checksum,
     LogicalCachedExtent*);
 
   using _get_mapping_ret = get_mapping_iertr::future<BtreeLBAMappingRef>;
