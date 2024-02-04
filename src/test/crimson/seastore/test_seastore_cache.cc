@@ -30,6 +30,25 @@ struct cache_test_t : public seastar_test_suite_t {
 
   seastar::future<paddr_t> submit_transaction(
     TransactionRef t) {
+    auto chksum_func = [](auto &extent) {
+      if (!extent->is_valid()) {
+	return;
+      }
+      if (!extent->is_logical() ||
+	  !extent->get_last_committed_crc()) {
+	extent->update_checksum();
+      }
+      assert(extent->get_crc32c() == extent->get_last_committed_crc());
+    };
+
+    t->for_each_finalized_fresh_block(chksum_func);
+    t->for_each_existing_block(chksum_func);
+    auto pre_allocated_extents = t->get_valid_pre_alloc_list();
+    std::for_each(
+      pre_allocated_extents.begin(),
+      pre_allocated_extents.end(),
+      chksum_func);
+
     auto record = cache->prepare_record(*t, JOURNAL_SEQ_NULL, JOURNAL_SEQ_NULL);
 
     bufferlist bl;
