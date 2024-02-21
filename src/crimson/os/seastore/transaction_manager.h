@@ -350,22 +350,22 @@ public:
       std::move(exts),
       laddr_hint,
       [this, &t](auto &exts, auto &laddr_hint) {
-      return trans_intr::do_for_each(
-        exts,
-        [this, &t, &laddr_hint](auto &ext) {
-        return lba_manager->alloc_extent(
-          t,
-          laddr_hint,
-          *ext
-        ).si_then([&ext, &laddr_hint, &t](auto &&) mutable {
-          LOG_PREFIX(TransactionManager::alloc_extents);
-          SUBDEBUGT(seastore_tm, "new extent: {}, laddr_hint: {}", t, *ext, laddr_hint);
-          laddr_hint += ext->get_length();
-          return alloc_extent_iertr::now();
-        });
+      return lba_manager->alloc_extents(
+	t,
+	laddr_hint,
+	std::vector<LogicalCachedExtentRef>(
+	  exts.begin(), exts.end())
+      ).si_then([&exts, &laddr_hint, &t](auto &&) mutable {
+	LOG_PREFIX(TransactionManager::alloc_data_extents);
+	for (auto &ext : exts) {
+	  SUBDEBUGT(seastore_tm, "new extent: {}, laddr_hint: {}",
+	    t, *ext, laddr_hint);
+	  laddr_hint += ext->get_length();
+	}
+	return alloc_extent_iertr::now();
       }).si_then([&exts] {
-        return alloc_extent_iertr::make_ready_future<
-          std::vector<TCachedExtentRef<T>>>(std::move(exts));
+	return alloc_extent_iertr::make_ready_future<
+	  std::vector<TCachedExtentRef<T>>>(std::move(exts));
       });
     });
   }
