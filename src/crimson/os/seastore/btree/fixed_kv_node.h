@@ -662,7 +662,7 @@ struct FixedKVInternalNode
     return this->get_size();
   }
 
-  uint32_t get_crc32c() const final {
+  uint32_t calc_crc32c() const final {
     return this->calc_phy_checksum();
   }
 
@@ -1098,7 +1098,7 @@ struct FixedKVLeafNode
     return this->get_size();
   }
 
-  uint32_t get_crc32c() const final {
+  uint32_t calc_crc32c() const final {
     return this->calc_phy_checksum();
   }
 

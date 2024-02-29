@@ -159,7 +159,7 @@ struct btree_test_base :
 		    !extent->get_last_committed_crc()) {
 		  extent->update_checksum();
 		}
-		assert(extent->get_crc32c() == extent->get_last_committed_crc());
+		assert(extent->calc_crc32c() == extent->get_last_committed_crc());
 	      };
 	      t.for_each_finalized_fresh_block(chksum_func);
 	      t.for_each_existing_block(chksum_func);
@@ -248,7 +248,7 @@ struct lba_btree_test : btree_test_base {
 		!extent->get_last_committed_crc()) {
 	      extent->update_checksum();
 	    }
-	    assert(extent->get_crc32c() == extent->get_last_committed_crc());
+	    assert(extent->calc_crc32c() == extent->get_last_committed_crc());
 	  };
 
 	  t->for_each_finalized_fresh_block(chksum_func);
@@ -447,7 +447,7 @@ struct btree_lba_manager_test : btree_test_base {
 	      if (!extent->get_last_committed_crc()) {
 		extent->update_checksum();
 	      }
-	      assert(extent->get_crc32c() == extent->get_last_committed_crc());
+	      assert(extent->calc_crc32c() == extent->get_last_committed_crc());
 	      lextents.emplace_back(extent->template cast<LogicalCachedExtent>());
 	    } else {
 	      pextents.push_back(extent);
