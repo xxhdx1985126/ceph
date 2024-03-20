@@ -2214,32 +2214,52 @@ TEST_P(tm_single_device_test_t, test_overwrite_pin_concurrent)
 INSTANTIATE_TEST_SUITE_P(
   transaction_manager_test,
   tm_single_device_test_t,
-  ::testing::Values (
-    "segmented",
-    "circularbounded"
+  ::testing::Combine(
+    ::testing::Values (
+      "segmented",
+      "circularbounded"
+    ),
+    ::testing::Values(
+      integrity_check_t::FULL_CHECK,
+      integrity_check_t::NONFULL_CHECK)
   )
 );
 
 INSTANTIATE_TEST_SUITE_P(
   transaction_manager_test,
   tm_multi_device_test_t,
-  ::testing::Values (
-    "segmented"
+  ::testing::Combine(
+    ::testing::Values (
+      "segmented"
+    ),
+    ::testing::Values(
+      integrity_check_t::FULL_CHECK,
+      integrity_check_t::NONFULL_CHECK)
   )
 );
 
 INSTANTIATE_TEST_SUITE_P(
   transaction_manager_test,
   tm_multi_tier_device_test_t,
-  ::testing::Values (
-    "segmented"
+  ::testing::Combine(
+    ::testing::Values (
+      "segmented"
+    ),
+    ::testing::Values(
+      integrity_check_t::FULL_CHECK,
+      integrity_check_t::NONFULL_CHECK)
   )
 );
 
 INSTANTIATE_TEST_SUITE_P(
   transaction_manager_test,
   tm_random_block_device_test_t,
-  ::testing::Values (
-    "circularbounded"
+  ::testing::Combine(
+    ::testing::Values (
+      "circularbounded"
+    ),
+    ::testing::Values(
+      integrity_check_t::FULL_CHECK,
+      integrity_check_t::NONFULL_CHECK)
   )
 );
