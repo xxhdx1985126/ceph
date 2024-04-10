@@ -407,6 +407,9 @@ TransactionManager::do_submit_transaction(
 			dispatch_result = std::move(dispatch_result)] {
     return seastar::do_with(std::move(dispatch_result),
 			    [this, &tref](auto &dispatch_result) {
+      if (tref.get_src() == Transaction::src_t::CLEANER_MAIN) {
+	cache->start_delayed();
+      }
       return epm->write_delayed_ool_extents(tref, dispatch_result.alloc_map
       ).handle_error_interruptible(
         crimson::ct_error::input_output_error::pass_further(),
@@ -414,6 +417,9 @@ TransactionManager::do_submit_transaction(
       );
     });
   }).si_then([&tref, FNAME, this] {
+    if (tref.get_src() == Transaction::src_t::CLEANER_MAIN) {
+      cache->stop_delayed();
+    }
     return seastar::do_with(
       tref.get_valid_pre_alloc_list(),
       [this, FNAME, &tref](auto &allocated_extents) {
@@ -421,6 +427,9 @@ TransactionManager::do_submit_transaction(
       ).si_then([this, FNAME, &tref, &allocated_extents] {
         auto num_extents = allocated_extents.size();
         SUBTRACET(seastore_t, "process {} allocated extents", tref, num_extents);
+	if (tref.get_src() == Transaction::src_t::CLEANER_MAIN) {
+	  cache->start_alloced();
+	}
         return epm->write_preallocated_ool_extents(tref, allocated_extents
         ).handle_error_interruptible(
           crimson::ct_error::input_output_error::pass_further(),
@@ -429,6 +438,9 @@ TransactionManager::do_submit_transaction(
       });
     });
   }).si_then([this, FNAME, &tref] {
+    if (tref.get_src() == Transaction::src_t::CLEANER_MAIN) {
+      cache->stop_alloced();
+    }
     SUBTRACET(seastore_t, "about to prepare", tref);
     return tref.get_handle().enter(write_pipeline.prepare);
   }).si_then([this, FNAME, &tref, trim_alloc_to=std::move(trim_alloc_to)]() mutable
@@ -445,8 +457,14 @@ TransactionManager::do_submit_transaction(
     tref.get_handle().maybe_release_collection_lock();
 
     SUBTRACET(seastore_t, "about to submit to journal", tref);
+    if (tref.get_src() == Transaction::src_t::CLEANER_MAIN) {
+      cache->start_journal();
+    }
     return journal->submit_record(std::move(record), tref.get_handle()
     ).safe_then([this, FNAME, &tref](auto submit_result) mutable {
+      if (tref.get_src() == Transaction::src_t::CLEANER_MAIN) {
+	cache->stop_journal();
+      }
       SUBDEBUGT(seastore_t, "committed with {}", tref, submit_result);
       auto start_seq = submit_result.write_result.start_seq;
       journal->get_trimmer().set_journal_head(start_seq);
