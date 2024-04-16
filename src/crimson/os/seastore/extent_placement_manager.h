@@ -50,7 +50,9 @@ public:
     CachedExtentRef extent) = 0;
 
 #ifdef UNIT_TESTS_BUILT
-  virtual void prefill_fragmented_devices() {}
+  virtual std::map<paddr_t, extent_len_t> prefill_fragmented_devices() {
+    return {};
+  }
 #endif
 };
 using ExtentOolWriterRef = std::unique_ptr<ExtentOolWriter>;
@@ -157,7 +159,7 @@ public:
   }
 
 #ifdef UNIT_TESTS_BUILT
-  void prefill_fragmented_devices() final {
+  std::map<paddr_t, extent_len_t> prefill_fragmented_devices() final {
     LOG_PREFIX(RandomBlockOolWriter::prefill_fragmented_devices);
     SUBDEBUG(seastore_epm, "");
     return rb_cleaner->prefill_fragmented_devices();
@@ -389,12 +391,15 @@ public:
   }
 
 #ifdef UNIT_TESTS_BUILT
-  void prefill_fragmented_devices() {
+  std::map<paddr_t, extent_len_t> prefill_fragmented_devices() {
     LOG_PREFIX(ExtentPlacementManager::prefill_fragmented_devices);
     SUBDEBUG(seastore_epm, "");
+    std::map<paddr_t, extent_len_t> allocs;
     for (auto &writer : writer_refs) {
-      writer->prefill_fragmented_devices();
+      auto alloc = writer->prefill_fragmented_devices();
+      allocs.insert(alloc.begin(), alloc.end());
     }
+    return allocs;
   }
 #endif
 

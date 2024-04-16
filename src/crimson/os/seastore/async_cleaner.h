@@ -1157,7 +1157,9 @@ public:
   virtual std::size_t get_reclaim_size_per_cycle() const = 0;
 
 #ifdef UNIT_TESTS_BUILT
-  virtual void prefill_fragmented_devices() {}
+  virtual std::map<paddr_t, extent_len_t> prefill_fragmented_devices() {
+    return {};
+  }
 #endif
 
   // test only
@@ -1682,13 +1684,16 @@ public:
   }
 
 #ifdef UNIT_TESTS_BUILT
-  void prefill_fragmented_devices() final {
+  std::map<paddr_t, extent_len_t> prefill_fragmented_devices() final {
     LOG_PREFIX(RBMCleaner::prefill_fragmented_devices);
     SUBDEBUG(seastore_cleaner, "");
+    std::map<paddr_t, extent_len_t> allocs;
     auto rbs = rb_group->get_rb_managers();
     for (auto p : rbs) {
-      p->prefill_fragmented_device();
+      auto alloc = p->prefill_fragmented_device();
+      allocs.insert(alloc.begin(), alloc.end());
     }
+    return allocs;
   }
 #endif
 

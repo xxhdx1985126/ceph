@@ -1719,7 +1719,10 @@ TEST_P(tm_random_block_device_test_t, scatter_allocation)
 {
   run_async([this] {
     constexpr laddr_t ADDR = 0xFF * 4096;
-    epm->prefill_fragmented_devices();
+    auto allocs = epm->prefill_fragmented_devices();
+    for (auto &alloc : allocs) {
+      epm->mark_space_used(alloc.first, alloc.second);
+    }
     auto t = create_transaction();
     for (int i = 0; i < 1991; i++) {
       auto extents = alloc_extents(t, ADDR + i * 16384, 16384, 'a');

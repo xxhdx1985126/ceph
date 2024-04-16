@@ -128,7 +128,7 @@ public:
   }
 
 #ifdef UNIT_TESTS_BUILT
-  void prefill_fragmented_device() final;
+  std::map<paddr_t, extent_len_t> prefill_fragmented_device() final;
 #endif
 
 private:

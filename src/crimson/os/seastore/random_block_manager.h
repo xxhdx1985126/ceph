@@ -150,7 +150,7 @@ public:
   virtual size_t get_journal_size() const = 0;
   virtual ~RandomBlockManager() {}
 #ifdef UNIT_TESTS_BUILT
-  virtual void prefill_fragmented_device() = 0;
+  virtual std::map<paddr_t, extent_len_t> prefill_fragmented_device() = 0;
 #endif
 };
 using RandomBlockManagerRef = std::unique_ptr<RandomBlockManager>;

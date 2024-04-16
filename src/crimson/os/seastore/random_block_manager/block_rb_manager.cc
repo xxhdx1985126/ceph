@@ -183,9 +183,10 @@ BlockRBManager::write_ertr::future<> BlockRBManager::write(
 }
 
 #ifdef UNIT_TESTS_BUILT
-void BlockRBManager::prefill_fragmented_device()
+std::map<paddr_t, extent_len_t> BlockRBManager::prefill_fragmented_device()
 {
   LOG_PREFIX(BlockRBManager::prefill_fragmented_device);
+  std::map<paddr_t, extent_len_t> allocs;
   // the first 2 blocks must be allocated to lba root
   // and backref root during mkfs
   for (size_t block = get_block_size() * 2;
@@ -194,10 +195,13 @@ void BlockRBManager::prefill_fragmented_device()
     DEBUG("marking {}~{} used",
       get_start_rbm_addr() + block,
       get_block_size());
-    allocator->mark_extent_used(
-      get_start_rbm_addr() + block,
+    allocs.emplace(
+      paddr_t::make_blk_paddr(
+	get_device_id(),
+	get_start_rbm_addr() + block),
       get_block_size());
   }
+  return allocs;
 }
 #endif
 
