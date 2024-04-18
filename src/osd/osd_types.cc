@@ -5890,7 +5890,7 @@ void SnapSet::generate_test_instances(list<SnapSet*>& o)
 
 ostream& operator<<(ostream& out, const SnapSet& cs)
 {
-  return out << cs.seq << "=" << cs.snaps << ":"
+  return out << cs.seq << "=" << cs.snaps << ":" << cs.clones << ":"
 	     << cs.clone_snaps;
 }
 
