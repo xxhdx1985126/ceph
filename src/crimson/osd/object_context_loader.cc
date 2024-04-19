@@ -245,4 +245,9 @@ using crimson::common::local_conf;
   ObjectContextLoader::with_clone_obc_direct<RWState::RWWRITE>(
     hobject_t,
     with_obc_func_t&&);
+
+  template ObjectContextLoader::load_obc_iertr::future<>
+  ObjectContextLoader::with_clone_obc_only<RWState::RWWRITE>(ObjectContextRef head,
+                                           hobject_t clone_oid,
+                                           with_obc_func_t&& func);
 }
