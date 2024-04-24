@@ -315,6 +315,8 @@ TransactionManager::submit_transaction(
       SUBTRACET(seastore_t, "releasing projected_usage: {}", t, projected_usage);
       epm->release_projected_usage(projected_usage);
     });
+  }).finally([&t]() {
+    t.get_handle().exit();
   });
 }
 
@@ -500,8 +502,6 @@ TransactionManager::do_submit_transaction(
       submit_transaction_iertr::pass_further{},
       crimson::ct_error::assert_all{"Hit error submitting to journal"}
     );
-  }).finally([&tref]() {
-      tref.get_handle().exit();
   });
 }
 
