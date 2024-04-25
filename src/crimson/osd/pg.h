@@ -604,6 +604,9 @@ private:
     const hobject_t& oid,
     eversion_t& v);
   void check_blocklisted_obc_watchers(ObjectContextRef &obc);
+  interruptible_future<seastar::stop_iteration> trim_snap(
+    snapid_t to_trim,
+    bool needs_pause);
 
 private:
   PG_OSDMapGate osdmap_gate;
@@ -798,6 +801,7 @@ private:
   std::map<ceph_tid_t, log_update_t> log_entry_update_waiting_on;
   // snap trimming
   interval_set<snapid_t> snap_trimq;
+  bool snap_trimming = false;
 };
 
 struct PG::do_osd_ops_params_t {
