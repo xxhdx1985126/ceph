@@ -305,14 +305,14 @@ uint64_t laddr_t::get_original_offset() const {
   return offset;
 }
 
-uint64_t operator-(const laddr_t &l, const laddr_t &r) {
-  auto ll = laddr_helper_t::to_u128(l);
-  auto rr = laddr_helper_t::to_u128(r);
-  ceph_assert(ll >= rr);
-  auto ret = ll - rr;
-  ceph_assert(ret <= (std::numeric_limits<uint64_t>::max() >> laddr_t::UNIT_SHIFT));
-  return ret << laddr_t::UNIT_SHIFT;
-}
+// uint64_t operator-(const laddr_t &l, const laddr_t &r) {
+//   auto ll = laddr_helper_t::to_u128(l);
+//   auto rr = laddr_helper_t::to_u128(r);
+//   assert(ll >= rr);
+//   auto ret = ll - rr;
+//   assert(ret <= (std::numeric_limits<uint64_t>::max() >> laddr_t::UNIT_SHIFT));
+//   return ret << laddr_t::UNIT_SHIFT;
+// }
 
 laddr_t loffset_t::get_roundup_laddr() const {
   if (offset == 0) {
@@ -323,20 +323,20 @@ laddr_t loffset_t::get_roundup_laddr() const {
   }
 }
 
-loffset_t loffset_t::plus(const laddr_t &laddr, extent_len_t offset) {
-  auto l = laddr_helper_t::to_u128(laddr);
-  l += offset >> laddr_t::UNIT_SHIFT;
-  offset &= (1 << laddr_t::UNIT_SHIFT) - 1;
-  return loffset_t(laddr_helper_t::from_u128(l), offset);
-}
+// loffset_t loffset_t::plus(const laddr_t &laddr, extent_len_t offset) {
+//   auto l = laddr_helper_t::to_u128(laddr);
+//   l += offset >> laddr_t::UNIT_SHIFT;
+//   offset &= (1 << laddr_t::UNIT_SHIFT) - 1;
+//   return loffset_t(laddr_helper_t::from_u128(l), offset);
+// }
 
-loffset_t loffset_t::minus(const laddr_t &laddr, extent_len_t offset) {
-  auto l = laddr_helper_t::to_u128(laddr);
-  auto u = (offset + laddr_t::UNIT_SIZE - 1) / laddr_t::UNIT_SIZE;
-  l -= u;
-  offset = u * laddr_t::UNIT_SIZE - offset;
-  return loffset_t(laddr_helper_t::from_u128(l), offset);
-}
+// loffset_t loffset_t::minus(const laddr_t &laddr, extent_len_t offset) {
+//   auto l = laddr_helper_t::to_u128(laddr);
+//   auto u = (offset + laddr_t::UNIT_SIZE - 1) / laddr_t::UNIT_SIZE;
+//   l -= u;
+//   offset = u * laddr_t::UNIT_SIZE - offset;
+//   return loffset_t(laddr_helper_t::from_u128(l), offset);
+// }
 
 journal_seq_t journal_seq_t::add_offset(
       journal_type_t type,

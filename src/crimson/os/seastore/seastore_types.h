@@ -19,7 +19,17 @@
 #include "include/interval_set.h"
 #include "include/uuid.h"
 
+#if !defined (__GNUC__) && !defined (__clang__)
+#include <boost/multiprecision/cpp_int.hpp>
+#endif
+
 namespace crimson::os::seastore {
+
+#if defined (__GNUC__) || defined (__clang__)
+using internal128_t = unsigned __int128;
+#else
+using internal128_t = boost::multiprecision::internal128_t;
+#endif
 
 /* using a special xattr key "omap_header" to store omap header */
   const std::string OMAP_HEADER_XATTR_KEY = "omap_header";
@@ -1016,6 +1026,7 @@ inline extent_len_le_t init_extent_len_le(extent_len_t len) {
   return ceph_le32(len);
 }
 
+struct loffset_t;
 // logical addr, see LBAManager, TransactionManager
 struct laddr_t {
   static laddr_t get_data_hint(uint8_t pool, uint8_t shard, uint32_t crush);
@@ -1117,7 +1128,21 @@ struct laddr_t {
 
   // assume the difference is not greater than 64 bits, and l should always
   // be greater than r.
-  friend uint64_t operator-(const laddr_t &l, const laddr_t &r);
+  friend uint64_t __attribute__((always_inline)) operator-(const laddr_t &l, const laddr_t &r) {
+    internal128_t ll = 0;
+    ll = l.high;
+    ll <<= 64;
+    ll |= l.low;
+    internal128_t rr = 0;
+    rr = r.high;
+    rr <<= 64;
+    rr |= r.low;
+    assert(ll >= rr);
+    auto ret = ll - rr;
+    assert(ret <= (std::numeric_limits<uint64_t>::max() >> laddr_t::UNIT_SHIFT));
+    return ret << laddr_t::UNIT_SHIFT;
+
+  }
 
   friend std::ostream &operator<<(std::ostream &out, const laddr_t &l);
 
@@ -1150,6 +1175,8 @@ struct laddr_t {
   friend struct loffset_t;
   friend struct laddr_le_t;
   friend struct laddr_helper_t;
+  friend loffset_t laddr_plus(const laddr_t&, extent_len_t);
+  friend loffset_t laddr_minus(const laddr_t&, extent_len_t);
 
   bool is_snap() const {
     return (low & LOW_SNAP_MASK) != 0;
@@ -1221,13 +1248,13 @@ constexpr std::size_t L_ADDR_USIZE= laddr_t::UNIT_SIZE;
 struct loffset_t {
   loffset_t(laddr_t base, extent_len_t offset)
     : base(base), offset(offset) {
-    ceph_assert(offset < laddr_t::UNIT_SIZE);
+    assert(offset < laddr_t::UNIT_SIZE);
   }
 
   laddr_t get_roundup_laddr() const;
 
   operator laddr_t() const {
-    ceph_assert(offset == 0);
+    assert(offset == 0);
     return base;
   }
 
@@ -1238,11 +1265,9 @@ struct loffset_t {
   extent_len_t get_offset() const {
     return offset;
   }
-
+  friend loffset_t laddr_plus(const laddr_t&, extent_len_t);
+  friend loffset_t laddr_minus(const laddr_t&, extent_len_t);
   friend auto operator<=>(const loffset_t &, const loffset_t &) = default;
-  static loffset_t plus(const laddr_t &laddr, extent_len_t offset);
-  static loffset_t minus(const laddr_t &laddr, extent_len_t off);
-
 private:
   laddr_t base;
   extent_len_t offset;
@@ -1268,11 +1293,31 @@ inline auto operator<=>(const loffset_t &loffset, const laddr_t &laddr) {
     return loffset.get_base() <=> laddr;
   }
 }
+inline loffset_t __attribute__((always_inline)) laddr_plus(const laddr_t &laddr, extent_len_t offset) {
+  internal128_t v = 0;
+  v = laddr.high;
+  v <<= 64;
+  v |= laddr.low;
+  v += offset >> laddr_t::UNIT_SHIFT;
+  offset &= (1 << laddr_t::UNIT_SHIFT) -1;
+  return loffset_t(laddr_t(v, v >> 64), offset);
+}
+inline loffset_t __attribute__((always_inline)) laddr_minus(const laddr_t &laddr, extent_len_t offset) {
+  internal128_t v = 0;
+  v = laddr.high;
+  v <<= 64;
+  v |= laddr.low;
+  auto u = (offset + laddr_t::UNIT_SIZE - 1) >> laddr_t::UNIT_SHIFT;
+  v -= u;
+  offset = (u << laddr_t::UNIT_SHIFT) - offset;
+  return loffset_t(laddr_t(v, v >> 64), offset);
+}
+
 inline loffset_t operator+(const laddr_t &laddr, const extent_len_t &off) {
-  return loffset_t::plus(laddr, off);
+  return laddr_plus(laddr, off);
 }
 inline loffset_t operator+(const loffset_t &loffset, const extent_len_t &length) {
-  return loffset_t::plus(loffset.get_base(), loffset.get_offset() + length);
+  return laddr_plus(loffset.get_base(), loffset.get_offset() + length);
 }
 inline loffset_t operator+(const extent_len_t &offset, const laddr_t &laddr) {
   return laddr + offset;
@@ -1286,24 +1331,24 @@ inline laddr_t &operator+=(laddr_t &laddr, extent_len_t len) {
   return laddr;
 }
 inline loffset_t operator-(const laddr_t &laddr, const extent_len_t &off) {
-  return loffset_t::minus(laddr, off);
+  return laddr_minus(laddr, off);
 }
 inline loffset_t operator-(const loffset_t &loffset, const extent_len_t &length) {
   if (loffset.get_offset() >= length) {
     return loffset_t(loffset.get_base(), loffset.get_offset() - length);
   } else {
-    return loffset_t::minus(loffset.get_base(), length - loffset.get_offset());
+    return laddr_minus(loffset.get_base(), length - loffset.get_offset());
   }
 }
 inline uint64_t operator-(const laddr_t &laddr, const loffset_t &loffset) {
-  ceph_assert(laddr >= loffset.get_base());
+  assert(laddr >= loffset.get_base());
   return laddr - loffset.get_base() - loffset.get_offset();
 }
 inline uint64_t operator-(const loffset_t &loffset, const laddr_t &laddr) {
   return loffset.get_base() - laddr + loffset.get_offset();
 }
 inline uint64_t operator-(const loffset_t &lhs, const loffset_t &rhs) {
-  ceph_assert(lhs >= rhs);
+  assert(lhs >= rhs);
   return lhs.get_base() - rhs.get_base() + lhs.get_offset() - rhs.get_offset();
 }
 
