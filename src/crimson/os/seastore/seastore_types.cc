@@ -205,12 +205,12 @@ laddr_t laddr_t::get_data_hint(uint8_t pool, uint8_t shard, uint32_t crush)
     ret = laddr_t(low, high);
   } while (!ret.has_valid_prefix());
 
-  ceph_assert(ret.get_pool() == pool);
-  ceph_assert(ret.get_shard() == shard);
-  ceph_assert(ret.get_crush() == crush);
-  ceph_assert(ret.get_local_snap_id() == 0);
-  ceph_assert(!ret.is_snap());
-  ceph_assert(!ret.is_metadata());
+  assert(ret.get_pool() == pool);
+  assert(ret.get_shard() == shard);
+  assert(ret.get_crush() == crush);
+  assert(ret.get_local_snap_id() == 0);
+  assert(!ret.is_snap());
+  assert(!ret.is_metadata());
   return ret;
 }
 
@@ -231,8 +231,8 @@ laddr_t laddr_t::get_metadata_hint(laddr_t laddr)
 
 laddr_t laddr_t::get_next_hint(laddr_t laddr)
 {
-  ceph_assert(!laddr.is_snap());
-  ceph_assert(laddr.get_local_snap_id() == 0);
+  assert(!laddr.is_snap());
+  assert(laddr.get_local_snap_id() == 0);
   auto l = laddr;
   auto inc = true;
   if (// data: every time we want next data hint, make random + 1
@@ -284,7 +284,7 @@ std::pair<laddr_t, extent_len_t> laddr_t::get_aligned_range(
 }
 
 laddr_t laddr_t::get_hint_from_offset(uint64_t offset) {
-  ceph_assert(p2align(offset, UNIT_SIZE) == offset);
+  assert(p2align(offset, UNIT_SIZE) == offset);
   offset >>= UNIT_SHIFT;
 
   uint64_t low = 0;

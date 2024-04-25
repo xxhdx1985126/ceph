@@ -1094,9 +1094,9 @@ struct laddr_t {
   }
 
   void set_offset(extent_len_t offset) {
-    ceph_assert(p2align((uint64_t)offset, UNIT_SIZE) == offset);
+    assert(p2align((uint64_t)offset, UNIT_SIZE) == offset);
     offset >>= UNIT_SHIFT;
-    ceph_assert((offset & ~LOW_OFFSET_MASK) == 0);
+    assert((offset & ~LOW_OFFSET_MASK) == 0);
     low &= ~LOW_OFFSET_MASK;
     low |= offset;
   }
