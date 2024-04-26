@@ -825,7 +825,7 @@ std::vector<pg_log_entry_t> OpsExecuter::prepare_transaction(
     obc->obs.oi.soid,
     osd_op_params->at_version,
     obc->obs.oi.version,
-    osd_op_params->user_modify ? osd_op_params->at_version.version : 0,
+    user_modify ? osd_op_params->at_version.version : 0,
     osd_op_params->req_id,
     osd_op_params->mtime,
     op_info.allows_returnvec() && !ops.empty() ? ops.back().rval.code : 0);
