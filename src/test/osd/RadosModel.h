@@ -1063,7 +1063,7 @@ public:
                     << " is already newer than " << (*i)->get_version64() << std::endl;
         }
 	(*i)->release();
-	waiting.erase(i++);
+	i = waiting.erase(i);
       }
 
       context->update_object_version(oid, version);
