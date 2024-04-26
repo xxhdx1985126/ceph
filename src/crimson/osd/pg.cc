@@ -1121,10 +1121,6 @@ PG::do_osd_ops(
                                              0,
                                              false);
       reply->add_flags(CEPH_OSD_FLAG_ACK | CEPH_OSD_FLAG_ONDISK);
-      logger().debug(
-        "do_osd_ops: {} - object {} sending reply",
-        *m,
-        m->get_hobj());
       if (obc->obs.exists) {
         reply->set_reply_versions(peering_state.get_info().last_update,
           obc->obs.oi.user_version);
@@ -1132,6 +1128,11 @@ PG::do_osd_ops(
         reply->set_reply_versions(peering_state.get_info().last_update,
           peering_state.get_info().last_user_version);
       }
+      logger().debug(
+        "do_osd_ops: {} - object {} sending reply {}",
+        *m,
+        m->get_hobj(),
+        *reply);
       return do_osd_ops_iertr::make_ready_future<MURef<MOSDOpReply>>(
         std::move(reply));
     },
