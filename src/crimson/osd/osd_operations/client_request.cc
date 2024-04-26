@@ -316,12 +316,12 @@ ClientRequest::process_op(
   auto completed = co_await pg->already_complete(m->get_reqid());
 
   if (completed) {
-    DEBUGDPP("{}.{}: already completed, sending reply",
-	     *pg, *this, this_instance_id);
     auto reply = crimson::make_message<MOSDOpReply>(
       m.get(), completed->err, pg->get_osdmap_epoch(),
       CEPH_OSD_FLAG_ACK | CEPH_OSD_FLAG_ONDISK, false);
     reply->set_reply_versions(completed->version, completed->user_version);
+    DEBUGDPP("{}.{}: already completed, sending reply {}",
+	     *pg, *this, this_instance_id, *reply);
     // TODO: gate the crosscore sending
     co_await interruptor::make_interruptible(
       get_foreign_connection().send_with_throttling(std::move(reply))
