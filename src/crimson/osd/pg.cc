@@ -1575,6 +1575,7 @@ void PG::on_change(ceph::os::Transaction &t) {
   scrubber.on_interval_change();
   obc_registry.invalidate_on_interval_change();
   snap_trimming = false;
+  snap_mapper.reset_backend();
 }
 
 void PG::context_registry_on_change() {

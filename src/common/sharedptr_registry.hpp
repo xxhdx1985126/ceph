@@ -61,6 +61,13 @@ public:
     waiting(0)
   {}
 
+#ifdef WITH_SEASTAR
+  void reset() {
+    ceph_assert(!waiting);
+    contents.clear();
+  }
+#endif
+
   bool empty() {
     std::lock_guard l(lock);
     return contents.empty();
