@@ -173,7 +173,7 @@ bool ObjectDesc::check_sparse(const std::map<uint64_t, uint64_t>& extents,
 	std::min(to_check.length() - off, extiter.second));
       uint64_t error_at = 0;
       if (!objiter.check_bl_advance(bl, &error_at)) {
-	std::cout << "incorrect buffer at pos " << error_at << std::endl;
+	std::cout << "incorrect buffer at pos " << error_at << ", extent " << extiter.first << "~" << extiter.second << std::endl;
 	return false;
       }
       off += extiter.second;
