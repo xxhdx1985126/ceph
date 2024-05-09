@@ -373,8 +373,19 @@ ClientRequest::process_op(
 	}
       );
     }).handle_error_interruptible(
+      crimson::ct_error::enoent::handle([this, FNAME, pg, this_instance_id] {
+        DEBUGDPP("{}.{}: saw error code enoent",
+                 *pg, *this, this_instance_id);
+        if (pg->is_primary()) {
+          return reply_op_error(pg, -ENOENT);
+        } else {
+          DEBUGDPP("{}.{} enoent on replica osds, returning eagain",
+              *pg, *this, this_instance_id);
+          return reply_op_error(pg, -EAGAIN);
+        }
+      }),
       PG::load_obc_ertr::all_same_way(
-	[FNAME, this, pg=std::move(pg), this_instance_id](
+	[FNAME, this, pg, this_instance_id](
 	  const auto &code
 	) -> interruptible_future<> {
 	  DEBUGDPP("{}.{}: saw error code {}",
@@ -451,8 +462,13 @@ ClientRequest::do_process(
   }
 
   if (!obc->obs.exists && !op_info.may_write()) {
-    co_await reply_op_error(pg, -ENOENT);
-    co_return;
+    if (pg->is_primary()) {
+      co_await reply_op_error(pg, -ENOENT);
+      co_return;
+    } else {
+      co_await reply_op_error(pg, -EAGAIN);
+      co_return;
+    }
   }
 
   SnapContext snapc = get_snapc(*pg,obc);
