@@ -167,6 +167,24 @@ ClientRequest::interruptible_future<> ClientRequest::with_pg_process_interruptib
       pg.wait_for_active_blocker,
       &decltype(pg.wait_for_active_blocker)::wait));
 
+  if (!pg.is_primary()) {
+    // primary can handle both normal ops and balanced reads
+    if (is_misdirected(pg)) {
+      DEBUGDPP("{}.{}: dropping misdirected op",
+	       pg, *this, this_instance_id);
+      co_return;
+    } else if (const hobject_t& hoid = m->get_hobj();
+               !pg.get_peering_state().can_serve_replica_read(hoid)) {
+      DEBUGDPP("{}.{}: unstable write on replica, bouncing to primary",
+	       pg, *this, this_instance_id);
+      co_await reply_op_error(pgref, -EAGAIN);
+      co_return;
+    } else {
+      DEBUGDPP("{}.{}: serving replica read on oid {}",
+	       pg, *this, this_instance_id, m->get_hobj());
+    }
+  }
+
   DEBUGDPP("{}.{}: pg active, entering process[_pg]_op",
 	   *pgref, *this, this_instance_id);
 
@@ -463,24 +481,6 @@ ClientRequest::do_process(
 	     obc->obs.oi.soid);
     co_await reply_op_error(pg, -EOLDSNAPC);
     co_return;
-  }
-
-  if (!pg->is_primary()) {
-    // primary can handle both normal ops and balanced reads
-    if (is_misdirected(*pg)) {
-      DEBUGDPP("{}.{}: dropping misdirected op",
-	       *pg, *this, this_instance_id);
-      co_return;
-    } else if (const hobject_t& hoid = m->get_hobj();
-               !pg->get_peering_state().can_serve_replica_read(hoid)) {
-      DEBUGDPP("{}.{}: unstable write on replica, bouncing to primary",
-	       *pg, *this, this_instance_id);
-      co_await reply_op_error(pg, -EAGAIN);
-      co_return;
-    } else {
-      DEBUGDPP("{}.{}: serving replica read on oid {}",
-	       *pg, *this, this_instance_id, m->get_hobj());
-    }
   }
 
   auto [submitted, all_completed] = co_await pg->do_osd_ops(
