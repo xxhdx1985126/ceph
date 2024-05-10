@@ -175,15 +175,23 @@ public:
       pushes.at(shard).set_exception(e);
     }
     void interrupt(std::string_view why) {
-      readable.set_exception(std::system_error(
-        std::make_error_code(std::errc::interrupted), why.data()));
-      recovered.set_exception(std::system_error(
-        std::make_error_code(std::errc::interrupted), why.data()));
-      pulled.set_exception(std::system_error(
-        std::make_error_code(std::errc::interrupted), why.data()));
+      if (!readable.available()) {
+	readable.set_exception(std::system_error(
+	  std::make_error_code(std::errc::interrupted), why.data()));
+      }
+      if (!recovered.available()) {
+	recovered.set_exception(std::system_error(
+	  std::make_error_code(std::errc::interrupted), why.data()));
+      }
+      if (!pulled.available()) {
+	pulled.set_exception(std::system_error(
+	  std::make_error_code(std::errc::interrupted), why.data()));
+      }
       for (auto& [pg_shard, pr] : pushes) {
-        pr.set_exception(std::system_error(
-          std::make_error_code(std::errc::interrupted), why.data()));
+	if (!pr.available()) {
+	  pr.set_exception(std::system_error(
+	    std::make_error_code(std::errc::interrupted), why.data()));
+	}
       }
     }
     void stop();
