@@ -225,6 +225,11 @@ public:
   using clone_ret = clone_iertr::future<>;
   clone_ret clone(context_t ctx);
 
+  /// Touch a new onode if it doesn't exist
+  using touch_iertr = base_iertr;
+  using touch_ret = touch_iertr::future<>;
+  touch_ret touch(context_t ctx);
+
 private:
   /// Updates region [_offset, _offset + bl.length) to bl
   write_ret overwrite(

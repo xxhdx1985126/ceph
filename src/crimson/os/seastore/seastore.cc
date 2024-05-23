@@ -1644,7 +1644,19 @@ SeaStore::Shard::_touch(
 {
   LOG_PREFIX(SeaStore::_touch);
   DEBUGT("onode={}", *ctx.transaction, *onode);
-  return tm_iertr::now();
+  if (!onode->get_layout().object_data.get().is_null()) {
+    return tm_iertr::now();
+  }
+  return seastar::do_with(
+    ObjectDataHandler(max_object_size),
+    [=, this, &ctx](auto &objhandler) {
+    return objhandler.touch(
+      ObjectDataHandler::context_t{
+	*transaction_manager,
+	*ctx.transaction,
+	*onode,
+      });
+  });
 }
 
 SeaStore::Shard::tm_ret
