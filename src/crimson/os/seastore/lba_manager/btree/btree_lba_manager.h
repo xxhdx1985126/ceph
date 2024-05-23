@@ -341,7 +341,7 @@ public:
       return update_refcount(t, intermediate_key, 1, false, true
       ).si_then([imapping=std::move(imapping)](auto p) mutable {
 	auto mapping = std::move(p.mapping);
-	ceph_assert(mapping->is_stable());
+	ceph_assert(mapping->is_data_stable());
 	ceph_assert(imapping->is_half_indirect());
 	mapping->make_indirect(
 	  imapping->get_key(),
