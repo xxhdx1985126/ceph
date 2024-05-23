@@ -1650,6 +1650,18 @@ ObjectDataHandler::truncate_ret ObjectDataHandler::truncate(
     });
 }
 
+ObjectDataHandler::touch_ret ObjectDataHandler::touch(context_t ctx)
+{
+  return with_object_data(
+    ctx,
+    [this, ctx](auto &obj_data) {
+      return prepare_data_reservation(
+        ctx,
+        obj_data,
+        max_object_size);
+    });
+}
+
 ObjectDataHandler::clear_ret ObjectDataHandler::clear(
   context_t ctx)
 {
