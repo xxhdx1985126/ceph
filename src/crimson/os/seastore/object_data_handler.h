@@ -230,6 +230,30 @@ public:
   using touch_ret = touch_iertr::future<>;
   touch_ret touch(context_t ctx);
 
+  clone_ret clone_range(
+    context_t ctx,
+    extent_len_t srcoff,
+    extent_len_t length,
+    extent_len_t dstoff);
+
+  using remap_entry = TransactionManager::remap_entry;
+  using remap_pin_iertr = TransactionManager::remap_pin_iertr;
+  using remap_pin_ret = TransactionManager::remap_pin_ret;
+  template <std::size_t N>
+  remap_pin_ret remap_pin(
+    context_t ctx,
+    LBAMappingRef &&pin,
+    std::array<remap_entry, N> remaps)
+  {
+    if (pin->get_val().is_zero()) {
+      return ctx.tm.remap_reserved_region(
+	ctx.t, std::move(pin), std::move(remaps));
+    } else {
+      return ctx.tm.remap_pin<ObjectDataBlock, N>(
+	ctx.t, std::move(pin), std::move(remaps));
+    }
+  }
+
 private:
   /// Updates region [_offset, _offset + bl.length) to bl
   write_ret overwrite(
@@ -256,7 +280,9 @@ private:
     context_t ctx,
     object_data_t &object_data,
     lba_pin_list_t &pins,
-    laddr_t data_base);
+    laddr_t data_base,
+    extent_len_t clone_offset,
+    extent_len_t clone_len);
 
 private:
   /**
