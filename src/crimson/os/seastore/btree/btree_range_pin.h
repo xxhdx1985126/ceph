@@ -197,6 +197,10 @@ public:
   get_child_ret_t<LogicalCachedExtent> get_logical_extent(Transaction&) final;
   bool is_stable() const final;
   bool is_data_stable() const final;
+  bool is_parent_valid() const final {
+    assert(parent);
+    return parent->is_valid();
+  }
 };
 
 }
