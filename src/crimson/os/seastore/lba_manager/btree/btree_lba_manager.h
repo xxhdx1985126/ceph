@@ -431,7 +431,9 @@ public:
 	  return fut.si_then([remap_laddr, remap_len, &ret,
 			      remap_paddr](auto &&ref) {
 	    assert(ref->get_key() == remap_laddr);
-	    assert(ref->get_val() == remap_paddr);
+	    assert(ref->get_val() == remap_paddr ||
+	      remap_paddr.is_delayed() ||
+	      remap_paddr.is_relative());
 	    assert(ref->get_length() == remap_len);
 	    ret.remapped_mappings.emplace_back(std::move(ref));
 	    return seastar::now();
