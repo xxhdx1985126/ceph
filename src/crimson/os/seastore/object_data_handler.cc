@@ -436,32 +436,17 @@ ObjectDataHandler::write_ret do_remappings(
   return trans_intr::do_for_each(
     to_remap,
     [ctx](auto &region) {
-      auto fut = ObjectDataHandler::write_iertr::now();
-      if ((region.is_remap1() || region.is_remap2()) &&
-	  (!region.pin->is_parent_valid())) {
-	fut = ctx.tm.get_pin(ctx.t, region.pin->get_key()
-	).si_then([&region](auto new_pin) {
-	  assert(new_pin);
-	  region.pin = std::move(new_pin);
-	  return seastar::now();
-	}).handle_error_interruptible(
-	  crimson::ct_error::enoent::assert_failure{"unexpected enoent"},
-	  ObjectDataHandler::write_iertr::pass_further{}
-	);
-      }
       if (region.is_remap1()) {
-	return fut.si_then([ctx, &region] {
-	  return ctx.tm.remap_pin<ObjectDataBlock, 1>(
-	    ctx.t,
-	    std::move(region.pin),
-	    std::array{
-	      region.create_remap_entry()
-	    }
-	  ).si_then([&region](auto pins) {
-	    ceph_assert(pins.size() == 1);
-	    ceph_assert(region.new_len == pins[0]->get_length());
-	    return ObjectDataHandler::write_iertr::now();
-	  });
+	return ctx.tm.remap_pin<ObjectDataBlock, 1>(
+	  ctx.t,
+	  std::move(region.pin),
+	  std::array{
+	    region.create_remap_entry()
+	  }
+	).si_then([&region](auto pins) {
+	  ceph_assert(pins.size() == 1);
+	  ceph_assert(region.new_len == pins[0]->get_length());
+	  return ObjectDataHandler::write_iertr::now();
 	});
       } else if (region.is_overwrite()) {
 	return ctx.tm.get_mutable_extent_by_laddr<ObjectDataBlock>(
@@ -480,22 +465,20 @@ ObjectDataHandler::write_ret do_remappings(
 	  return ObjectDataHandler::write_iertr::now();
 	});
       } else if (region.is_remap2()) {
-	return fut.si_then([ctx, &region] {
-	  auto pin_key = region.pin->get_key();
-	  return ctx.tm.remap_pin<ObjectDataBlock, 2>(
-	    ctx.t,
-	    std::move(region.pin),
-	    std::array{
-	      region.create_left_remap_entry(),
-	      region.create_right_remap_entry()
-	    }
-	  ).si_then([&region, pin_key](auto pins) {
-	    ceph_assert(pins.size() == 2);
-	    ceph_assert(pin_key == pins[0]->get_key());
-	    ceph_assert(pin_key + pins[0]->get_length() +
-	      region.new_len == pins[1]->get_key());
-	    return ObjectDataHandler::write_iertr::now();
-	  });
+	auto pin_key = region.pin->get_key();
+	return ctx.tm.remap_pin<ObjectDataBlock, 2>(
+	  ctx.t,
+	  std::move(region.pin),
+	  std::array{
+	    region.create_left_remap_entry(),
+	    region.create_right_remap_entry()
+	  }
+	).si_then([&region, pin_key](auto pins) {
+	  ceph_assert(pins.size() == 2);
+	  ceph_assert(pin_key == pins[0]->get_key());
+	  ceph_assert(pin_key + pins[0]->get_length() +
+	    region.new_len == pins[1]->get_key());
+	  return ObjectDataHandler::write_iertr::now();
 	});
       } else {
         ceph_abort("impossible");

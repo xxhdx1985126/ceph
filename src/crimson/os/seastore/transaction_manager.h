@@ -446,7 +446,6 @@ public:
     Transaction &t,
     LBAMappingRef &&pin,
     std::array<remap_entry, N> remaps) {
-    ceph_assert(pin->is_parent_valid());
 
 #ifndef NDEBUG
     std::sort(remaps.begin(), remaps.end(),
@@ -501,16 +500,28 @@ public:
       // The according extent might be stable or pending.
       auto fut = base_iertr::now();
       if (!pin->is_indirect()) {
-	auto fut2 = base_iertr::make_ready_future<TCachedExtentRef<T>>();
-	if (full_extent_integrity_check) {
-	  fut2 = read_pin<T>(t, pin->duplicate());
-	} else {
-	  auto ret = get_extent_if_linked<T>(t, pin->duplicate());
-	  if (ret.index() == 1) {
-	    fut2 = std::move(std::get<1>(ret));
-	  }
+	if (!pin->is_parent_valid()) {
+	  fut = get_pin(t, pin->get_key()
+	  ).si_then([&pin](auto new_pin) {
+	    assert(new_pin);
+	    pin = std::move(new_pin);
+	    return seastar::now();
+	  }).handle_error_interruptible(
+	    crimson::ct_error::enoent::assert_failure{"unexpected enoent"},
+	    base_iertr::pass_further{}
+	  );
 	}
-	fut = fut2.si_then([this, &t, &remaps, original_paddr,
+	fut = fut.si_then([this, &t, &pin] {
+	  if (full_extent_integrity_check) {
+	    return read_pin<T>(t, pin->duplicate());
+	  } else {
+	    auto ret = get_extent_if_linked<T>(t, pin->duplicate());
+	    if (ret.index() == 1) {
+	      return std::move(std::get<1>(ret));
+	    }
+	  }
+	  return base_iertr::make_ready_future<TCachedExtentRef<T>>();
+	}).si_then([this, &t, &remaps, original_paddr,
 			    original_laddr, original_len,
 			    &extents, FNAME](auto ext) mutable {
 	  ceph_assert(full_extent_integrity_check
