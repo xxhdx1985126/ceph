@@ -176,6 +176,18 @@ public:
     Transaction &t,
     LBAMappingRef pin)
   {
+#ifndef NDEBUG
+    // To follow an lba mapping to get the logical extent, it must be
+    // unmodified, this check assures that
+    return lba_manager->get_mappings(t, pin->get_key(), pin->get_length()
+    ).si_then([pin=std::move(pin), this, &t](auto mappings) mutable
+	      -> base_iertr::future<TCachedExtentRef<T>> {
+      assert(mappings.size() == 1);
+      auto &mapping = mappings.front();
+      assert(pin->get_val() == mapping->get_val());
+      assert(pin->get_length() == mapping->get_length());
+      assert(pin->get_checksum() == mapping->get_checksum());
+#endif
     // checking the lba child must be atomic with creating
     // and linking the absent child
     auto ret = get_extent_if_linked<T>(t, std::move(pin));
@@ -184,6 +196,12 @@ public:
     } else {
       return this->pin_to_extent<T>(t, std::move(std::get<0>(ret)));
     }
+#ifndef NDEBUG
+    }).handle_error_interruptible(
+      crimson::ct_error::enoent::assert_failure{"unexpected enoent"},
+      base_iertr::pass_further{}
+    );
+#endif
   }
 
   template <typename T>
@@ -217,6 +235,18 @@ public:
     extent_types_t type)
   {
     ceph_assert(pin->is_parent_valid());
+#ifndef NDEBUG
+    // To follow an lba mapping to get the logical extent, it must be
+    // unmodified, this check assures that
+    return lba_manager->get_mappings(t, pin->get_key(), pin->get_length()
+    ).si_then([pin=std::move(pin), this, &t, type](auto mappings) mutable
+	      -> base_iertr::future<LogicalCachedExtentRef> {
+      assert(mappings.size() == 1);
+      auto &mapping = mappings.front();
+      assert(pin->get_val() == mapping->get_val());
+      assert(pin->get_length() == mapping->get_length());
+      assert(pin->get_checksum() == mapping->get_checksum());
+#endif
     auto v = pin->get_logical_extent(t);
     // checking the lba child must be atomic with creating
     // and linking the absent child
@@ -225,6 +255,12 @@ public:
     } else {
       return pin_to_extent_by_type(t, std::move(pin), type);
     }
+#ifndef NDEBUG
+    }).handle_error_interruptible(
+      crimson::ct_error::enoent::assert_failure{"unexpected enoent"},
+      base_iertr::pass_further{}
+    );
+#endif
   }
 
   /// Obtain mutable copy of extent
@@ -436,6 +472,17 @@ public:
     } else {
       assert(total_remap_len <= original_len);
     }
+
+    // To follow an lba mapping to get the logical extent, it must be
+    // unmodified, this check assures that
+    return lba_manager->get_mappings(t, pin->get_key(), pin->get_length()
+    ).si_then([pin=std::move(pin), this, &t, remaps=std::move(remaps)]
+	      (auto mappings) mutable {
+      assert(mappings.size() == 1);
+      auto &mapping = mappings.front();
+      assert(pin->get_val() == mapping->get_val());
+      assert(pin->get_length() == mapping->get_length());
+      assert(pin->get_checksum() == mapping->get_checksum());
 #endif
 
     return seastar::do_with(
@@ -521,6 +568,14 @@ public:
 	}
       );
     });
+#ifndef NDEBUG
+    }).handle_error_interruptible(
+      remap_pin_iertr::pass_further{},
+      crimson::ct_error::assert_all{
+	"TransactionManager::remap_pin hit invalid error"
+      }
+    );
+#endif
   }
 
   using reserve_extent_iertr = alloc_extent_iertr;
