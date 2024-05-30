@@ -225,10 +225,29 @@ public:
 
 
   struct alloc_mapping_info_t {
+    laddr_t key = L_ADDR_NULL;
     extent_len_t len = 0;
     pladdr_t val;
     uint32_t checksum = 0;
     LogicalCachedExtent* extent = nullptr;
+
+    static alloc_mapping_info_t create_zero(extent_len_t len) {
+      return {L_ADDR_NULL, len, P_ADDR_ZERO, 0, nullptr};
+    }
+    static alloc_mapping_info_t create_indirect(
+      laddr_t laddr,
+      extent_len_t len,
+      laddr_t intermediate_key) {
+      return {laddr, len, intermediate_key, 0, nullptr};
+    }
+    static alloc_mapping_info_t create_direct(
+      laddr_t laddr,
+      extent_len_t len,
+      paddr_t paddr,
+      uint32_t checksum,
+      LogicalCachedExtent *extent) {
+      return {laddr, len, paddr, checksum, extent};
+    }
   };
 
   alloc_extent_ret reserve_region(
@@ -237,7 +256,7 @@ public:
     extent_len_t len) final
   {
     std::vector<alloc_mapping_info_t> alloc_infos = {
-      alloc_mapping_info_t{len, P_ADDR_ZERO, 0, nullptr}};
+      alloc_mapping_info_t::create_zero(len)};
     return seastar::do_with(
       std::move(alloc_infos),
       [&t, hint, this](auto &alloc_infos) {
@@ -293,8 +312,13 @@ public:
   {
     // The real checksum will be updated upon transaction commit
     assert(ext.get_last_committed_crc() == 0);
-    std::vector<alloc_mapping_info_t> alloc_infos = {{
-      ext.get_length(), ext.get_paddr(), ext.get_last_committed_crc(), &ext}};
+    std::vector<alloc_mapping_info_t> alloc_infos = {
+      alloc_mapping_info_t::create_direct(
+	L_ADDR_NULL,
+	ext.get_length(),
+	ext.get_paddr(),
+	ext.get_last_committed_crc(),
+	&ext)};
     return seastar::do_with(
       std::move(alloc_infos),
       [this, &t, hint, refcount](auto &alloc_infos) {
@@ -319,11 +343,13 @@ public:
   {
     std::vector<alloc_mapping_info_t> alloc_infos;
     for (auto &extent : extents) {
-      alloc_infos.emplace_back(alloc_mapping_info_t{
-	extent->get_length(),
-	pladdr_t(extent->get_paddr()),
-	extent->get_last_committed_crc(),
-	extent.get()});
+      alloc_infos.emplace_back(
+	alloc_mapping_info_t::create_direct(
+	  extent->has_laddr() ? extent->get_laddr() : L_ADDR_NULL,
+	  extent->get_length(),
+	  extent->get_paddr(),
+	  extent->get_last_committed_crc(),
+	  extent.get()));
     }
     return seastar::do_with(
       std::move(alloc_infos),
@@ -574,6 +600,7 @@ private:
     assert(intermediate_key != L_ADDR_NULL);
     std::vector<alloc_mapping_info_t> alloc_infos = {
       alloc_mapping_info_t{
+	L_ADDR_NULL,
 	len,
 	intermediate_key,
 	0,	// crc will only be used and checked with LBA direct mappings
