@@ -269,6 +269,30 @@ struct FixedKVNode : ChildableCachedExtent {
   virtual bool is_child_data_stable(op_context_t<node_key_t>, uint16_t pos) const = 0;
 
   template <typename T>
+  T* get_child_ptr(
+    uint16_t pos,
+    node_key_t key)
+  {
+    assert(children.capacity());
+    auto child = children[pos];
+    ceph_assert(!is_reserved_ptr(child));
+    if (is_valid_child_ptr(child)) {
+      return (T*)child;
+    } else if (is_pending()) {
+      auto &sparent = get_stable_for_key(key);
+      auto spos = sparent.lower_bound_offset(key);
+      auto child = sparent.children[spos];
+      if (is_valid_child_ptr(child)) {
+	return (T*)child;
+      } else {
+	return nullptr;
+      }
+    } else {
+      return nullptr;
+    }
+  }
+
+  template <typename T>
   get_child_ret_t<T> get_child(
     op_context_t<node_key_t> c,
     uint16_t pos,

@@ -154,6 +154,21 @@ public:
     len = length;
   }
 
+  extent_ref_count_t get_refcount() const {
+    return get_map_val().refcount;
+  }
+
+  LogicalCachedExtent* get_logical_ptr(Transaction &t) {
+    assert(parent);
+    assert(parent->is_valid());
+    assert(pos != std::numeric_limits<uint16_t>::max());
+    ceph_assert(t.get_trans_id() == ctx.trans.get_trans_id());
+    auto &p = (FixedKVNode<key_t>&)*parent;
+    auto k = this->is_indirect()
+      ? this->get_intermediate_base()
+      : get_key();
+    return p.template get_child_ptr<LogicalCachedExtent>(pos, k);
+  }
 protected:
   std::unique_ptr<BtreeNodeMapping<laddr_t, paddr_t>> _duplicate(
     op_context_t<laddr_t> ctx) const final {
@@ -225,9 +240,11 @@ public:
 
 
   struct alloc_mapping_info_t {
+    laddr_t key = L_ADDR_NULL;
     extent_len_t len = 0;
     pladdr_t val;
     uint32_t checksum = 0;
+    extent_ref_count_t refcount = 0;
     LogicalCachedExtent* extent = nullptr;
   };
 
@@ -237,7 +254,7 @@ public:
     extent_len_t len) final
   {
     std::vector<alloc_mapping_info_t> alloc_infos = {
-      alloc_mapping_info_t{len, P_ADDR_ZERO, 0, nullptr}};
+      alloc_mapping_info_t{L_ADDR_NULL, len, P_ADDR_ZERO, 0, 0, nullptr}};
     return seastar::do_with(
       std::move(alloc_infos),
       [&t, hint, this](auto &alloc_infos) {
@@ -294,7 +311,12 @@ public:
     // The real checksum will be updated upon transaction commit
     assert(ext.get_last_committed_crc() == 0);
     std::vector<alloc_mapping_info_t> alloc_infos = {{
-      ext.get_length(), ext.get_paddr(), ext.get_last_committed_crc(), &ext}};
+      L_ADDR_NULL,
+      ext.get_length(),
+      ext.get_paddr(),
+      ext.get_last_committed_crc(),
+      0,
+      &ext}};
     return seastar::do_with(
       std::move(alloc_infos),
       [this, &t, hint, refcount](auto &alloc_infos) {
@@ -320,9 +342,11 @@ public:
     std::vector<alloc_mapping_info_t> alloc_infos;
     for (auto &extent : extents) {
       alloc_infos.emplace_back(alloc_mapping_info_t{
+	L_ADDR_NULL,
 	extent->get_length(),
 	pladdr_t(extent->get_paddr()),
 	extent->get_last_committed_crc(),
+	0,
 	extent.get()});
     }
     return seastar::do_with(
@@ -331,6 +355,14 @@ public:
       return _alloc_extents(t, hint, alloc_infos, refcount);
     });
   }
+
+  move_mappings_ret move_mappings(
+    Transaction &t,
+    laddr_t src_base,
+    laddr_t dst_base,
+    extent_len_t length,
+    bool data_only,
+    bool replace_with_indirect) final;
 
   ref_ret decref_extent(
     Transaction &t,
@@ -574,10 +606,12 @@ private:
     assert(intermediate_key != L_ADDR_NULL);
     std::vector<alloc_mapping_info_t> alloc_infos = {
       alloc_mapping_info_t{
+	L_ADDR_NULL,
 	len,
 	intermediate_key,
 	0,	// crc will only be used and checked with LBA direct mappings
 		// also see pin_to_extent(_by_type)
+	0,
 	nullptr}};
     return seastar::do_with(
       std::move(alloc_infos),
