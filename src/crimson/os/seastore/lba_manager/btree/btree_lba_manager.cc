@@ -157,17 +157,17 @@ BtreeLBAManager::get_mappings(
 	    if (pos.is_end() || pos.get_key() >= (offset + length)) {
 	      TRACET("{}~{} done with {} results",
 		     c.trans, offset, length, pin_list.size());
-	      return LBABtree::iterate_repeat_ret_inner(
-		interruptible::ready_future_marker{},
-		seastar::stop_iteration::yes);
+	      return LBABtree::base_iertr::make_ready_future<
+		LBABtree::repeat_indicator_t>(
+		  seastar::stop_iteration::yes, std::nullopt);
 	    }
 	    TRACET("{}~{} got {}, {}, repeat ...",
 		   c.trans, offset, length, pos.get_key(), pos.get_val());
 	    ceph_assert((pos.get_key() + pos.get_val().len) > offset);
 	    pin_list.push_back(pos.get_pin(c));
-	    return LBABtree::iterate_repeat_ret_inner(
-	      interruptible::ready_future_marker{},
-	      seastar::stop_iteration::no);
+	    return LBABtree::base_iertr::make_ready_future<
+	      LBABtree::repeat_indicator_t>(
+		seastar::stop_iteration::no, std::nullopt);
 	  }).si_then([this, &ret, c, &pin_list] {
 	    return _get_original_mappings(c, pin_list
 	    ).si_then([&ret](auto _ret) {
@@ -414,17 +414,17 @@ BtreeLBAManager::scan_mappings(
 	btree.upper_bound_right(c, begin),
 	[f=std::move(f), begin, end](auto &pos) {
 	  if (pos.is_end() || pos.get_key() >= end) {
-	    return typename LBABtree::iterate_repeat_ret_inner(
-	      interruptible::ready_future_marker{},
-	      seastar::stop_iteration::yes);
+	    return LBABtree::base_iertr::make_ready_future<
+	      LBABtree::repeat_indicator_t>(
+		seastar::stop_iteration::yes, std::nullopt);
 	  }
 	  ceph_assert((pos.get_key() + pos.get_val().len) > begin);
 	  if (pos.get_val().pladdr.is_paddr()) {
 	    f(pos.get_key(), pos.get_val().pladdr.get_paddr(), pos.get_val().len);
 	  }
-	  return LBABtree::iterate_repeat_ret_inner(
-	    interruptible::ready_future_marker{},
-	    seastar::stop_iteration::no);
+	  return LBABtree::base_iertr::make_ready_future<
+	    LBABtree::repeat_indicator_t>(
+	      seastar::stop_iteration::no, std::nullopt);
 	});
     });
 }
