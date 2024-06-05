@@ -171,7 +171,7 @@ public:
     extent_len_t length,
     laddr_t interkey = L_ADDR_NULL)
   {
-    assert(indirect);
+    assert(is_full_indirect());
     assert(value.is_paddr());
     intermediate_key = (interkey == L_ADDR_NULL ? key : interkey);
     key = new_key;
@@ -326,8 +326,7 @@ public:
     Transaction &t,
     laddr_t laddr,
     extent_len_t len,
-    laddr_t intermediate_key,
-    laddr_t intermediate_base) final
+    laddr_t intermediate_key) final
   {
     std::vector<alloc_mapping_info_t> alloc_infos = {
       alloc_mapping_info_t::create_indirect(
@@ -336,10 +335,10 @@ public:
       t,
       laddr,
       std::move(alloc_infos)
-    ).si_then([&t, this, intermediate_base](auto imappings) {
+    ).si_then([&t, this, intermediate_key](auto imappings) {
       assert(imappings.size() == 1);
       auto &imapping = imappings.front();
-      return update_refcount(t, intermediate_base, 1, false
+      return update_refcount(t, intermediate_key, 1, false, true
       ).si_then([imapping=std::move(imapping)](auto p) mutable {
 	auto mapping = std::move(p.mapping);
 	ceph_assert(mapping->is_stable());
@@ -423,7 +422,7 @@ public:
   ref_ret decref_extent(
     Transaction &t,
     laddr_t addr) final {
-    return update_refcount(t, addr, -1, true
+    return update_refcount(t, addr, -1, true, false
     ).si_then([](auto res) {
       return std::move(res.ref_update_res);
     });
@@ -432,7 +431,7 @@ public:
   ref_ret incref_extent(
     Transaction &t,
     laddr_t addr) final {
-    return update_refcount(t, addr, 1, false
+    return update_refcount(t, addr, 1, false, false
     ).si_then([](auto res) {
       return std::move(res.ref_update_res);
     });
@@ -454,7 +453,7 @@ public:
       std::move(orig_mapping),
       [&t, FNAME, this](auto &ret, const auto &remaps,
 			auto &extents, auto &orig_mapping) {
-      return update_refcount(t, orig_mapping->get_key(), -1, false
+      return update_refcount(t, orig_mapping->get_key(), -1, false, false
       ).si_then([&ret, this, &extents, &remaps,
 		&t, &orig_mapping, FNAME](auto r) {
 	ret.ruret = std::move(r.ref_update_res);
@@ -626,7 +625,8 @@ private:
     Transaction &t,
     laddr_t addr,
     int delta,
-    bool cascade_remove);
+    bool cascade_remove,
+    bool subextent);
 
   /**
    * _update_mapping
@@ -647,7 +647,8 @@ private:
     Transaction &t,
     laddr_t addr,
     update_func_t &&f,
-    LogicalCachedExtent*);
+    LogicalCachedExtent*,
+    bool subextent);
 
   alloc_extents_ret _alloc_extents(
     Transaction &t,
@@ -659,7 +660,7 @@ private:
     laddr_t addr,
     int delta) {
     ceph_assert(delta > 0);
-    return update_refcount(t, addr, delta, false
+    return update_refcount(t, addr, delta, false, false
     ).si_then([](auto res) {
       return std::move(res.ref_update_res);
     });
