@@ -176,6 +176,7 @@ public:
     Transaction &t,
     LBAMappingRef pin)
   {
+    assert(!pin->is_half_indirect());
 #ifndef NDEBUG
     // To follow an lba mapping to get the logical extent, it must be
     // unmodified, this check assures that
@@ -211,6 +212,7 @@ public:
     LBAMappingRef pin)
   {
     ceph_assert(pin->is_parent_valid());
+    assert(!pin->is_half_indirect());
     auto v = pin->get_logical_extent(t);
     if (v.has_child()) {
       return v.get_child_fut().safe_then([pin=std::move(pin)](auto extent) {
@@ -235,6 +237,7 @@ public:
     extent_types_t type)
   {
     ceph_assert(pin->is_parent_valid());
+    assert(!pin->is_half_indirect());
 #ifndef NDEBUG
     // To follow an lba mapping to get the logical extent, it must be
     // unmodified, this check assures that
@@ -447,6 +450,7 @@ public:
     LBAMappingRef &&pin,
     std::array<remap_entry, N> remaps) {
     static_assert(std::is_base_of_v<LogicalCachedExtent, T>);
+    assert(!pin->is_half_indirect());
 
 #ifndef NDEBUG
     std::sort(remaps.begin(), remaps.end(),
@@ -959,6 +963,7 @@ private:
     LOG_PREFIX(TransactionManager::pin_to_extent);
     SUBTRACET(seastore_tm, "getting extent {}", t, *pin);
     static_assert(is_logical_type(T::TYPE));
+    assert(!pin->is_half_indirect());
     using ret = pin_to_extent_ret<T>;
     auto &pref = *pin;
     return cache->get_absent_extent<T>(
@@ -1023,6 +1028,7 @@ private:
     LOG_PREFIX(TransactionManager::pin_to_extent_by_type);
     SUBTRACET(seastore_tm, "getting extent {} type {}", t, *pin, type);
     assert(is_logical_type(type));
+    assert(!pin->is_half_indirect());
     auto &pref = *pin;
     return cache->get_absent_extent_by_type(
       t,
