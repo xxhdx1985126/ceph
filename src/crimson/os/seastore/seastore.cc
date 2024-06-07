@@ -1486,11 +1486,15 @@ SeaStore::Shard::_do_transaction_step(
       }
       case Transaction::OP_CLONE:
       {
-	TRACET("cloning {} to {}",
-	  *ctx.transaction,
-	  i.get_oid(op->oid),
-	  i.get_oid(op->dest_oid));
-	return _clone(ctx, onodes[op->oid], d_onodes[op->dest_oid]);
+	auto &src_ghobj = i.get_oid(op->oid);
+	auto &dest_ghobj = i.get_oid(op->dest_oid);
+	assert(src_ghobj.hobj.is_head() == !dest_ghobj.hobj.is_head());
+	TRACET("cloning {} to {}", *ctx.transaction, src_ghobj, dest_ghobj);
+	return _clone(
+	  ctx,
+	  onodes[op->oid],
+	  d_onodes[op->dest_oid],
+	  dest_ghobj.hobj.is_head());
       }
       case Transaction::OP_CLONERANGE2:
       {
@@ -1773,13 +1777,14 @@ SeaStore::Shard::tm_ret
 SeaStore::Shard::_clone(
   internal_context_t &ctx,
   OnodeRef &onode,
-  OnodeRef &d_onode)
+  OnodeRef &d_onode,
+  bool rollback)
 {
   LOG_PREFIX(SeaStore::_clone);
   DEBUGT("onode={} d_onode={}", *ctx.transaction, *onode, *d_onode);
   return seastar::do_with(
     ObjectDataHandler(max_object_size),
-    [this, &ctx, &onode, &d_onode](auto &objHandler) {
+    [this, &ctx, &onode, &d_onode, rollback](auto &objHandler) {
     auto &object_size = onode->get_layout().size;
     d_onode->update_onode_size(*ctx.transaction, object_size);
     return objHandler.clone(
@@ -1787,7 +1792,8 @@ SeaStore::Shard::_clone(
 	*transaction_manager,
 	*ctx.transaction,
 	*onode,
-	d_onode.get()});
+	d_onode.get()},
+      rollback);
   }).si_then([&ctx, &onode, &d_onode, this] {
     return _clone_omaps(ctx, onode, d_onode, omap_type_t::XATTR);
   }).si_then([&ctx, &onode, &d_onode, this] {

@@ -1786,7 +1786,7 @@ ObjectDataHandler::clone_ret ObjectDataHandler::clone_range(
     ctx,
     [ctx, this, srcoff, length]
     (auto &object_data, auto &d_object_data) {
-    return _clone_range(ctx, object_data, d_object_data, srcoff, length);
+    return _clone_range(ctx, object_data, d_object_data, srcoff, length, false);
   });
 }
 
@@ -1797,24 +1797,38 @@ ObjectDataHandler::clone_ret ObjectDataHandler::_clone_range(
   object_data_t &object_data,
   object_data_t &d_object_data,
   extent_len_t srcoff,
-  extent_len_t length)
+  extent_len_t length,
+  bool rollback)
 {
   ceph_assert(!object_data.is_null());
   ceph_assert(!d_object_data.is_null());
   auto dst_start = d_object_data.get_reserved_data_base() + srcoff;
-  // TODO: very inefficient reserve-and-remove approach, should
-  // be removed once the 128bit lba key is in position
-  return ctx.tm.reserve_region(ctx.t, dst_start, length
-  ).si_then([ctx, length, &object_data, srcoff](auto mapping) {
-    return ctx.tm.remove(ctx.t, mapping->get_key()
-    ).si_then([ctx, dst_base=mapping->get_key(),
-	      length, &object_data, srcoff](auto) {
-      auto src_start = object_data.get_reserved_data_base() + srcoff;
-      return ctx.tm.move_mappings<ObjectDataBlock>(
-	ctx.t, src_start, dst_base, length, true);
-    });
-  }).si_then([ctx, this, &d_object_data, &object_data,
-	      length, srcoff](auto pin_list) {
+  auto fut = clone_iertr::make_ready_future<lba_pin_list_t>();
+  if (rollback) {
+    assert(!srcoff);
+    fut = ctx.tm.get_pins(
+      ctx.t,
+      object_data.get_reserved_data_base(),
+      length);
+  } else {
+    // TODO: very inefficient reserve-and-remove approach, should
+    // be removed once the 128bit lba key is in position
+    fut = ctx.tm.reserve_region(ctx.t, dst_start, length
+    ).si_then([ctx, length, &object_data, srcoff](auto mapping) {
+      return ctx.tm.remove(ctx.t, mapping->get_key()
+      ).si_then([ctx, dst_base=mapping->get_key(),
+		length, &object_data, srcoff](auto) {
+	auto src_start = object_data.get_reserved_data_base() + srcoff;
+	return ctx.tm.move_mappings<ObjectDataBlock>(
+	  ctx.t, src_start, dst_base, length, true);
+      });
+    }).handle_error_interruptible(
+      clone_iertr::pass_further{},
+      crimson::ct_error::assert_all{"unexpected error"}
+    );
+  }
+  return fut.si_then([ctx, this, &d_object_data, &object_data,
+		      length, srcoff](auto pin_list) {
     assert(!pin_list.empty());
     return seastar::do_with(
       std::move(pin_list),
@@ -1911,7 +1925,8 @@ ObjectDataHandler::clone_ret ObjectDataHandler::_clone_range(
 }
 
 ObjectDataHandler::clone_ret ObjectDataHandler::clone(
-  context_t ctx)
+  context_t ctx,
+  bool rollback)
 {
   // the whole clone procedure can be seperated into the following steps:
   // 	1. let clone onode(d_object_data) take the head onode's
@@ -1923,7 +1938,7 @@ ObjectDataHandler::clone_ret ObjectDataHandler::clone(
   // 	   length.
   return with_objects_data(
     ctx,
-    [ctx, this](auto &object_data, auto &d_object_data) {
+    [ctx, this, rollback](auto &object_data, auto &d_object_data) {
     ceph_assert(d_object_data.is_null());
     if (object_data.is_null()) {
       return clone_iertr::now();
@@ -1932,7 +1947,7 @@ ObjectDataHandler::clone_ret ObjectDataHandler::clone(
       ctx,
       d_object_data,
       object_data.get_reserved_data_len()
-    ).si_then([&object_data, &d_object_data, ctx, this] {
+    ).si_then([&object_data, &d_object_data, ctx, this, rollback] {
       LOG_PREFIX(ObjectDataHandler::clone);
       DEBUGT("cloned obj reserve_data_base: {}, len {}",
 	ctx.t,
@@ -1943,7 +1958,8 @@ ObjectDataHandler::clone_ret ObjectDataHandler::clone(
 	object_data,
 	d_object_data,
 	0,
-	d_object_data.get_reserved_data_len());
+	d_object_data.get_reserved_data_len(),
+	rollback);
     });
   });
 }

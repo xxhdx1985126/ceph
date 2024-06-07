@@ -223,7 +223,7 @@ public:
   /// Clone data of an Onode
   using clone_iertr = base_iertr;
   using clone_ret = clone_iertr::future<>;
-  clone_ret clone(context_t ctx);
+  clone_ret clone(context_t ctx, bool rollback);
 
   /// Touch a new onode if it doesn't exist
   using touch_iertr = base_iertr;
@@ -289,7 +289,8 @@ private:
     object_data_t &object_data,
     object_data_t &d_object_data,
     extent_len_t srcoff,
-    extent_len_t length);
+    extent_len_t length,
+    bool rollback);
 
 private:
   /**
