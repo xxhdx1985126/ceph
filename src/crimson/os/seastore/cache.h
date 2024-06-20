@@ -1368,6 +1368,9 @@ public:
     stats.submit_record.stop();
   }
 
+  bool needs_full_integrity_check() const {
+    return full_extent_integrity_check;
+  }
 private:
   /// Update lru for access to ref
   void touch_extent(
@@ -1394,6 +1397,8 @@ private:
   std::vector<SegmentProvider*> segment_providers_by_device_id;
 
   transaction_id_t next_id = 0;
+
+  bool full_extent_integrity_check = true;
 
   /**
    * dirty
@@ -1654,7 +1659,7 @@ private:
       extent->get_length(),
       extent->get_bptr()
     ).safe_then(
-      [extent=std::move(extent)]() mutable {
+      [extent=std::move(extent), this]() mutable {
         LOG_PREFIX(Cache::read_extent);
 	if (likely(extent->state == CachedExtent::extent_state_t::CLEAN_PENDING)) {
 	  extent->state = CachedExtent::extent_state_t::CLEAN;
@@ -1665,7 +1670,9 @@ private:
 	if (extent->is_valid()) {
 	  // crc will be checked against LBA leaf entry for logical extents,
 	  // or check against in-extent crc for physical extents.
-	  extent->last_committed_crc = extent->calc_crc32c();
+	  if (full_extent_integrity_check || extent->mandate_chksum()) {
+	    extent->last_committed_crc = extent->calc_crc32c();
+	  }
 	  extent->on_clean_read();
 	}
         extent->complete_io();

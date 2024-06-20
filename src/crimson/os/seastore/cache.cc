@@ -40,6 +40,9 @@ std::ostream &operator<<(std::ostream &out, const backref_entry_t &ent) {
 Cache::Cache(
   ExtentPlacementManager &epm)
   : epm(epm),
+    full_extent_integrity_check(
+      crimson::common::get_conf<bool>(
+        "seastore_full_integrity_check")),
     memory_cache(create_memory_cache(
       crimson::common::get_conf<Option::size_t>(
 	"seastore_cache_lru_size"),
@@ -1181,7 +1184,9 @@ CachedExtentRef Cache::duplicate_for_write(
   if (i->is_exist_clean()) {
     i->version++;
     i->state = CachedExtent::extent_state_t::EXIST_MUTATION_PENDING;
-    i->last_committed_crc = i->calc_crc32c();
+    if (full_extent_integrity_check || i->mandate_chksum()) {
+      i->last_committed_crc = i->calc_crc32c();
+    }
     // deepcopy the buffer of exist clean extent beacuse it shares
     // buffer with original clean extent.
     auto bp = i->get_bptr();
@@ -1294,6 +1299,7 @@ record_t Cache::prepare_record(
     i->prepare_commit();
 
     assert(i->get_version() > 0);
+    ceph_assert(i->mandate_chksum());
     auto final_crc = i->calc_crc32c();
     if (i->get_type() == extent_types_t::ROOT) {
       SUBTRACET(seastore_t, "writing out root delta {}B -- {}",
@@ -1671,7 +1677,9 @@ void Cache::complete_commit(
       is_inline = true;
       i->set_paddr(final_block_start.add_relative(i->get_paddr()));
     }
-    assert(i->get_last_committed_crc() == i->calc_crc32c());
+    assert(!(full_extent_integrity_check ||
+	    i->mandate_chksum()) ||
+	  i->get_last_committed_crc() == i->calc_crc32c());
     i->pending_for_transaction = TRANS_ID_NULL;
     i->on_initial_write();
 

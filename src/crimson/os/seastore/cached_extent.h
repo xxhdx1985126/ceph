@@ -301,6 +301,10 @@ public:
    */
   virtual extent_types_t get_type() const = 0;
 
+  virtual bool mandate_chksum() const {
+    return true;
+  }
+
   virtual bool is_logical() const {
     return false;
   }
