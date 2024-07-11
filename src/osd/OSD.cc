@@ -3097,6 +3097,41 @@ will start to track new ops received afterwards.";
     f->close_section();
   }
 
+  else if (prefix == "trim_maps") {
+    std::string map_epoch_str;
+    if (!cmd_getval(cmdmap, "map_epoch", map_epoch_str)) {
+      ss << "no osdmap epoch specified";
+      ret = -EINVAL;
+      goto out;
+    }
+    epoch_t map_epoch;
+    try {
+      map_epoch = std::stoul(map_epoch_str);
+    } catch (std::invalid_argument const& ex) {
+      ss << "invalid map epoch: " << ex.what();
+      ret = -EINVAL;
+      goto out;
+    } catch (std::out_of_range const& ex) {
+      ss << "map epoch out of range: " << ex.what();
+      ret = -ERANGE;
+      goto out;
+    }
+    if (map_epoch > min_last_epoch_clean) {
+      ss << "map epoch " << map_epoch
+	 << " larger than min_last_epoch_clean "
+	 << min_last_epoch_clean;
+      ret = -EINVAL;
+      goto out;
+    }
+    while (map_epoch > superblock.get_oldest_map()) {
+      lock_guard l(osd_lock); // release osd_lock after each trim,
+			      // so that other threads may proceed
+      if (!trim_maps(map_epoch)) {
+	goto out;
+      }
+    }
+  }
+
   else if (prefix == "flush_pg_stats") {
     mgrc.send_pgstats();
     f->dump_unsigned("stat_seq", service.get_osd_stat_seq());
@@ -4369,6 +4404,13 @@ void OSD::final_init()
     "flush_pg_stats",
     asok_hook,
     "flush pg stats");
+  ceph_assert(r == 0);
+  r = admin_socket->register_command(
+    "trim_maps " \
+    "name=map_epoch,type=CephString",
+    asok_hook,
+    "force trim osdmaps ealier than the specified epoch, this is dangerous, " \
+    "make sure that all pools for which the OSD stores data are clean");
   ceph_assert(r == 0);
   r = admin_socket->register_command(
     "heap " \
