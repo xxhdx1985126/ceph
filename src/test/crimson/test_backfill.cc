@@ -258,6 +258,9 @@ struct BackfillFixture::PGFacade : public crimson::osd::BackfillState::PGFacade 
   const eversion_t& get_projected_last_update() const override {
     return backfill_source.projected_last_update;
   }
+  std::ostream &print(std::ostream &out) const override {
+    return out << "FakePGFacade";
+  }
 };
 
 BackfillFixture::BackfillFixture(

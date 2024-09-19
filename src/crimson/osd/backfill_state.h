@@ -383,8 +383,10 @@ struct BackfillState::PeeringFacade {
 // of behaviour that must be provided by a unit test's mock.
 struct BackfillState::PGFacade {
   virtual const eversion_t& get_projected_last_update() const = 0;
+  virtual std::ostream &print(std::ostream &out) const = 0;
   virtual ~PGFacade() {}
 };
+std::ostream &operator<<(std::ostream &out, const BackfillState::PGFacade &pg);
 
 class BackfillState::ProgressTracker {
   // TODO: apply_stat,
@@ -411,6 +413,9 @@ class BackfillState::ProgressTracker {
   BackfillListener& backfill_listener() {
     return backfill_machine.backfill_listener;
   }
+  PGFacade& pg() {
+    return *backfill_machine.pg;
+  }
 
 public:
   ProgressTracker(BackfillMachine& backfill_machine)
@@ -425,3 +430,9 @@ public:
 };
 
 } // namespace crimson::osd
+
+#if FMT_VERSION >= 90000
+template <> struct fmt::formatter<crimson::osd::BackfillState::PGFacade>
+  : fmt::ostream_formatter {};
+#endif
+
