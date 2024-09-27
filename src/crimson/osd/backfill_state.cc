@@ -108,23 +108,6 @@ BackfillState::Initial::react(const BackfillState::Triggered& evt)
   }
 }
 
-boost::statechart::result
-BackfillState::Cancelled::react(const BackfillState::Triggered& evt)
-{
-  LOG_PREFIX(BackfillState::Cancelled::react::Triggered);
-  DEBUGDPP("backfill re-triggered", pg());
-  ceph_assert(peering_state().is_backfilling());
-  if (Enqueuing::all_enqueued(peering_state(),
-                              backfill_state().backfill_info,
-                              backfill_state().peer_backfill_info)) {
-    logger().debug("{}: switching to Done state", __func__);
-    return transit<BackfillState::Done>();
-  } else {
-    logger().debug("{}: switching to Enqueuing state", __func__);
-    return transit<BackfillState::Enqueuing>();
-  }
-}
-
 // -- Enqueuing
 void BackfillState::Enqueuing::maybe_update_range()
 {
@@ -482,8 +465,6 @@ BackfillState::ReplicasScanning::react(CancelBackfill evt)
 {
   LOG_PREFIX(BackfillState::ReplicasScanning::react::CancelBackfill);
   DEBUGDPP("cancelled within ReplicasScanning", pg());
-  waiting_on_backfill.clear();
-  return transit<Cancelled>();
 }
 
 boost::statechart::result
@@ -533,13 +514,6 @@ BackfillState::Done::Done(my_context ctx)
 BackfillState::Crashed::Crashed()
 {
   ceph_abort_msg("{}: this should not happen");
-}
-
-// -- Cancelled
-BackfillState::Cancelled::Cancelled(my_context ctx)
-  : my_base(ctx)
-{
-  ceph_assert(peering_state().get_backfill_targets().size());
 }
 
 // ProgressTracker is an intermediary between the BackfillListener and
