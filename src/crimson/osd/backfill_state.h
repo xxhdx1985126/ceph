@@ -209,11 +209,15 @@ public:
       sc::custom_reaction<ObjectPushed>,
       sc::custom_reaction<PrimaryScanned>,
       sc::transition<RequestDone, Done>,
+      sc::custom_reaction<CancelBackfill>,
+      sc::custom_reaction<Triggered>,
       sc::transition<sc::event_base, Crashed>>;
     explicit PrimaryScanning(my_context);
     sc::result react(ObjectPushed);
     // collect scanning result and transit to Enqueuing.
     sc::result react(PrimaryScanned);
+    sc::result react(CancelBackfill);
+    sc::result react(Triggered);
   };
 
   struct ReplicasScanning : sc::state<ReplicasScanning, BackfillMachine>,
@@ -222,6 +226,7 @@ public:
       sc::custom_reaction<ObjectPushed>,
       sc::custom_reaction<ReplicaScanned>,
       sc::custom_reaction<CancelBackfill>,
+      sc::custom_reaction<Triggered>,
       sc::transition<RequestDone, Done>,
       sc::transition<sc::event_base, Crashed>>;
     explicit ReplicasScanning(my_context);
@@ -230,6 +235,7 @@ public:
     sc::result react(ObjectPushed);
     sc::result react(ReplicaScanned);
     sc::result react(CancelBackfill);
+    sc::result react(Triggered);
 
     // indicate whether a particular peer should be scanned to retrieve
     // BackfillInterval for new range of hobject_t namespace.
@@ -248,9 +254,13 @@ public:
     using reactions = boost::mpl::list<
       sc::custom_reaction<ObjectPushed>,
       sc::transition<RequestDone, Done>,
+      sc::custom_reaction<CancelBackfill>,
+      sc::custom_reaction<Triggered>,
       sc::transition<sc::event_base, Crashed>>;
     explicit Waiting(my_context);
     sc::result react(ObjectPushed);
+    sc::result react(CancelBackfill);
+    sc::result react(Triggered);
   };
 
   struct Done : sc::state<Done, BackfillMachine>,
@@ -282,12 +292,30 @@ public:
     }
   }
 private:
+  enum go_enqueuing_t : uint8_t {
+    NO,
+    YES
+  };
+  void on_cancelled() {
+    ceph_assert(!next);
+    next = go_enqueuing_t::NO;
+  }
+  bool on_resumed() {
+    auto go_enqueuing = *next;
+    next.reset();
+    return go_enqueuing;
+  }
+  void go_enqueuing_on_resume() {
+    ceph_assert(next);
+    next = go_enqueuing_t::YES;
+  }
   hobject_t last_backfill_started;
   BackfillInterval backfill_info;
   std::map<pg_shard_t, BackfillInterval> peer_backfill_info;
   BackfillMachine backfill_machine;
   std::unique_ptr<ProgressTracker> progress_tracker;
   size_t replicas_in_backfill = 0;
+  std::optional<go_enqueuing_t> next;
 };
 
 // BackfillListener -- an interface used by the backfill FSM to request
