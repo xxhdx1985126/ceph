@@ -318,8 +318,10 @@ public:
             [&, this](auto& t)
           {
             return onode_manager->get_onode(t, oid
-            ).si_then([&](auto onode) {
-              return seastar::do_with(std::move(onode), [&](auto& onode) {
+            ).si_then([&](auto onodes) {
+              return seastar::do_with(
+		std::move(onodes.onode),
+		[&](auto& onode) {
                 return f(t, *onode);
               });
             }).si_then([&ret](auto _ret) {

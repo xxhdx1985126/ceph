@@ -1602,7 +1602,8 @@ SeaStore::Shard::_do_transaction_step(
 
   using onode_iertr = OnodeManager::get_onode_iertr::extend<
     crimson::ct_error::value_too_large>;
-  auto fut = onode_iertr::make_ready_future<OnodeRef>(OnodeRef());
+  auto fut = onode_iertr::make_ready_future<
+    crimson::os::seastore::OnodeManager::adjacent_onodes_t>();
   bool create = false;
   if (op->op == Transaction::OP_TOUCH ||
       op->op == Transaction::OP_CREATE ||
@@ -1618,7 +1619,8 @@ SeaStore::Shard::_do_transaction_step(
         *ctx.transaction, i.get_oid(op->oid));
     }
   }
-  return fut.si_then([&, op](auto get_onode) {
+  return fut.si_then([&, op](auto onodevec) {
+    auto get_onode = onodevec.onode;
     OnodeRef &o = onodes[op->oid];
     if (!o) {
       assert(get_onode);
@@ -1632,7 +1634,8 @@ SeaStore::Shard::_do_transaction_step(
       //      support parallel extents loading
       return onode_manager->get_or_create_onode(
 	*ctx.transaction, i.get_oid(op->dest_oid)
-      ).si_then([&, op](auto dest_onode) {
+      ).si_then([&, op](auto onodevec) {
+	auto dest_onode = onodevec.onode;
 	assert(dest_onode);
 	auto &d_o = onodes[op->dest_oid];
 	assert(!d_o);
