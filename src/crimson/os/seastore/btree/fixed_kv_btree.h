@@ -1791,6 +1791,7 @@ private:
         min_max_t<node_key_t>::min,
         get_root().get_location(),
         nullptr);
+      nroot->sync_num_children();
       iter.internal.push_back({nroot, 0});
 
       get_tree_stats<self_type>(c.trans).depth = iter.get_depth();

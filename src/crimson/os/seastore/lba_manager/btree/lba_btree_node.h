@@ -277,6 +277,7 @@ struct LBALeafNode
     LBALeafNode &left,
     LBALeafNode &right) final {
     this->split_child_ptrs(t, left, right);
+    assert(left.get_size() == left.get_num_children());
   }
 
   void on_merge(
@@ -284,6 +285,7 @@ struct LBALeafNode
     LBALeafNode &left,
     LBALeafNode &right) final {
     this->merge_child_ptrs(t, left, right);
+    assert(this->get_size() == this->get_num_children());
   }
 
   void on_balance(
@@ -295,10 +297,22 @@ struct LBALeafNode
     LBALeafNode &replacement_right) final {
     this->balance_child_ptrs(
       t, left, right, prefer_left, replacement_left, replacement_right);
+    assert(replacement_left.get_size() == replacement_left.get_num_children());
+    assert(replacement_right.get_size() == replacement_right.get_num_children());
   }
 
   CachedExtentRef duplicate_for_write(Transaction&) final {
     return CachedExtentRef(new LBALeafNode(*this));
+  }
+
+  void do_on_clean_read() final {
+    this->parent_node_t::do_on_clean_read();
+  }
+
+  void do_apply_delta_and_adjust_crc(
+    paddr_t base,
+    const ceph::bufferlist &bl) final {
+    this->sync_num_children();
   }
 
   std::ostream &print_detail(std::ostream &out) const final;

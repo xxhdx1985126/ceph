@@ -79,9 +79,11 @@ struct FixedKVNode : CachedExtent {
     resolve_relative_addrs(record_block_offset);
   }
 
+  virtual void do_on_clean_read() = 0;
   void on_clean_read() final {
     // From initial write of block, relative addrs are necessarily block-relative
     resolve_relative_addrs(get_paddr());
+    do_on_clean_read();
   }
 
   node_key_t get_begin() const {
@@ -142,6 +144,11 @@ struct FixedKVInternalNode
   using base_child_node_t = BaseChildNode<node_type_t, NODE_KEY>;
   using child_node_t = ChildNode<node_type_t, node_type_t, NODE_KEY>;
   using root_node_t = RootChildNode<RootBlock, node_type_t>;
+
+  void do_on_clean_read() final {
+    // From initial write of block, relative addrs are necessarily block-relative
+    this->parent_node_t::do_on_clean_read();
+  }
 
   bool is_linked() const final {
     return this->has_parent_tracker() ||
@@ -413,6 +420,7 @@ struct FixedKVInternalNode
   std::ostream &print_detail(std::ostream &out) const
   {
     out << ", size=" << this->get_size()
+	<< ", num_children=" << this->get_num_children()
 	<< ", meta=" << this->get_meta()
 	<< ", my_tracker=" << (void*)this->my_tracker;
     if (this->my_tracker) {
@@ -430,7 +438,7 @@ struct FixedKVInternalNode
   }
 
   void apply_delta_and_adjust_crc(
-    paddr_t base, const ceph::bufferlist &_bl) {
+    paddr_t base, const ceph::bufferlist &_bl) final {
     assert(_bl.length());
     ceph::bufferlist bl = _bl;
     bl.rebuild();
@@ -441,6 +449,7 @@ struct FixedKVInternalNode
     this->set_last_committed_crc(crc);
     this->update_in_extent_chksum_field(crc);
     resolve_relative_addrs(base);
+    this->sync_num_children();
   }
 
   constexpr static size_t get_min_capacity() {
@@ -703,8 +712,10 @@ struct FixedKVLeafNode
     return bl;
   }
 
+  virtual void do_apply_delta_and_adjust_crc(
+    paddr_t, const ceph::bufferlist&) = 0;
   void apply_delta_and_adjust_crc(
-    paddr_t base, const ceph::bufferlist &_bl) {
+    paddr_t base, const ceph::bufferlist &_bl) final {
     assert(_bl.length());
     ceph::bufferlist bl = _bl;
     bl.rebuild();
@@ -715,6 +726,7 @@ struct FixedKVLeafNode
     this->set_last_committed_crc(crc);
     this->update_in_extent_chksum_field(crc);
     this->resolve_relative_addrs(base);
+    do_apply_delta_and_adjust_crc(base, _bl);
   }
 
   std::ostream &print_detail(std::ostream &out) const

@@ -364,30 +364,45 @@ public:
 
   void insert_child_ptr(btreenode_pos_t offset, BaseChildNode<T, node_key_t>* child) {
     assert(child);
-    auto &me = down_cast();
     auto raw_children = children.data();
     std::memmove(
       &raw_children[offset + 1],
       &raw_children[offset],
-      (me.get_size() - offset) * sizeof(BaseChildNode<T, node_key_t>*));
+      (num_children - offset) * sizeof(BaseChildNode<T, node_key_t>*));
     children[offset] = child;
     if (!is_reserved_ptr(child)) {
       set_child_ptracker(child);
     }
+    num_children++;
   }
 
   void update_child_ptr(btreenode_pos_t pos, BaseChildNode<T, node_key_t>* child) {
+    assert(child);
+    assert(pos < down_cast().get_size());
+    assert(pos < num_children);
     children[pos] = child;
     set_child_ptracker(child);
   }
 
+  btreenode_pos_t get_num_children() const {
+    return num_children;
+  }
+
+  void sync_num_children() {
+    auto &me = down_cast();
+    num_children = me.get_size();
+  }
 protected:
   ParentNode(btreenode_pos_t capacity)
     : children(capacity, nullptr),
       capacity(capacity) {}
   ParentNode(const ParentNode &rhs)
     : children(rhs.capacity, nullptr),
-      capacity(rhs.capacity) {}
+      capacity(rhs.capacity),
+      num_children(rhs.num_children) {}
+  void do_on_clean_read() {
+    sync_num_children();
+  }
   void add_copy_dest(Transaction &t, TCachedExtentRef<T> dest) {
     ceph_assert(down_cast().is_stable());
     ceph_assert(dest->is_pending());
@@ -437,7 +452,8 @@ protected:
     std::memmove(
       &raw_children[offset],
       &raw_children[offset + 1],
-      (me.get_size() - offset - 1) * sizeof(BaseChildNode<T, node_key_t>*));
+      (num_children - offset - 1) * sizeof(BaseChildNode<T, node_key_t>*));
+    num_children--;
   }
 
   void on_rewrite(Transaction &t, T &foreign_extent) {
@@ -454,6 +470,7 @@ protected:
       children = std::move(foreign_extent.children);
       adjust_ptracker_for_children();
     }
+    num_children = foreign_extent.num_children;
   }
 
   void adjust_ptracker_for_children() {
@@ -550,12 +567,17 @@ protected:
 
     push_copy_sources(t, left, me);
     push_copy_sources(t, right, me);
+    btreenode_pos_t pivot = me.get_node_split_pivot();
     if (me.is_pending()) {
-      btreenode_pos_t pivot = me.get_node_split_pivot();
       move_child_ptrs(left, me, 0, 0, pivot);
       move_child_ptrs(right, me, 0, pivot, me.get_size());
       my_tracker = nullptr;
     }
+    // we don't adjust src's num_children, as in the current lba/backref
+    // implementation, src is either going to be unviewable by the current
+    // transaction as soon as the move is completed.
+    left.num_children = pivot;
+    right.num_children = me.get_size() - pivot;
   }
 
   void merge_child_ptrs(
@@ -588,6 +610,7 @@ protected:
       move_child_ptrs(me, right, left.get_size(), 0, right.get_size());
       right.my_tracker = nullptr;
     }
+    num_children = left.get_size() + right.get_size();
   }
 
   static void balance_child_ptrs(
@@ -652,6 +675,8 @@ protected:
 	right.my_tracker= nullptr;
       }
     }
+    replacement_left.num_children = pivot_idx;
+    replacement_right.num_children = l_size + r_size - pivot_idx;
   }
 
 #ifndef NDEBUG
@@ -876,6 +901,7 @@ private:
   std::vector<BaseChildNode<T, node_key_t>*> children;
   std::set<TCachedExtentRef<T>, Comparator> copy_sources;
   btreenode_pos_t capacity = 0;
+  btreenode_pos_t num_children = 0;
 
   // copy dests points from a stable node back to its pending nodes
   // having copy sources at the same tree level, it serves as a two-level index:

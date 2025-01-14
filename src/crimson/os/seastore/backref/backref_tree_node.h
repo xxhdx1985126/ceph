@@ -156,6 +156,10 @@ public:
   void do_on_rewrite(Transaction &t, CachedExtent &extent) final {}
   void do_on_replace_prior() final {}
   void do_prepare_commit() final {}
+  void do_on_clean_read() final {}
+  void do_apply_delta_and_adjust_crc(
+    paddr_t base,
+    const ceph::bufferlist &bl) final {}
 
 
   void on_split(
