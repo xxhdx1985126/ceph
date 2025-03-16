@@ -285,8 +285,8 @@ public:
         ctx,
 	leaf.node,
         leaf.node->modifications,
-        get_key(),
-        std::make_optional(get_val()),
+        is_end() ? min_max_t<node_key_t>::max : get_key(),
+        is_end() ? std::nullopt : std::make_optional(get_val()),
         leaf.pos);
     }
 
