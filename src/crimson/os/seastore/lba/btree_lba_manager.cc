@@ -1287,7 +1287,7 @@ BtreeLBAManager::next_mapping(
   return with_btree<LBABtree>(
     cache,
     c,
-    [c, mapping=std::move(mapping)](auto &btree) mutable {
+    [c, mapping=mapping.duplicate()](auto &btree) mutable {
     auto &cursor = mapping.get_effective_cursor();
     auto iter = btree.make_partial_iter(c, cursor);
     return iter.next(c).si_then([c](auto iter) {
