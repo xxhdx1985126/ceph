@@ -155,8 +155,9 @@ remap_ret remap_mappings(
 	      laddr,
 	      remap.len
 	    ).si_then([&mappings, ctx](auto new_mapping) {
-	      mappings.emplace_back(new_mapping.duplicate());
-	      return ctx.tm.next_mapping(ctx.t, std::move(new_mapping));
+	      auto fut = ctx.tm.next_mapping(ctx.t, new_mapping);
+	      mappings.emplace_back(std::move(new_mapping));
+	      return fut;
 	    }).si_then([&next_mapping](auto new_mapping) {
 	      next_mapping = std::move(new_mapping);
 	      return seastar::now();
@@ -178,7 +179,7 @@ remap_ret remap_mappings(
 
 ObjectDataHandler::read_ret load_padding(
   ObjectDataHandler::context_t ctx,
-  const LBAMapping mapping,
+  LBAMapping mapping,
   extent_len_t offset,
   extent_len_t len)
 {
@@ -188,7 +189,7 @@ ObjectDataHandler::read_ret load_padding(
     return ObjectDataHandler::read_iertr::make_ready_future<
       bufferlist>(std::move(bl));
   } else {
-    return ctx.tm.read_pin<ObjectDataBlock>(ctx.t, mapping.duplicate()
+    return ctx.tm.read_pin<ObjectDataBlock>(ctx.t, mapping
     ).si_then([offset, len](auto maybe_indirect_left_extent) {
       auto read_bl = maybe_indirect_left_extent.get_bl();
       ceph::bufferlist prepend_bl;
@@ -288,8 +289,8 @@ do_mappings_ret punch_first_mapping(
     params.len += length;
     params.data_begin = params.first_key;
     params.raw_begin = laddr_offset_t{params.first_key};
-    return load_padding(ctx, first_mapping.duplicate(), 0, length
-    ).si_then([&data, first_mapping=first_mapping.duplicate(),
+    return load_padding(ctx, first_mapping, 0, length
+    ).si_then([&data, first_mapping=first_mapping,
 	      &params, ctx](auto headbl) mutable {
       data.headbl = std::move(headbl);
       auto first_end = (params.first_key + params.first_len).checked_to_laddr();
@@ -301,7 +302,7 @@ do_mappings_ret punch_first_mapping(
 	params.data_end = first_end;
 	params.raw_end = laddr_offset_t{first_end};
 	params.len += len;
-	return load_padding(ctx, first_mapping.duplicate(), off, len);
+	return load_padding(ctx, first_mapping, off, len);
       }
       return ObjectDataHandler::read_iertr::make_ready_future<bufferlist>();
     }).si_then([first_mapping=std::move(first_mapping),
@@ -321,7 +322,7 @@ do_mappings_ret punch_first_mapping(
     assert(params.raw_begin > params.data_begin);
     pad_fut = load_padding(
       ctx,
-      first_mapping.duplicate(),
+      first_mapping,
       params.first_key.template get_byte_distance<
 	extent_len_t>(params.data_begin),
       params.raw_begin.get_offset());
@@ -413,7 +414,7 @@ do_mappings_ret punch_last_mapping(
     params.data_end = end;
     params.raw_end = laddr_offset_t{end};
     params.len += len;
-    return load_padding(ctx, mapping.duplicate(), offset, len
+    return load_padding(ctx, mapping, offset, len
     ).si_then([&data, mapping=std::move(mapping), ctx](auto tailbl) mutable {
       data.tailbl = std::move(tailbl);
       return ctx.tm.remove(ctx.t, std::move(mapping));
@@ -432,7 +433,7 @@ do_mappings_ret punch_last_mapping(
     // load the right padding
     pad_fut = load_padding(
       ctx,
-      mapping.duplicate(),
+      mapping,
       params.raw_end.template get_byte_distance<
 	extent_len_t>(mapping.get_key()),
       params.data_end.template get_byte_distance<
