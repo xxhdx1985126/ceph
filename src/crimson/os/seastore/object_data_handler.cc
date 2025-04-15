@@ -944,6 +944,19 @@ ObjectDataHandler::read_ret ObjectDataHandler::read(
   }); // do_with()
 }
 
+ObjectDataHandler::touch_ret ObjectDataHandler::touch(context_t ctx)
+{
+  LOG_PREFIX(ObjectDataHandler::touch);
+  DEBUGT("touch object_data for {}", ctx.t, ctx.onode.get_hobj());
+  return with_object_data(
+    ctx,
+    [this, ctx](auto &object_data) {
+    return prepare_data_reservation(
+      ctx, object_data, max_object_size
+    ).discard_result();
+  });
+}
+
 ObjectDataHandler::fiemap_ret ObjectDataHandler::fiemap(
   context_t ctx,
   objaddr_t obj_offset,

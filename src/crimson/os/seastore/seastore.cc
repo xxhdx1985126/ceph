@@ -1984,7 +1984,16 @@ SeaStore::Shard::_touch(
   internal_context_t &ctx,
   Onode &onode)
 {
-  return tm_iertr::now();
+  return seastar::do_with(
+    ObjectDataHandler(max_object_size),
+    [this, &ctx, &onode](auto &objhandler) {
+    return objhandler.touch(
+      ObjectDataHandler::context_t{
+	*transaction_manager,
+	*ctx.transaction,
+	onode,
+      });
+  });
 }
 
 SeaStore::Shard::tm_ret
