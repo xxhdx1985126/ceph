@@ -251,6 +251,20 @@ private:
     object_data_t &object_data,
     extent_len_t size);
 
+  write_iertr::future<LBAMapping> prepare_shared_region(
+    context_t ctx,
+    laddr_t hint,
+    extent_len_t size);
+
+  struct prepared_region_t {
+    LBAMapping private_region;
+    LBAMapping shared_region;
+  };
+  write_iertr::future<prepared_region_t>  prepare_shared_data_reservation(
+    context_t ctx,
+    object_data_t &object_data,
+    extent_len_t size);
+
   /// Trims data past size
   clear_ret trim_data_reservation(
     context_t ctx,

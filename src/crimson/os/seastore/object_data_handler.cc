@@ -124,6 +124,55 @@ ObjectDataHandler::prepare_data_reservation(
   }
 }
 
+ObjectDataHandler::write_iertr::future<LBAMapping>
+ObjectDataHandler::prepare_shared_region(
+  context_t ctx,
+  Onode &onode,
+  laddr_t hint,
+  extent_len_t len)
+{
+  LOG_PREFIX(ObjectDataHandler::prepare_shared_region);
+  DEBUGT("{}~{}", ctx.t, hint, len);
+  return ctx.tm.reserve_region(ctx.t, hint, len
+  ).si_then([ctx, &onode](auto shared_region) {
+    onode.update_shared_region_base(ctx.t, shared_region.get_key());
+    return std::move(shared_region);
+  }).handle_error_interruptible(
+    write_iertr::pass_further{},
+    crimson::ct_error::assert_all{"unexpected error"}
+  );
+}
+
+ObjectDataHandler::write_iertr::future<ObjectDataHandler::prepared_region_t>
+ObjectDataHandler::prepare_shared_data_reservation(
+  context_t ctx,
+  Onode &onode,
+  object_data_t &object_data,
+  extent_len_t size)
+{
+  LOG_PREFIX(ObjectDataHandler::prepare_shared_data_reservation);
+  DEBUGT("{}", ctx.t, ctx.onode.get_hobj());
+  return seastar::do_with(
+    prepared_region_t{},
+    [this, ctx, &object_data, &onode, size](auto &prepared_region) {
+    return prepare_data_reservation(ctx, object_data, size
+    ).si_then([this, ctx, &prepared_region, &onode, size](auto private_region) {
+      if (private_region.is_null()) {
+	return write_iertr::make_ready_future<
+	  prepared_region_t>(std::move(prepared_region));
+      }
+      auto private_base = private_region.get_key();
+      auto hint = (private_base + size).checked_to_laddr();
+      prepared_region.private_region = std::move(private_region);
+      return prepare_shared_region(ctx, onode, hint, size
+      ).si_then([&prepared_region](auto shared_region) {
+	prepared_region.shared_region = std::move(shared_region);
+	return std::move(prepared_region);
+      });
+    });
+  });
+}
+
 using remap_ret = ObjectDataHandler::write_iertr::future<std::vector<LBAMapping>>;
 template <std::size_t N>
 remap_ret remap_mappings(
