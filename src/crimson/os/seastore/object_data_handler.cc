@@ -124,59 +124,6 @@ ObjectDataHandler::prepare_data_reservation(
   }
 }
 
-using remap_ret = ObjectDataHandler::write_iertr::future<std::vector<LBAMapping>>;
-template <std::size_t N>
-remap_ret remap_mappings(
-  context_t ctx,
-  LBAMapping mapping,
-  std::array<TransactionManager::remap_entry_t, N> remaps)
-{
-  if (!mapping.is_indirect() && mapping.get_val().is_zero()) {
-    return seastar::do_with(
-      std::vector<TransactionManager::remap_entry_t>(
-	remaps.begin(), remaps.end()),
-      std::vector<LBAMapping>(),
-      [ctx, mapping=std::move(mapping)](auto &remaps, auto &mappings) mutable {
-      auto orig_laddr = mapping.get_key();
-      return ctx.tm.remove(ctx.t, std::move(mapping)
-      ).si_then([&remaps, ctx, &mappings, orig_laddr](auto next_mapping) {
-	return seastar::do_with(
-	  std::move(next_mapping),
-	  [ctx, &remaps, orig_laddr, &mappings](auto &next_mapping) {
-	  return trans_intr::do_for_each(
-	    remaps.begin(),
-	    remaps.end(),
-	    [ctx, &next_mapping, orig_laddr, &mappings]
-	    (const auto &remap) mutable {
-	    auto laddr = (orig_laddr + remap.offset).checked_to_laddr();
-	    return ctx.tm.reserve_region(
-	      ctx.t,
-	      std::move(next_mapping),
-	      laddr,
-	      remap.len
-	    ).si_then([&mappings, ctx](auto new_mapping) {
-	      auto fut = ctx.tm.next_mapping(ctx.t, new_mapping);
-	      mappings.emplace_back(std::move(new_mapping));
-	      return fut;
-	    }).si_then([&next_mapping](auto new_mapping) {
-	      next_mapping = std::move(new_mapping);
-	      return seastar::now();
-	    });
-	  });
-	});
-      }).si_then([&mappings] { return std::move(mappings); });
-    }).handle_error_interruptible(
-      ObjectDataHandler::write_iertr::pass_further{},
-      crimson::ct_error::assert_all{
-	"ObjectDataHandler::read hit invalid error"
-      }
-    );
-  } else {
-    return ctx.tm.remap_pin<ObjectDataBlock, N>(
-      ctx.t, std::move(mapping), std::move(remaps));
-  }
-}
-
 ObjectDataHandler::read_ret load_padding(
   ObjectDataHandler::context_t ctx,
   LBAMapping mapping,
@@ -209,6 +156,11 @@ struct overwrite_params_t {
   laddr_t data_begin = L_ADDR_NULL;
   laddr_offset_t raw_end;
   laddr_t data_end = L_ADDR_NULL;
+
+  TransactionManager::punch_hole_params_t
+  get_punch_hole_params() const {
+    return {raw_begin, raw_end};
+  }
 };
 
 struct data_t {
@@ -270,230 +222,6 @@ do_mappings_ret maybe_delta_based_overwrite(
       std::move(bl));
     return ObjectDataHandler::write_iertr::make_ready_future<
       LBAMapping>();
-  });
-}
-
-// if the first mapping is absolute and spans data_begin, remap it.
-do_mappings_ret punch_first_mapping(
-  context_t ctx,
-  overwrite_params_t &params,
-  LBAMapping first_mapping,
-  data_t &data)
-{
-  if (!first_mapping.is_indirect() && !first_mapping.is_data_stable()) {
-    // merge with existing pending extents
-    auto length = params.first_key.template get_byte_distance<
-      extent_len_t>(params.raw_begin);
-    assert(params.offset >= length);
-    params.offset -= length;
-    params.len += length;
-    params.data_begin = params.first_key;
-    params.raw_begin = laddr_offset_t{params.first_key};
-    return load_padding(ctx, first_mapping, 0, length
-    ).si_then([&data, first_mapping=first_mapping,
-	      &params, ctx](auto headbl) mutable {
-      data.headbl = std::move(headbl);
-      auto first_end = (params.first_key + params.first_len).checked_to_laddr();
-      if (params.raw_end < first_end) {
-	auto off = params.raw_end.template get_byte_distance<
-	  extent_len_t>(params.first_key);
-	auto len = params.raw_end.template get_byte_distance<
-	  extent_len_t>(first_end);
-	params.data_end = first_end;
-	params.raw_end = laddr_offset_t{first_end};
-	params.len += len;
-	return load_padding(ctx, first_mapping, off, len);
-      }
-      return ObjectDataHandler::read_iertr::make_ready_future<bufferlist>();
-    }).si_then([first_mapping=std::move(first_mapping),
-		&data, ctx](auto tailbl) mutable {
-      data.tailbl = std::move(tailbl);
-      return ctx.tm.remove(ctx.t, std::move(first_mapping));
-    }).handle_error_interruptible(
-      ObjectDataHandler::base_iertr::pass_further{},
-      crimson::ct_error::assert_all{
-	"ObjectDataHandler::read hit invalid error"
-      }
-    );
-  }
-  auto pad_fut = ObjectDataHandler::read_iertr::make_ready_future<bufferlist>();
-  if (params.raw_begin != params.data_begin) {
-    // load the left padding
-    assert(params.raw_begin > params.data_begin);
-    pad_fut = load_padding(
-      ctx,
-      first_mapping,
-      params.first_key.template get_byte_distance<
-	extent_len_t>(params.data_begin),
-      params.raw_begin.get_offset());
-  }
-  return pad_fut.si_then([&data, first_mapping=std::move(first_mapping),
-			  &params, ctx](auto headbl) mutable {
-    using remap_entry_t = TransactionManager::remap_entry_t;
-    if (headbl.length() > 0) {
-      data.headbl = std::move(headbl);
-    }
-    if (params.first_key == params.data_begin) {
-      return TransactionManager::remap_pin_iertr::make_ready_future<
-	LBAMapping>(std::move(first_mapping));
-    }
-
-    return remap_mappings<2>(
-      ctx,
-      std::move(first_mapping),
-      std::array{
-	// from the start of the first_mapping to the offset of overwrite
-	remap_entry_t{
-	  0,
-	  params.data_begin.template get_byte_distance<
-	    extent_len_t>(params.first_key)},
-	// from the end of overwrite to the end of the first mapping
-	remap_entry_t{
-	  params.data_begin.template get_byte_distance<
-	    extent_len_t>(params.first_key),
-	  params.data_begin.template get_byte_distance<
-	      extent_len_t>(params.first_key + params.first_len)}}
-    ).si_then([](auto mappings) {
-      assert(mappings.size() == 2);
-      return std::move(mappings.back());
-    });
-  });
-}
-
-// remove all mappings within the range of `data_begin~data_end`
-do_mappings_ret punch_middle_mappings(
-  context_t ctx,
-  const overwrite_params_t &params,
-  LBAMapping mapping)
-{
-  // remove all middle mappings
-  return seastar::do_with(
-    std::move(mapping),
-    [ctx, &params](auto &mapping) {
-    return trans_intr::repeat([ctx, &params, &mapping] {
-      if (mapping.is_end()) {
-	return ObjectDataHandler::base_iertr::make_ready_future<
-	  seastar::stop_iteration>(seastar::stop_iteration::yes);
-      }
-      assert(mapping.get_key() >= params.data_begin);
-      auto mapping_end =
-	(mapping.get_key() + mapping.get_length()).checked_to_laddr();
-      if (mapping_end > params.raw_end) {
-	return ObjectDataHandler::base_iertr::make_ready_future<
-	  seastar::stop_iteration>(seastar::stop_iteration::yes);
-      }
-      return ctx.tm.remove(ctx.t, std::move(mapping)
-      ).si_then([&mapping](auto next_mapping) {
-	mapping = std::move(next_mapping);
-	return seastar::stop_iteration::no;
-      }).handle_error_interruptible(
-	ObjectDataHandler::base_iertr::pass_further{},
-	crimson::ct_error::assert_all{
-	  "ObjectDataHandler::read hit invalid error"
-	}
-      );
-    }).si_then([&mapping] {
-      return std::move(mapping);
-    });
-  });
-}
-
-// if the last mapping is absolute and spans data_end, remap it.
-do_mappings_ret punch_last_mapping(
-  context_t ctx,
-  overwrite_params_t &params,
-  LBAMapping mapping,
-  data_t &data)
-{
-  if (!mapping.is_indirect() && !mapping.is_data_stable()) {
-    // merge with existing pending extents
-    auto offset = params.raw_end.template get_byte_distance<
-      extent_len_t>(mapping.get_key());
-    auto end = (mapping.get_key() + mapping.get_length()).checked_to_laddr();
-    auto len = mapping.get_length() - offset;
-    params.data_end = end;
-    params.raw_end = laddr_offset_t{end};
-    params.len += len;
-    return load_padding(ctx, mapping, offset, len
-    ).si_then([&data, mapping=std::move(mapping), ctx](auto tailbl) mutable {
-      data.tailbl = std::move(tailbl);
-      return ctx.tm.remove(ctx.t, std::move(mapping));
-    }).handle_error_interruptible(
-      ObjectDataHandler::base_iertr::pass_further{},
-      crimson::ct_error::assert_all{
-	"ObjectDataHandler::read hit invalid error"
-      }
-    );
-  }
-  auto mapping_end =
-    (mapping.get_key() + mapping.get_length()).checked_to_laddr();
-  auto pad_fut = ObjectDataHandler::read_iertr::make_ready_future<bufferlist>();
-  if (mapping_end >= params.data_end &&
-      params.raw_end != params.data_end) {
-    // load the right padding
-    pad_fut = load_padding(
-      ctx,
-      mapping,
-      params.raw_end.template get_byte_distance<
-	extent_len_t>(mapping.get_key()),
-      params.data_end.template get_byte_distance<
-	extent_len_t>(params.raw_end));
-  }
-  return pad_fut.si_then(
-    [mapping_end, mapping=std::move(mapping),
-    &data, ctx, &params](auto tailbl) mutable {
-    if (tailbl.length() > 0) {
-      data.tailbl = std::move(tailbl);
-    }
-    if (mapping_end > params.data_end) {
-      auto laddr = mapping.get_key();
-      using remap_entry_t = TransactionManager::remap_entry_t;
-      return remap_mappings<1>(
-	ctx,
-	std::move(mapping),
-	std::array{
-	  remap_entry_t{
-	    params.data_end.template get_byte_distance<
-	      extent_len_t>(laddr),
-	    mapping_end.template get_byte_distance<
-	      extent_len_t>(params.data_end)}}
-      ).si_then([](auto mappings) {
-	assert(mappings.size() == 1);
-	return std::move(mappings.front());
-      });
-    }
-    return ctx.tm.remove(ctx.t, std::move(mapping)
-    ).si_then([](auto next_mapping) {
-      return std::move(next_mapping);
-    }).handle_error_interruptible(
-      ObjectDataHandler::base_iertr::pass_further{},
-      crimson::ct_error::assert_all{
-	"ObjectDataHandler::read hit invalid error"
-      }
-    );
-  });
-}
-
-// punch a hole in the lba tree, so that we can insert new mappings
-// in the later mutations
-using punch_hole_iertr = ObjectDataHandler::write_iertr;
-using punch_hole_ret = do_mappings_ret;
-punch_hole_ret punch_hole(
-  context_t ctx,
-  overwrite_params_t &params,
-  LBAMapping mapping,
-  data_t &data)
-{
-  return punch_first_mapping(
-    ctx, params, std::move(mapping), data
-  ).si_then([&params, ctx](auto mapping) {
-    return punch_middle_mappings(ctx, params, std::move(mapping));
-  }).si_then([&params, ctx, &data](auto mapping) {
-    if (mapping.is_end() || mapping.get_key() >= params.data_end) {
-      return punch_hole_iertr::make_ready_future<
-	LBAMapping>(std::move(mapping));
-    }
-    return punch_last_mapping(ctx, params, std::move(mapping), data);
   });
 }
 
@@ -620,6 +348,71 @@ ObjectDataHandler::write_ret do_write(
   );
 }
 
+ObjectDataHandler::read_iertr::future<>
+on_unaligned_edge(
+  context_t ctx,
+  const overwrite_params_t &params,
+  data_t &data,
+  LBAMapping &mapping,
+  bool is_beginning)
+{
+  extent_len_t off = 0;
+  extent_len_t length = 0;
+  if (is_beginning) {
+    off = mapping.get_key().template get_byte_distance<
+      extent_len_t>(params.data_begin),
+    length = params.raw_begin.get_offset();
+  } else {
+    off = params.raw_end.template get_byte_distance<
+      extent_len_t>(mapping.get_key()),
+    length = params.data_end.template get_byte_distance<
+      extent_len_t>(params.raw_end);
+  }
+  return load_padding(ctx, mapping, off, length
+  ).si_then([is_beginning, &data](auto bl) {
+    if (is_beginning) {
+      data.headbl = std::move(bl);
+    } else {
+      data.tailbl = std::move(bl);
+    }
+  });
+}
+
+ObjectDataHandler::read_iertr::future<>
+on_merge(
+  context_t ctx,
+  overwrite_params_t &params,
+  data_t &data,
+  LBAMapping &mapping,
+  bool merge_left)
+{
+  if (merge_left) {
+    auto length = params.first_key.template get_byte_distance<
+      extent_len_t>(params.raw_begin);
+    assert(params.offset >= length);
+    params.offset -= length;
+    params.len += length;
+    params.data_begin = params.first_key;
+    params.raw_begin = laddr_offset_t{params.first_key};
+    return load_padding(ctx, mapping, 0, length
+    ).si_then([&data](auto bl) {
+      data.headbl = std::move(bl);
+    });
+  } else {
+    auto offset = params.raw_end.template get_byte_distance<
+      extent_len_t>(mapping.get_key());
+    auto end = (mapping.get_key() + mapping.get_length()).checked_to_laddr();
+    auto len = mapping.get_length() - offset;
+    params.data_end = end;
+    params.raw_end = laddr_offset_t{end};
+    params.len += len;
+    return load_padding(ctx, mapping, offset, len
+    ).si_then([&data](auto bl) {
+      data.tailbl = std::move(bl);
+    });
+  }
+}
+
 ObjectDataHandler::write_ret ObjectDataHandler::overwrite(
   context_t ctx,
   laddr_t data_base,
@@ -662,7 +455,14 @@ ObjectDataHandler::write_ret ObjectDataHandler::overwrite(
 	// and can be applied through delta based overwrite
 	return write_iertr::now();
       }
-      return punch_hole(ctx, params, std::move(mapping), data
+      return ctx.tm.punch_hole<ObjectDataBlock>(
+	ctx.t, params.get_punch_hole_params(), std::move(mapping),
+	[&params, ctx, &data](LBAMapping &mapping, bool is_beginning) {
+	  return on_unaligned_edge(ctx, params, data, mapping, is_beginning);
+	},
+	[&params, ctx, &data](LBAMapping &mapping, bool merge_left) {
+	  return on_merge(ctx, params, data, mapping, merge_left);
+	}
       ).si_then([ctx, &params, &data](auto mapping) {
 	if (params.data_begin.template get_byte_distance<
 	      extent_len_t>(params.data_end) == ctx.tm.get_block_size()
@@ -812,7 +612,14 @@ ObjectDataHandler::clear_ret ObjectDataHandler::trim_data_reservation(
 	raw_end.get_roundup_laddr()},
       [ctx, mapping=std::move(mapping)]
       (auto &data, auto &params) mutable {
-      return punch_hole(ctx, params, std::move(mapping), data
+      return ctx.tm.punch_hole<ObjectDataBlock>(
+	ctx.t, params.get_punch_hole_params(), std::move(mapping),
+	[&params, ctx, &data](LBAMapping &mapping, bool is_beginning) {
+	  return on_unaligned_edge(ctx, params, data, mapping, is_beginning);
+	},
+	[&params, ctx, &data](LBAMapping &mapping, bool merge_left) {
+	  return on_merge(ctx, params, data, mapping, merge_left);
+	}
       ).si_then([&params, ctx, &data](auto mapping) {
 	assert(mapping.is_end() || mapping.get_key() >= params.data_end);
 	return do_zero(ctx, std::move(mapping), params, data);
