@@ -580,7 +580,7 @@ BtreeLBAManager::clone_mapping(
 	  ).si_then([cursor=std::move(cursor)](auto mapping) mutable {
 	    return clone_mapping_ret_t{
 	      LBAMapping(mapping.direct_cursor, std::move(cursor)),
-	      mapping.duplicate()};
+	      mapping};
 	  });
 	});
       });
@@ -1398,7 +1398,7 @@ BtreeLBAManager::next_mapping(
   return with_btree<LBABtree>(
     cache,
     c,
-    [c, mapping=mapping.duplicate()](auto &btree) mutable {
+    [c, mapping](auto &btree) mutable {
     auto &cursor = mapping.get_effective_cursor();
     auto iter = btree.make_partial_iter(c, cursor);
     return iter.next(c).si_then([c](auto iter) {
@@ -1495,7 +1495,7 @@ BtreeLBAManager::remap_mappings(
 	  return cursor->refresh(
 	  ).si_then([&ret, &mapping] {
 	    for (auto &m : ret) {
-	      m.direct_cursor = mapping.direct_cursor->duplicate();
+	      m.direct_cursor = mapping.direct_cursor;
 	    }
 	  });
 	}
