@@ -248,6 +248,12 @@ struct BtreeCursor {
     return val->len;
   }
 };
+struct cursor_stats_t {
+  uint64_t num_refresh_parent_total = 0;
+  uint64_t num_refresh_invalid_parent = 0;
+  uint64_t num_refresh_unviewable_parent = 0;
+  uint64_t num_refresh_modified_viewable_parent = 0;
+};
 
 struct LBACursor : BtreeCursor<laddr_t, lba::lba_map_val_t> {
   using Base = BtreeCursor<laddr_t, lba::lba_map_val_t>;
@@ -279,9 +285,15 @@ struct LBACursor : BtreeCursor<laddr_t, lba::lba_map_val_t> {
     assert(!is_indirect());
     return val->refcount;
   }
+
   std::unique_ptr<LBACursor> duplicate() const {
     return std::make_unique<LBACursor>(*this);
   }
+
+  using base_ertr = crimson::errorator<
+    crimson::ct_error::input_output_error>;
+  using base_iertr = trans_iertr<base_ertr>;
+  base_iertr::future<> refresh(cursor_stats_t &);
 };
 using LBACursorRef = std::unique_ptr<LBACursor>;
 
