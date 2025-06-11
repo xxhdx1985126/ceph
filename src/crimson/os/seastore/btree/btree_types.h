@@ -283,9 +283,6 @@ struct LBACursor : BtreeCursor<laddr_t, lba::lba_map_val_t> {
     assert(!is_indirect());
     return val->refcount;
   }
-  boost::intrusive_ptr<LBACursor> duplicate() const {
-    return new LBACursor(*this);
-  }
 
   using base_ertr = crimson::errorator<
     crimson::ct_error::input_output_error>;
