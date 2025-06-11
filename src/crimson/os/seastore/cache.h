@@ -1798,6 +1798,7 @@ private:
     uint64_t hit = 0;
   };
 
+  cursor_stats_t cursor_stats;
   struct invalid_trans_efforts_t {
     io_stat_t read;
     io_stat_t mutate;
