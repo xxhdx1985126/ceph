@@ -101,13 +101,35 @@ public:
 template class TreeRootLinker<RootBlock, lba::LBAInternalNode>;
 template class TreeRootLinker<RootBlock, lba::LBALeafNode>;
 
+LBAMapping::refresh_iertr::future<LBAMapping> LBAMapping::refresh()
+{
+  return seastar::do_with(
+    std::move(direct_cursor),
+    std::move(indirect_cursor),
+    [](auto &direct_cursor, auto &indirect_cursor) {
+    return seastar::futurize_invoke([&direct_cursor] {
+      if (direct_cursor) {
+	return direct_cursor->refresh();
+      }
+      return refresh_iertr::now();
+    }).si_then([&indirect_cursor] {
+      if (indirect_cursor) {
+	return indirect_cursor->refresh();
+      }
+      return refresh_iertr::now();
+    }).si_then([&direct_cursor, &indirect_cursor] {
+      return LBAMapping(direct_cursor, indirect_cursor);
+    });
+  });
+}
+
 LBACursor::base_iertr::future<> LBACursor::refresh()
 {
   LOG_PREFIX(LBACursor::refresh);
   return with_btree<lba::LBABtree>(
     ctx.cache,
     ctx,
-    [this, &stats, FNAME, c=ctx](auto &btree) {
+    [this, FNAME, c=ctx](auto &btree) {
     c.trans.cursor_stats.num_refresh_parent_total++;
 
     if (!parent->is_valid()) {
@@ -1068,14 +1090,14 @@ BtreeLBAManager::refresh_lba_mapping(Transaction &t, LBAMapping mapping)
     cache,
     c,
     std::move(mapping),
-    [this](LBABtree &btree, LBAMapping &mapping) mutable
+    [](LBABtree &btree, LBAMapping &mapping) mutable
   {
-    return seastar::futurize_invoke([this, &mapping] {
+    return seastar::futurize_invoke([&mapping] {
       if (mapping.direct_cursor) {
 	return mapping.direct_cursor->refresh();
       }
       return base_iertr::now();
-    }).si_then([this, &mapping] {
+    }).si_then([&mapping] {
       if (mapping.indirect_cursor) {
 	return mapping.indirect_cursor->refresh();
       }
@@ -1195,7 +1217,7 @@ BtreeLBAManager::update_refcount(
       TRACET("decref intermediate {} -> {}",
 	     t, addr, val.pladdr.get_laddr());
       return _decref_intermediate(t, val.pladdr.get_laddr(), val.len
-      ).si_then([this, ires=std::move(res)](auto res) mutable {
+      ).si_then([ires=std::move(res)](auto res) mutable {
 	return ires.get_removed_mapping().next->refresh(
 	).si_then([res=std::move(res), ires=std::move(ires)]() mutable {
 	  if (res.is_removed_mapping()) {
@@ -1467,7 +1489,7 @@ BtreeLBAManager::remap_mappings(
 	    });
 	  });
 	});
-      }).si_then([&mapping, this, &ret] {
+      }).si_then([&mapping, &ret] {
 	if (mapping.is_indirect()) {
 	  auto &cursor = mapping.direct_cursor;
 	  return cursor->refresh(

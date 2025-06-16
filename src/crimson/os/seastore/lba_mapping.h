@@ -150,6 +150,9 @@ public:
   get_child_ret_t<lba::LBALeafNode, LogicalChildNode>
   get_logical_extent(Transaction &t) const;
 
+  using refresh_iertr = LBACursor::base_iertr;
+  refresh_iertr::future<LBAMapping> refresh();
+
 private:
   friend lba::BtreeLBAManager;
   friend class TransactionManager;
