@@ -317,8 +317,6 @@ private:
     uint64_t num_alloc_extents_iter_nexts = 0;
   } stats;
 
-  cursor_stats_t cursor_stats;
-
   struct alloc_mapping_info_t {
     laddr_t key = L_ADDR_NULL; // once assigned, the allocation to
 			       // key must be exact and successful

@@ -101,18 +101,17 @@ public:
 template class TreeRootLinker<RootBlock, lba::LBAInternalNode>;
 template class TreeRootLinker<RootBlock, lba::LBALeafNode>;
 
-LBACursor::base_iertr::future<> LBACursor::refresh(
-  cursor_stats_t &stats)
+LBACursor::base_iertr::future<> LBACursor::refresh()
 {
   LOG_PREFIX(LBACursor::refresh);
   return with_btree<lba::LBABtree>(
     ctx.cache,
     ctx,
     [this, &stats, FNAME, c=ctx](auto &btree) {
-    stats.num_refresh_parent_total++;
+    c.trans.cursor_stats.num_refresh_parent_total++;
 
     if (!parent->is_valid()) {
-      stats.num_refresh_invalid_parent++;
+      c.trans.cursor_stats.num_refresh_invalid_parent++;
       TRACET("cursor {} parent is invalid, re-search from scratch",
 	     c.trans, *this);
       return btree.lower_bound(c, this->get_laddr()
@@ -138,14 +137,14 @@ LBACursor::base_iertr::future<> LBACursor::refresh(
       c.trans, *this, viewable);
     if (got_new) {
       leaf = l;
-      stats.num_refresh_unviewable_parent++;
+      c.trans.cursor_stats.num_refresh_unviewable_parent++;
       parent = leaf;
     }
 
     if (!viewable ||
 	leaf->modified_since(modifications)) {
       if (viewable) {
-	stats.num_refresh_modified_viewable_parent++;
+	c.trans.cursor_stats.num_refresh_modified_viewable_parent++;
       }
 
       modifications = leaf->modifications;
@@ -424,7 +423,7 @@ BtreeLBAManager::alloc_extents(
     [c, FNAME, mapping=std::move(mapping), this,
     extents=std::move(extents)](auto &btree) mutable {
     auto &cursor = mapping.get_effective_cursor();
-    return cursor.refresh(cursor_stats
+    return cursor.refresh(
     ).si_then(
       [&cursor, &btree, extents=std::move(extents),
       mapping=std::move(mapping), c, FNAME, this] {
@@ -532,7 +531,7 @@ BtreeLBAManager::clone_mapping(
 	c,
 	[this, c, &state](auto &btree) mutable {
 	auto &cursor = state.pos.get_effective_cursor();
-	return cursor.refresh(cursor_stats
+	return cursor.refresh(
 	).si_then([&state, c, &btree]() mutable {
 	  auto &cursor = state.pos.get_effective_cursor();
 	  assert(state.laddr + state.len <= cursor.key);
@@ -1073,12 +1072,12 @@ BtreeLBAManager::refresh_lba_mapping(Transaction &t, LBAMapping mapping)
   {
     return seastar::futurize_invoke([this, &mapping] {
       if (mapping.direct_cursor) {
-	return mapping.direct_cursor->refresh(cursor_stats);
+	return mapping.direct_cursor->refresh();
       }
       return base_iertr::now();
     }).si_then([this, &mapping] {
       if (mapping.indirect_cursor) {
-	return mapping.indirect_cursor->refresh(cursor_stats);
+	return mapping.indirect_cursor->refresh();
       }
       return base_iertr::now();
 #ifndef NDEBUG
@@ -1107,26 +1106,6 @@ void BtreeLBAManager::register_metrics()
         "alloc_extents_iter_nexts",
         stats.num_alloc_extents_iter_nexts,
         sm::description("total number of iterator next operations during extent allocation")
-      ),
-      sm::make_counter(
-        "refresh_parent_total",
-        cursor_stats.num_refresh_parent_total,
-        sm::description("total number of refreshed cursors")
-      ),
-      sm::make_counter(
-        "refresh_invalid_parent",
-        cursor_stats.num_refresh_invalid_parent,
-        sm::description("total number of refreshed cursors with invalid parents")
-      ),
-      sm::make_counter(
-        "refresh_unviewable_parent",
-        cursor_stats.num_refresh_unviewable_parent,
-        sm::description("total number of refreshed cursors with unviewable parents")
-      ),
-      sm::make_counter(
-        "refresh_modified_viewable_parent",
-        cursor_stats.num_refresh_modified_viewable_parent,
-        sm::description("total number of refreshed cursors with viewable but modified parents")
       ),
     }
   );
@@ -1217,7 +1196,7 @@ BtreeLBAManager::update_refcount(
 	     t, addr, val.pladdr.get_laddr());
       return _decref_intermediate(t, val.pladdr.get_laddr(), val.len
       ).si_then([this, ires=std::move(res)](auto res) mutable {
-	return ires.get_removed_mapping().next->refresh(cursor_stats
+	return ires.get_removed_mapping().next->refresh(
 	).si_then([res=std::move(res), ires=std::move(ires)]() mutable {
 	  if (res.is_removed_mapping()) {
 	    res.get_removed_mapping().next =
@@ -1491,7 +1470,7 @@ BtreeLBAManager::remap_mappings(
       }).si_then([&mapping, this, &ret] {
 	if (mapping.is_indirect()) {
 	  auto &cursor = mapping.direct_cursor;
-	  return cursor->refresh(cursor_stats
+	  return cursor->refresh(
 	  ).si_then([&ret, &mapping] {
 	    for (auto &m : ret) {
 	      m.direct_cursor = mapping.direct_cursor;
