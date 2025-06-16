@@ -129,83 +129,6 @@ public:
     });
   }
 
-  /*
-   * punch_hole
-   *
-   * punch a hole in the lba tree, so that we can insert new
-   * mappings in the later mutations
-   */
-  using punch_hole_iertr = base_iertr;
-  struct punch_hole_ret_t {
-    std::optional<LBAMapping> left_mapping;
-    std::optional<LBAMapping> right_mapping;
-  };
-  template <typename T>
-  punch_hole_iertr::future<punch_hole_ret_t> punch_hole(
-    Transaction &t,
-    laddr_offset_t start,
-    objaddr_t len,
-    LBAMapping left_mapping)
-  {
-    LOG_PREFIX(TransactionManager::punch_hole);
-    SUBDEBUGT(seastore_tm, "{}~{}", t, start, len);
-    return seastar::do_with(
-      std::make_optional<LBAMapping>(std::move(left_mapping)),
-      [this, &t, start, len](auto &left_mapping) {
-      return [this, &t, start, &left_mapping] {
-	if (start > left_mapping->get_key()) {
-	  assert(start < left_mapping->get_key() + left_mapping->get_length());
-	  if (!left_mapping->is_indirect() &&
-	      !left_mapping->is_data_stable()) {
-	    // return pending mappings on the left edge
-	    return next_mapping(t, *left_mapping
-	    ).si_then([](auto mapping) {
-	      return punch_hole_iertr::make_ready_future<
-		std::optional<LBAMapping>>(std::move(mapping));
-	    });
-	  }
-	  return punch_left_mapping<T>(
-	    t, start.get_roundup_laddr(), std::move(*left_mapping)
-	  ).si_then([&left_mapping, start](auto mappings) {
-	    assert(mappings.size() == 2);
-	    left_mapping = std::move(mappings.front());
-	    assert(left_mapping->get_key() + left_mapping->get_length() ==
-	      start.get_roundup_laddr());
-	    assert(mappings.back().get_key() == start.get_roundup_laddr());
-	    return punch_hole_iertr::make_ready_future<
-	      std::optional<LBAMapping>>(std::move(mappings.back()));
-	  });
-	}
-	assert(start == left_mapping->get_key());
-	return punch_hole_iertr::make_ready_future<
-	  std::optional<LBAMapping>>(std::move(left_mapping));
-      }().si_then([this, &t, start, len](auto mapping) {
-	return punch_middle_mappings(
-	  t, start.get_roundup_laddr(), len, std::move(*mapping));
-      }).si_then([this, &left_mapping, &t, start, len](auto mapping) {
-	auto end = start + len;
-	if (end < mapping.get_key()) {
-	  assert(left_mapping);
-	  return punch_hole_iertr::make_ready_future<
-	    punch_hole_ret_t>(std::move(left_mapping), std::nullopt);
-	} else if ((!mapping.is_indirect() &&
-		    !mapping.is_data_stable()) ||
-		      end == mapping.get_key()) {
-	  return punch_hole_iertr::make_ready_future<
-	    punch_hole_ret_t>(std::move(left_mapping), std::move(mapping));
-	} else {
-	  return this->punch_right_mapping<T>(
-	    t, (start + len).get_aligned_laddr(), std::move(mapping)
-	  ).si_then([&left_mapping](auto mappings) {
-	    assert(mappings.size() == 1);
-	    return punch_hole_ret_t{
-	      std::move(left_mapping), std::move(mappings.back())};
-	  });
-	}
-      });
-    });
-  }
-
   /**
    * get_pins
    *
@@ -1048,7 +971,7 @@ public:
 	  });
 	}).si_then([&mappings] { return std::move(mappings); });
       }).handle_error_interruptible(
-	punch_mappings_iertr::pass_further{},
+	remap_mappings_iertr::pass_further{},
 	crimson::ct_error::assert_all{
 	  "remap_mappings hit invalid error"
 	}
@@ -1057,6 +980,121 @@ public:
       return remap_pin<T, N>(
 	t, std::move(mapping), std::move(remaps));
     }
+  }
+
+  /*
+   * punch_first_mapping
+   *
+   * punch the beginning edge of the hole with the following strategy:
+   * 1. if the first mapping's laddr equals params.raw_begin,
+   * 	do nothing;
+   * 2. if the first mapping crosses the beginning of the hole's edge:
+   * 	a). if the first mapping represents a pending extent, extend the
+   * 	    beginning of the hole to the first mapping's laddr, this will
+   * 	    make later "punch_middle_mappings" remove the first mapping;
+   * 	b). if the first mapping represents stable extents or is indirect,
+   * 	    remap it into two adjacent ones with the beginning of the hole
+   * 	    as the boundary.
+   */
+  using punch_mappings_iertr = base_iertr;
+  using punch_mappings_ret = punch_mappings_iertr::future<
+    std::vector<LBAMapping>>;
+  template <typename T>
+  punch_mappings_ret punch_left_mapping(
+    Transaction &t,
+    laddr_t laddr,
+    LBAMapping left_mapping)
+  {
+    LOG_PREFIX(TransactionManager::punch_left_mapping);
+    SUBDEBUGT(seastore_tm, "{} {}", t, laddr, left_mapping);
+    assert(left_mapping.is_indirect() || left_mapping.is_data_stable());
+    assert(laddr > left_mapping.get_key() &&
+      laddr < left_mapping.get_key() + left_mapping.get_length());
+    auto first_key = left_mapping.get_key();
+    auto first_len = left_mapping.get_length();
+    auto end = (first_key + first_len).checked_to_laddr();
+    return remap_mappings<T, 2>(
+      t,
+      std::move(left_mapping),
+      std::array{
+	// from the start of the left_mapping to the offset of overwrite
+	remap_entry_t{
+	  0,
+	  laddr.template get_byte_distance<extent_len_t>(first_key)},
+	// from the end of overwrite to the end of the first mapping
+	remap_entry_t{
+	  laddr.template get_byte_distance<extent_len_t>(first_key),
+	  laddr.template get_byte_distance<extent_len_t>(end)}});
+  }
+
+  punch_mappings_iertr::future<LBAMapping> punch_middle_mappings(
+    Transaction &t,
+    laddr_t start,
+    objaddr_t len,
+    LBAMapping mapping)
+  {
+    LOG_PREFIX(TransactionManager::punch_middle_mappings);
+    SUBDEBUGT(seastore_tm, "{}~{}, mapping: {}",
+      t, start, len, mapping);
+    // remove all middle mappings
+    return seastar::do_with(
+      std::move(mapping),
+      [&t, this, start, len](auto &mapping) {
+      return trans_intr::repeat([&t, this, start, len, &mapping] {
+	if (mapping.is_end()) {
+	  return punch_mappings_iertr::make_ready_future<
+	    seastar::stop_iteration>(seastar::stop_iteration::yes);
+	}
+	assert(mapping.get_key() >= start);
+	auto mapping_end =
+	  (mapping.get_key() + mapping.get_length()).checked_to_laddr();
+	if (mapping_end > start + len) {
+	  return punch_mappings_iertr::make_ready_future<
+	    seastar::stop_iteration>(seastar::stop_iteration::yes);
+	}
+	return remove(t, std::move(mapping)
+	).si_then([&mapping](auto next_mapping) {
+	  mapping = std::move(next_mapping);
+	  return seastar::stop_iteration::no;
+	}).handle_error_interruptible(
+	  punch_mappings_iertr::pass_further{},
+	  crimson::ct_error::assert_all{
+	    "punch_middle_mappings hit invalid error"
+	  }
+	);
+      }).si_then([&mapping] {
+	return std::move(mapping);
+      });
+    });
+  }
+
+  /*
+   * punch_last_mapping
+   *
+   * punch the end edge of the hole, remap the last mapping.
+   */
+  template <typename T>
+  punch_mappings_ret punch_right_mapping(
+    Transaction &t,
+    laddr_t laddr,
+    LBAMapping right_mapping)
+  {
+    LOG_PREFIX(TransactionManager::punch_right_mapping);
+    SUBDEBUGT(seastore_tm, "{} {}", t, laddr, right_mapping);
+    assert(right_mapping.is_indirect() || right_mapping.is_data_stable());
+    assert(laddr > right_mapping.get_key() &&
+      laddr < right_mapping.get_key() + right_mapping.get_length());
+    auto right_key = right_mapping.get_key();
+    auto right_len = right_mapping.get_length();
+    auto end = (right_key + right_len).checked_to_laddr();
+    return remap_mappings<T, 1>(
+      t,
+      std::move(right_mapping),
+      std::array{
+	// from the end of overwrite to the end of the first mapping
+	remap_entry_t{
+	  laddr.template get_byte_distance<extent_len_t>(right_key),
+	  laddr.template get_byte_distance<extent_len_t>(end)}});
   }
 
   ~TransactionManager();
@@ -1287,121 +1325,6 @@ private:
 	}
       );
     });
-  }
-
-  /*
-   * punch_first_mapping
-   *
-   * punch the beginning edge of the hole with the following strategy:
-   * 1. if the first mapping's laddr equals params.raw_begin,
-   * 	do nothing;
-   * 2. if the first mapping crosses the beginning of the hole's edge:
-   * 	a). if the first mapping represents a pending extent, extend the
-   * 	    beginning of the hole to the first mapping's laddr, this will
-   * 	    make later "punch_middle_mappings" remove the first mapping;
-   * 	b). if the first mapping represents stable extents or is indirect,
-   * 	    remap it into two adjacent ones with the beginning of the hole
-   * 	    as the boundary.
-   */
-  using punch_mappings_iertr = punch_hole_iertr;
-  using punch_mappings_ret = punch_mappings_iertr::future<
-    std::vector<LBAMapping>>;
-  template <typename T>
-  punch_mappings_ret punch_left_mapping(
-    Transaction &t,
-    laddr_t laddr,
-    LBAMapping left_mapping)
-  {
-    LOG_PREFIX(TransactionManager::punch_left_mapping);
-    SUBDEBUGT(seastore_tm, "{} {}", t, laddr, left_mapping);
-    assert(left_mapping.is_indirect() || left_mapping.is_data_stable());
-    assert(laddr > left_mapping.get_key() &&
-      laddr < left_mapping.get_key() + left_mapping.get_length());
-    auto first_key = left_mapping.get_key();
-    auto first_len = left_mapping.get_length();
-    auto end = (first_key + first_len).checked_to_laddr();
-    return remap_mappings<T, 2>(
-      t,
-      std::move(left_mapping),
-      std::array{
-	// from the start of the left_mapping to the offset of overwrite
-	remap_entry_t{
-	  0,
-	  laddr.template get_byte_distance<extent_len_t>(first_key)},
-	// from the end of overwrite to the end of the first mapping
-	remap_entry_t{
-	  laddr.template get_byte_distance<extent_len_t>(first_key),
-	  laddr.template get_byte_distance<extent_len_t>(end)}});
-  }
-
-  punch_mappings_iertr::future<LBAMapping> punch_middle_mappings(
-    Transaction &t,
-    laddr_t start,
-    objaddr_t len,
-    LBAMapping mapping)
-  {
-    LOG_PREFIX(TransactionManager::punch_middle_mappings);
-    SUBDEBUGT(seastore_tm, "{}~{}, mapping: {}",
-      t, start, len, mapping);
-    // remove all middle mappings
-    return seastar::do_with(
-      std::move(mapping),
-      [&t, this, start, len](auto &mapping) {
-      return trans_intr::repeat([&t, this, start, len, &mapping] {
-	if (mapping.is_end()) {
-	  return punch_mappings_iertr::make_ready_future<
-	    seastar::stop_iteration>(seastar::stop_iteration::yes);
-	}
-	assert(mapping.get_key() >= start);
-	auto mapping_end =
-	  (mapping.get_key() + mapping.get_length()).checked_to_laddr();
-	if (mapping_end > start + len) {
-	  return punch_mappings_iertr::make_ready_future<
-	    seastar::stop_iteration>(seastar::stop_iteration::yes);
-	}
-	return remove(t, std::move(mapping)
-	).si_then([&mapping](auto next_mapping) {
-	  mapping = std::move(next_mapping);
-	  return seastar::stop_iteration::no;
-	}).handle_error_interruptible(
-	  punch_mappings_iertr::pass_further{},
-	  crimson::ct_error::assert_all{
-	    "punch_middle_mappings hit invalid error"
-	  }
-	);
-      }).si_then([&mapping] {
-	return std::move(mapping);
-      });
-    });
-  }
-
-  /*
-   * punch_last_mapping
-   *
-   * punch the end edge of the hole, remap the last mapping.
-   */
-  template <typename T>
-  punch_mappings_ret punch_right_mapping(
-    Transaction &t,
-    laddr_t laddr,
-    LBAMapping right_mapping)
-  {
-    LOG_PREFIX(TransactionManager::punch_right_mapping);
-    SUBDEBUGT(seastore_tm, "{} {}", t, laddr, right_mapping);
-    assert(right_mapping.is_indirect() || right_mapping.is_data_stable());
-    assert(laddr > right_mapping.get_key() &&
-      laddr < right_mapping.get_key() + right_mapping.get_length());
-    auto right_key = right_mapping.get_key();
-    auto right_len = right_mapping.get_length();
-    auto end = (right_key + right_len).checked_to_laddr();
-    return remap_mappings<T, 1>(
-      t,
-      std::move(right_mapping),
-      std::array{
-	// from the end of overwrite to the end of the first mapping
-	remap_entry_t{
-	  laddr.template get_byte_distance<extent_len_t>(right_key),
-	  laddr.template get_byte_distance<extent_len_t>(end)}});
   }
 
   rewrite_extent_ret rewrite_logical_extent(
