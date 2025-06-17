@@ -129,7 +129,7 @@ public:
     LOG_PREFIX(TransactionManager::get_containing_pin);
     SUBDEBUGT(seastore_tm, "{} ...", t, laddr);
     return lba_manager->get_mapping(
-      t, laddr.get_aligned_laddr(), true
+      t, laddr.get_aligned_laddr(get_block_size()), true
     ).si_then([FNAME, &t](LBAMapping pin) {
       SUBDEBUGT(seastore_tm, "got {}", t, pin);
       return pin;
