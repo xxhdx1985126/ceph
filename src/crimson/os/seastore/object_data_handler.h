@@ -228,15 +228,6 @@ public:
 
 private:
   /// Updates region [_offset, _offset + bl.length) to bl
-  /*write_ret overwrite(
-    context_t ctx,        ///< [in] ctx
-    laddr_t data_base,    ///< [in] data base laddr
-    objaddr_t offset,     ///< [in] write offset
-    extent_len_t len,     ///< [in] len to write, len == bl->length() if bl
-    std::optional<bufferlist> &&bl, ///< [in] buffer to write, empty for zeros
-    lba_mapping_list_t &&pins ///< [in] set of pins overlapping above region
-  );*/
-
   write_ret overwrite(
     context_t ctx,
     laddr_t data_base,
