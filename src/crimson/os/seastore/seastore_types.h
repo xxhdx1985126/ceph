@@ -1125,15 +1125,19 @@ public:
       assert(offset < laddr_t::UNIT_SIZE);
     }
 
-    laddr_t get_roundup_laddr() const {
+    laddr_t get_roundup_laddr(size_t alignment = laddr_t::UNIT_SIZE) const {
+      ceph_assert(alignment % laddr_t::UNIT_SIZE == 0);
       if (offset == 0) {
-	return laddr_t(base);
+	return laddr_t(p2roundup(base, alignment >> laddr_t::UNIT_SHIFT));
       } else {
 	assert(offset < laddr_t::UNIT_SIZE);
-	return laddr_t(base + 1);
+	return laddr_t(p2roundup(base + 1, alignment >> laddr_t::UNIT_SHIFT));
       }
     }
-    laddr_t get_aligned_laddr() const { return laddr_t(base); }
+    laddr_t get_aligned_laddr(size_t alignment = laddr_t::UNIT_SIZE) const {
+      ceph_assert(alignment % laddr_t::UNIT_SIZE == 0);
+      return laddr_t(p2align(base, alignment >> laddr_t::UNIT_SHIFT));
+    }
     extent_len_t get_offset() const {
       assert(offset < laddr_t::UNIT_SIZE);
       return offset;
