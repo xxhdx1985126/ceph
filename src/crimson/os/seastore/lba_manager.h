@@ -63,7 +63,7 @@ public:
   virtual get_mapping_ret get_mapping(
     Transaction &t,
     laddr_t offset,
-    bool dim_search = false) = 0;
+    bool search_containing = false) = 0;
 
   virtual get_mapping_ret get_mapping(
     Transaction &t,

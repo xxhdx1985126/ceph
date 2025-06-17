@@ -323,23 +323,23 @@ BtreeLBAManager::get_mapping_ret
 BtreeLBAManager::get_mapping(
   Transaction &t,
   laddr_t laddr,
-  bool dim_search)
+  bool search_containing)
 {
   LOG_PREFIX(BtreeLBAManager::get_mapping);
-  TRACET("{} ... dim_search={}", t, laddr, dim_search);
+  TRACET("{} ... search_containing={}", t, laddr, search_containing);
   auto c = get_context(t);
   return with_btree<LBABtree>(
     cache, c,
-    [FNAME, this, c, laddr, dim_search](auto& btree)
+    [FNAME, this, c, laddr, search_containing](auto& btree)
   {
     auto fut = get_mapping_iertr::make_ready_future<LBACursorRef>();
-    if (dim_search) {
+    if (search_containing) {
       fut = get_containing_cursor(c, btree, laddr);
     } else {
       fut = get_cursor(c, btree, laddr);
     }
     return fut.si_then([FNAME, laddr, &btree, c, this,
-			dim_search](LBACursorRef cursor) {
+			search_containing](LBACursorRef cursor) {
       assert(!cursor->is_end());
       if (!cursor->is_indirect()) {
         TRACET("{} got direct cursor {}",
@@ -348,7 +348,7 @@ BtreeLBAManager::get_mapping(
         return get_mapping_iertr::make_ready_future<
 	  LBAMapping>(std::move(mapping));
       }
-      if (dim_search) {
+      if (search_containing) {
 	assert(cursor->contains(laddr));
       } else {
 	assert(laddr == cursor->get_laddr());

@@ -108,11 +108,28 @@ public:
   using get_pin_ret = LBAManager::get_mapping_iertr::future<LBAMapping>;
   get_pin_ret get_pin(
     Transaction &t,
-    laddr_t offset,
-    bool dim_search = false) {
+    laddr_t offset) {
     LOG_PREFIX(TransactionManager::get_pin);
     SUBDEBUGT(seastore_tm, "{} ...", t, offset);
-    return lba_manager->get_mapping(t, offset, dim_search
+    return lba_manager->get_mapping(t, offset, false
+    ).si_then([FNAME, &t](LBAMapping pin) {
+      SUBDEBUGT(seastore_tm, "got {}", t, pin);
+      return pin;
+    });
+  }
+
+  /**
+   * get_containing_pin
+   *
+   * Get the logical pin containing laddr
+   */
+  get_pin_ret get_containing_pin(
+    Transaction &t,
+    laddr_offset_t laddr) {
+    LOG_PREFIX(TransactionManager::get_containing_pin);
+    SUBDEBUGT(seastore_tm, "{} ...", t, laddr);
+    return lba_manager->get_mapping(
+      t, laddr.get_aligned_laddr(), true
     ).si_then([FNAME, &t](LBAMapping pin) {
       SUBDEBUGT(seastore_tm, "got {}", t, pin);
       return pin;

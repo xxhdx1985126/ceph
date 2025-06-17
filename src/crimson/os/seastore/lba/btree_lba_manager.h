@@ -69,7 +69,7 @@ public:
   get_mapping_ret get_mapping(
     Transaction &t,
     laddr_t offset,
-    bool dim_search = false) final;
+    bool search_containing = false) final;
 
   get_mapping_ret get_mapping(
     Transaction &t,
