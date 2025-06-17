@@ -705,13 +705,14 @@ ObjectDataHandler::write_ret ObjectDataHandler::overwrite(
   auto raw_end = data_base + offset + len;
   auto first_key = first_mapping.get_key();
   auto first_len = first_mapping.get_length();
-  assert(first_mapping.get_key() <= raw_begin.get_aligned_laddr());
+  assert(first_mapping.get_key() <= raw_begin.get_aligned_laddr(
+    ctx.tm.get_block_size()));
   DEBUGT(
     "data_base={}, offset=0x{:x}, len=0x{:x}, "
     "data_begin={}, data_end={}",
     ctx.t, data_base, offset, len,
-    raw_begin.get_aligned_laddr(),
-    raw_end.get_roundup_laddr());
+    raw_begin.get_aligned_laddr(ctx.tm.get_block_size()),
+    raw_end.get_roundup_laddr(ctx.tm.get_block_size()));
   return seastar::do_with(
     data_t{std::nullopt, std::move(bl), std::nullopt},
     overwrite_params_t{
@@ -720,9 +721,9 @@ ObjectDataHandler::write_ret ObjectDataHandler::overwrite(
       first_key,
       first_len,
       raw_begin,
-      raw_begin.get_aligned_laddr(),
+      raw_begin.get_aligned_laddr(ctx.tm.get_block_size()),
       raw_end,
-      raw_end.get_roundup_laddr()},
+      raw_end.get_roundup_laddr(ctx.tm.get_block_size())},
     [first_mapping=std::move(first_mapping),
     this, ctx](auto &data, auto &params) {
     return maybe_delta_based_overwrite(
@@ -858,9 +859,9 @@ ObjectDataHandler::clear_ret ObjectDataHandler::trim_data_reservation(
 	mapping_key,
 	mapping_len,
 	raw_begin,
-	key.get_aligned_laddr(),
+	key.get_aligned_laddr(ctx.tm.get_block_size()),
 	raw_end,
-	raw_end.get_roundup_laddr()},
+	raw_end.get_roundup_laddr(ctx.tm.get_block_size())},
       [ctx, mapping=std::move(mapping)](auto &data, auto &params) mutable {
       return punch_hole(ctx, params, data, std::move(mapping)
       ).si_then([ctx, &params, &data](auto pos) {
@@ -898,9 +899,10 @@ ObjectDataHandler::read_ret ObjectDataHandler::read(
       laddr_offset_t l_start =
         object_data.get_reserved_data_base() + obj_offset;
       laddr_offset_t l_end = l_start + len;
-      laddr_t aligned_start = l_start.get_aligned_laddr();
+      laddr_t aligned_start = l_start.get_aligned_laddr(
+	ctx.tm.get_block_size());
       loffset_t aligned_length =
-	  l_end.get_roundup_laddr().get_byte_distance<
+	  l_end.get_roundup_laddr(ctx.tm.get_block_size()).get_byte_distance<
 	    loffset_t>(aligned_start);
       return ctx.tm.get_pins(
         ctx.t,
@@ -922,7 +924,8 @@ ObjectDataHandler::read_ret ObjectDataHandler::read(
             extent_len_t read_start;
             extent_len_t read_start_aligned;
             if (l_current == l_start) { // first pin may skip head
-              ceph_assert(l_current.get_aligned_laddr() >= pin_start);
+              ceph_assert(l_current.get_aligned_laddr(
+		ctx.tm.get_block_size()) >= pin_start);
               read_start = l_current.template
                 get_byte_distance<extent_len_t>(pin_start);
               read_start_aligned = p2align(read_start, ctx.tm.get_block_size());
@@ -955,7 +958,8 @@ ObjectDataHandler::read_ret ObjectDataHandler::read(
             }
 
             // non-zero pin
-            laddr_t l_current_end_aligned = l_current_end.get_roundup_laddr();
+            laddr_t l_current_end_aligned =
+	      l_current_end.get_roundup_laddr(ctx.tm.get_block_size());
             extent_len_t read_len_aligned =
               l_current_end_aligned.get_byte_distance<extent_len_t>(pin_start);
             read_len_aligned -= read_start_aligned;
@@ -1030,9 +1034,10 @@ ObjectDataHandler::fiemap_ret ObjectDataHandler::fiemap(
       laddr_offset_t l_start =
         object_data.get_reserved_data_base() + obj_offset;
       laddr_offset_t l_end = l_start + len;
-      laddr_t aligned_start = l_start.get_aligned_laddr();
+      laddr_t aligned_start = l_start.get_aligned_laddr(
+	ctx.tm.get_block_size());
       loffset_t aligned_length =
-	  l_end.get_roundup_laddr().get_byte_distance<
+	  l_end.get_roundup_laddr(ctx.tm.get_block_size()).get_byte_distance<
 	    loffset_t>(aligned_start);
       return ctx.tm.get_pins(
         ctx.t,
