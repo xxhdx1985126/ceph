@@ -157,16 +157,16 @@ struct overwrite_params_t {
   laddr_offset_t raw_end;
   laddr_t data_end = L_ADDR_NULL;
 
-  bool is_in_block_overwrite() const {
+  bool is_in_block_overwrite(size_t block_size) const {
     return raw_begin + len <
-      (raw_begin + laddr_t::UNIT_SIZE).get_aligned_laddr();
+      (raw_begin + laddr_t::UNIT_SIZE).get_aligned_laddr(block_size);
   }
 
   // if the overwrite range is within a single 4KB block
   // or a single pending mapping, we don't go through the
   // the normal "punch_hole" process
-  bool is_in_mapping_overwrite(LBAMapping &mapping) const {
-    return is_in_block_overwrite() ||
+  bool is_in_mapping_overwrite(LBAMapping &mapping, size_t block_size) const {
+    return is_in_block_overwrite(block_size) ||
       (!mapping.is_indirect() && !mapping.is_data_stable() &&
        raw_begin > mapping.get_key() &&
        raw_end <= mapping.get_key() + mapping.get_length());
@@ -612,7 +612,7 @@ ObjectDataHandler::write_ret handle_in_mapping_overwrite(
 	crimson::ct_error::assert_all{"unexpected error"}
       );
     } else {
-      assert(params.is_in_block_overwrite());
+      assert(params.is_in_block_overwrite(ctx.tm.get_block_size()));
       return handle_unaligned_edge(ctx, params, data, mapping, edge_t::BOTH
       ).si_then([ctx, mapping=std::move(mapping), &params, &data]() mutable {
 	return punch_hole(ctx, params, data, std::move(mapping));
@@ -699,13 +699,14 @@ ObjectDataHandler::write_ret ObjectDataHandler::overwrite(
   auto raw_end = data_base + offset + len;
   auto first_key = first_mapping.get_key();
   auto first_len = first_mapping.get_length();
-  assert(first_mapping.get_key() <= raw_begin.get_aligned_laddr());
+  assert(first_mapping.get_key() <= raw_begin.get_aligned_laddr(
+    ctx.tm.get_block_size()));
   DEBUGT(
     "data_base={}, offset=0x{:x}, len=0x{:x}, "
     "data_begin={}, data_end={}",
     ctx.t, data_base, offset, len,
-    raw_begin.get_aligned_laddr(),
-    raw_end.get_roundup_laddr());
+    raw_begin.get_aligned_laddr(ctx.tm.get_block_size()),
+    raw_end.get_roundup_laddr(ctx.tm.get_block_size()));
   return seastar::do_with(
     data_t{std::nullopt, std::move(bl), std::nullopt},
     overwrite_params_t{
@@ -714,9 +715,9 @@ ObjectDataHandler::write_ret ObjectDataHandler::overwrite(
       first_key,
       first_len,
       raw_begin,
-      raw_begin.get_aligned_laddr(),
+      raw_begin.get_aligned_laddr(ctx.tm.get_block_size()),
       raw_end,
-      raw_end.get_roundup_laddr()},
+      raw_end.get_roundup_laddr(ctx.tm.get_block_size())},
     [first_mapping=std::move(first_mapping),
     this, ctx](auto &data, auto &params) {
     return maybe_delta_based_overwrite(
@@ -728,7 +729,7 @@ ObjectDataHandler::write_ret ObjectDataHandler::overwrite(
 	// and can be applied through delta based overwrite
 	return write_iertr::now();
       }
-      if (params.is_in_mapping_overwrite(*mapping)) {
+      if (params.is_in_mapping_overwrite(*mapping, ctx.tm.get_block_size())) {
 	return handle_in_mapping_overwrite(
 	  ctx, params, data, std::move(*mapping));
       } else {
@@ -850,9 +851,9 @@ ObjectDataHandler::clear_ret ObjectDataHandler::trim_data_reservation(
 	mapping_key,
 	mapping_len,
 	raw_begin,
-	key.get_aligned_laddr(),
+	key.get_aligned_laddr(ctx.tm.get_block_size()),
 	raw_end,
-	raw_end.get_roundup_laddr()},
+	raw_end.get_roundup_laddr(ctx.tm.get_block_size())},
       [ctx, mapping=std::move(mapping)](auto &data, auto &params) mutable {
       return punch_hole(ctx, params, data, std::move(mapping)
       ).si_then([ctx, &params, &data](auto pos) {
@@ -890,9 +891,10 @@ ObjectDataHandler::read_ret ObjectDataHandler::read(
       laddr_offset_t l_start =
         object_data.get_reserved_data_base() + obj_offset;
       laddr_offset_t l_end = l_start + len;
-      laddr_t aligned_start = l_start.get_aligned_laddr();
+      laddr_t aligned_start = l_start.get_aligned_laddr(
+	ctx.tm.get_block_size());
       loffset_t aligned_length =
-	  l_end.get_roundup_laddr().get_byte_distance<
+	  l_end.get_roundup_laddr(ctx.tm.get_block_size()).get_byte_distance<
 	    loffset_t>(aligned_start);
       return ctx.tm.get_pins(
         ctx.t,
@@ -914,7 +916,8 @@ ObjectDataHandler::read_ret ObjectDataHandler::read(
             extent_len_t read_start;
             extent_len_t read_start_aligned;
             if (l_current == l_start) { // first pin may skip head
-              ceph_assert(l_current.get_aligned_laddr() >= pin_start);
+              ceph_assert(l_current.get_aligned_laddr(
+		ctx.tm.get_block_size()) >= pin_start);
               read_start = l_current.template
                 get_byte_distance<extent_len_t>(pin_start);
               read_start_aligned = p2align(read_start, ctx.tm.get_block_size());
@@ -947,7 +950,8 @@ ObjectDataHandler::read_ret ObjectDataHandler::read(
             }
 
             // non-zero pin
-            laddr_t l_current_end_aligned = l_current_end.get_roundup_laddr();
+            laddr_t l_current_end_aligned =
+	      l_current_end.get_roundup_laddr(ctx.tm.get_block_size());
             extent_len_t read_len_aligned =
               l_current_end_aligned.get_byte_distance<extent_len_t>(pin_start);
             read_len_aligned -= read_start_aligned;
@@ -1022,9 +1026,10 @@ ObjectDataHandler::fiemap_ret ObjectDataHandler::fiemap(
       laddr_offset_t l_start =
         object_data.get_reserved_data_base() + obj_offset;
       laddr_offset_t l_end = l_start + len;
-      laddr_t aligned_start = l_start.get_aligned_laddr();
+      laddr_t aligned_start = l_start.get_aligned_laddr(
+	ctx.tm.get_block_size());
       loffset_t aligned_length =
-	  l_end.get_roundup_laddr().get_byte_distance<
+	  l_end.get_roundup_laddr(ctx.tm.get_block_size()).get_byte_distance<
 	    loffset_t>(aligned_start);
       return ctx.tm.get_pins(
         ctx.t,
