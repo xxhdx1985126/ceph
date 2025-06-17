@@ -641,7 +641,7 @@ public:
 	  return clone_iertr::make_ready_future<
 	    seastar::stop_iteration>(seastar::stop_iteration::yes);
 	}
-	if (!mapping.is_indirect() && mapping.get_val().is_zero()) {
+	if (!mapping.is_indirect() && mapping.is_zero_reserved()) {
 	  return reserve_region(
 	    t,
 	    std::move(pos),
