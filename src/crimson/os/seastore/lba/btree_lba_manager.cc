@@ -1349,7 +1349,7 @@ BtreeLBAManager::get_containing_cursor(
   LBABtree &btree,
   laddr_t laddr)
 {
-  LOG_PREFIX(BtreeLBAManager::get_cursor);
+  LOG_PREFIX(BtreeLBAManager::get_containing_cursor);
   TRACET("{}", c.trans, laddr);
   return btree.upper_bound_right(c, laddr
   ).si_then([c, laddr, FNAME](LBABtree::iterator iter)
