@@ -582,9 +582,8 @@ ObjectDataHandler::base_iertr::future<LBAMapping> punch_hole(
     return ctx.tm.punch_middle_mappings(
       ctx.t, params.data_begin, len, std::move(mapping));
   }).si_then([ctx, &params, &data](auto mapping) {
-    assert(mapping.is_end() || params.raw_end >= mapping.get_key());
     if (mapping.is_end() ||
-	params.data_end == mapping.get_key()) {
+	params.data_end <= mapping.get_key()) {
       return ObjectDataHandler::base_iertr::make_ready_future<
 	LBAMapping>(std::move(mapping));
     }
@@ -768,8 +767,7 @@ ObjectDataHandler::zero_ret ObjectDataHandler::zero(
 	    std::nullopt, std::move(*mapping));
 	}
 	laddr_offset_t l_start = data_base + offset;
-	laddr_t aligned_start = l_start.get_aligned_laddr();
-	return ctx.tm.get_pin(ctx.t, aligned_start, true
+	return ctx.tm.get_containing_pin(ctx.t, l_start
 	).si_then([this, ctx, data_base, offset, len](auto pin) {
 	  return overwrite(
 	    ctx, data_base, offset, len,
@@ -811,8 +809,7 @@ ObjectDataHandler::write_ret ObjectDataHandler::write(
 	    bufferlist(bl), std::move(*mapping));
 	}
 	laddr_offset_t l_start = data_base + offset;
-	laddr_t aligned_start = l_start.get_aligned_laddr();
-	return ctx.tm.get_pin(ctx.t, aligned_start, true
+	return ctx.tm.get_containing_pin(ctx.t, l_start
 	).si_then([this, ctx, offset, data_base, &bl](auto pin) {
 	  return overwrite(
 	    ctx, data_base, offset, bl.length(),
@@ -835,8 +832,8 @@ ObjectDataHandler::clear_ret ObjectDataHandler::trim_data_reservation(
   ceph_assert(!object_data.is_null());
   ceph_assert(size <= object_data.get_reserved_data_len());
   auto data_base = object_data.get_reserved_data_base();
-  auto key = (data_base + size).get_aligned_laddr();
-  return ctx.tm.get_pin(ctx.t, key, true
+  auto key = data_base + size;
+  return ctx.tm.get_containing_pin(ctx.t, key
   ).si_then([ctx, data_base, size, key, &object_data](auto mapping) {
     assert(mapping.get_key() <= key &&
       mapping.get_key() + mapping.get_length() > key);
@@ -853,7 +850,7 @@ ObjectDataHandler::clear_ret ObjectDataHandler::trim_data_reservation(
 	mapping_key,
 	mapping_len,
 	raw_begin,
-	key,
+	key.get_aligned_laddr(),
 	raw_end,
 	raw_end.get_roundup_laddr()},
       [ctx, mapping=std::move(mapping)](auto &data, auto &params) mutable {
