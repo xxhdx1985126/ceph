@@ -84,9 +84,11 @@ public:
       return state == state_t::PARTIAL;
     }
 
+#ifndef NDEBUG
     bool is_full() const {
       return state == state_t::FULL;
     }
+#endif
 
     iterator_fut next(
       op_context_t c,
@@ -208,7 +210,9 @@ public:
       assert((depth - 2) < internal.size());
       auto &i = internal[depth - 2];
 
-      if (is_full() || i.node.get()) {
+      // Read and write must not be concurrent in the same transaction,
+      // otherwise the nodes tracked here can become outdated unexpectedly.
+      if (i.node.get()) {
         assert(i.node->is_valid());
         assert(c.trans.is_weak() ||
           i.node->is_viewable_by_trans(c.trans).first);
