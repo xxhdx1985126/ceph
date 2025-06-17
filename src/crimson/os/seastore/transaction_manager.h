@@ -951,7 +951,7 @@ public:
     LBAMapping mapping,
     std::array<TransactionManager::remap_entry_t, N> remaps)
   {
-    if (!mapping.is_indirect() && mapping.get_val().is_zero()) {
+    if (!mapping.is_indirect() && mapping.is_zero_reserved()) {
       return seastar::do_with(
 	std::vector<TransactionManager::remap_entry_t>(
 	  remaps.begin(), remaps.end()),
