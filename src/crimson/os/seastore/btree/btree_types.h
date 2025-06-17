@@ -298,7 +298,7 @@ struct BackrefCursor : BtreeCursor<paddr_t, backref::backref_map_val_t> {
   using Base = BtreeCursor<paddr_t, backref::backref_map_val_t>;
   using Base::BtreeCursor;
   paddr_t get_paddr() const {
-    assert(key != P_ADDR_NULL);
+    assert(key.is_absolute());
     return key;
   }
   laddr_t get_laddr() const {
