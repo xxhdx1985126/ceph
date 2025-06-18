@@ -391,11 +391,13 @@ BtreeLBAManager::get_mapping(
 	TRACET("find pending extent {} for {}",
 	       c.trans, (void*)leaf.get(), extent);
       }
+#ifndef NDEBUG
       auto it = leaf->lower_bound(extent.get_laddr());
       assert(it != leaf->end() && it.get_key() == extent.get_laddr());
+#endif
       return get_mapping_iertr::make_ready_future<
 	LBAMapping>(LBAMapping::create_direct(
-	  btree.get_cursor(c, leaf, extent.get_laddr(), it.get_offset())));
+	  btree.get_cursor(c, leaf, extent.get_laddr())));
     });
   });
 }
@@ -991,42 +993,64 @@ BtreeLBAManager::update_mappings(
   Transaction& t,
   const std::list<LogicalChildNodeRef>& extents)
 {
-  return trans_intr::do_for_each(extents, [this, &t](auto &extent) {
-    LOG_PREFIX(BtreeLBAManager::update_mappings);
-    auto laddr = extent->get_laddr();
-    auto prev_addr = extent->get_prior_paddr_and_reset();
-    auto len = extent->get_length();
-    auto addr = extent->get_paddr();
-    auto checksum = extent->get_last_committed_crc();
-    TRACET("laddr={}, paddr {}~0x{:x} => {}, crc=0x{:x}",
-           t, laddr, prev_addr, len, addr, checksum);
-    assert(!addr.is_null());
-    return _update_mapping(
-      t,
-      laddr,
-      [prev_addr, addr, len, checksum](
-        const lba_map_val_t &in) {
-        lba_map_val_t ret = in;
-        ceph_assert(in.pladdr.is_paddr());
-        ceph_assert(in.pladdr.get_paddr() == prev_addr);
-        ceph_assert(in.len == len);
-        ret.pladdr = addr;
-        ret.checksum = checksum;
-        return ret;
-      },
-      nullptr   // all the extents should have already been
-                // added to the fixed_kv_btree
-    ).si_then([&t, laddr, prev_addr, len, addr, checksum, FNAME](auto res) {
-        DEBUGT("laddr={}, paddr {}~0x{:x} => {}, crc=0x{:x} done -- {}",
-               t, laddr, prev_addr, len, addr, checksum, res.get_cursor());
-        return update_mapping_iertr::make_ready_future();
-      },
-      update_mapping_iertr::pass_further{},
-      /* ENOENT in particular should be impossible */
-      crimson::ct_error::assert_all{
-        "Invalid error in BtreeLBAManager::update_mappings"
+  LOG_PREFIX(BtreeLBAManager::update_mappings);
+  auto c = get_context(t);
+  return trans_intr::do_for_each(
+    extents,
+    [this, FNAME, c](auto &extent) {
+    return extent->get_parent_node(c.trans, c.cache
+    ).si_then([c, &extent, FNAME, this](auto leaf) {
+      if (leaf->is_pending()) {
+	TRACET("find pending extent {} for {}",
+	       c.trans, (void*)leaf.get(), *extent);
       }
-    );
+      return with_btree<LBABtree>(
+	cache,
+	c,
+	[c, &extent, leaf, FNAME, this](auto &btree) {
+	return seastar::do_with(
+	  btree.get_cursor(c, leaf, extent->get_laddr()),
+	  [this, c, &extent, FNAME](auto &cursor) {
+	  assert(!cursor->is_end() &&
+	    cursor->get_laddr() == extent->get_laddr());
+	  auto prev_addr = extent->get_prior_paddr_and_reset();
+	  auto len = extent->get_length();
+	  auto addr = extent->get_paddr();
+	  auto checksum = extent->get_last_committed_crc();
+	  TRACET("cursor={}, paddr {}~0x{:x} => {}, crc=0x{:x}",
+		 c.trans, *cursor, prev_addr, len, addr, checksum);
+	  assert(!addr.is_null());
+	  return this->_update_mapping(
+	    c.trans,
+	    *cursor,
+	    [prev_addr, addr, len, checksum](
+	      const lba_map_val_t &in) {
+	      lba_map_val_t ret = in;
+	      ceph_assert(in.pladdr.is_paddr());
+	      ceph_assert(in.pladdr.get_paddr() == prev_addr);
+	      ceph_assert(in.len == len);
+	      ret.pladdr = addr;
+	      ret.checksum = checksum;
+	      return ret;
+	    },
+	    nullptr   // all the extents should have already been
+		      // added to the fixed_kv_btree
+	  ).si_then([c, &cursor, prev_addr, len, addr,
+		    checksum, FNAME](auto res) {
+	      DEBUGT("cursor={}, paddr {}~0x{:x} => {}, crc=0x{:x} done -- {}",
+		     c.trans, *cursor, prev_addr, len,
+		     addr, checksum, res.get_cursor());
+	      return update_mapping_iertr::make_ready_future();
+	    },
+	    update_mapping_iertr::pass_further{},
+	    /* ENOENT in particular should be impossible */
+	    crimson::ct_error::assert_all{
+	      "Invalid error in BtreeLBAManager::update_mappings"
+	    }
+	  );
+	});
+      });
+    });
   });
 }
 

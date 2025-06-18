@@ -468,6 +468,18 @@ public:
   boost::intrusive_ptr<cursor_t> get_cursor(
     op_context_t c,
     TCachedExtentRef<leaf_node_t> leaf,
+    node_key_t key)
+  {
+    auto it = leaf->lower_bound(key);
+    assert(it != leaf->end());
+    return new cursor_t(
+      c, leaf, leaf->modifications,
+      key, it.get_val(), it.get_offset());
+  }
+
+  boost::intrusive_ptr<cursor_t> get_cursor(
+    op_context_t c,
+    TCachedExtentRef<leaf_node_t> leaf,
     node_key_t key,
     uint16_t pos)
   {
