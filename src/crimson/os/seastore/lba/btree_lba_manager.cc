@@ -103,6 +103,9 @@ template class TreeRootLinker<RootBlock, lba::LBALeafNode>;
 
 LBAMapping::refresh_iertr::future<LBAMapping> LBAMapping::refresh()
 {
+  if (is_viewable()) {
+    return refresh_iertr::make_ready_future<LBAMapping>(*this);
+  }
   return seastar::do_with(
     std::move(direct_cursor),
     std::move(indirect_cursor),
