@@ -500,63 +500,61 @@ handle_edge_mapping(
   LOG_PREFIX(ObjectDataHandler::handle_edge_mapping);
   DEBUGT("{}, {}, {}, {}", ctx.t, params, data, mapping, edge);
   ceph_assert(edge != edge_t::BOTH);
-  return mapping.refresh(
-  ).si_then([ctx, &params, &data, edge](auto mapping) {
-    if (!mapping.is_indirect() &&
-	!mapping.is_data_stable()) {
-      // mapping is pending, merge with it
-      return merge_edge(ctx, params, data, mapping, edge
-      ).si_then([mapping, ctx] {
-	return ctx.tm.remove(ctx.t, std::move(mapping));
-      }).handle_error_interruptible(
-	ObjectDataHandler::base_iertr::pass_further{},
-	crimson::ct_error::assert_all{"unexpected error"}
-      );
+  assert(mapping.is_viewable());
+  if (!mapping.is_indirect() &&
+      !mapping.is_data_stable()) {
+    // mapping is pending, merge with it
+    return merge_edge(ctx, params, data, mapping, edge
+    ).si_then([mapping, ctx] {
+      return ctx.tm.remove(ctx.t, std::move(mapping));
+    }).handle_error_interruptible(
+      ObjectDataHandler::base_iertr::pass_further{},
+      crimson::ct_error::assert_all{"unexpected error"}
+    );
+  } else {
+    if (edge & edge_t::LEFT) {
+      assert(params.raw_begin > mapping.get_key());
+      assert(params.raw_begin < mapping.get_key() + mapping.get_length());
     } else {
-      if (edge & edge_t::LEFT) {
-	assert(params.raw_begin > mapping.get_key());
-	assert(params.raw_begin < mapping.get_key() + mapping.get_length());
-      } else {
-	assert(edge & edge_t::RIGHT);
-	assert(params.raw_end > mapping.get_key());
-	assert(params.raw_end < mapping.get_key() + mapping.get_length());
-      }
-
-      auto fut = ObjectDataHandler::base_iertr::now();
-      if (((edge & edge_t::LEFT) && params.raw_begin.get_offset()) ||
-	  ((edge & edge_t::RIGHT) && params.raw_end.get_offset())) {
-	fut = handle_unaligned_edge(ctx, params, data, mapping, edge);
-      }
-      return fut.si_then([ctx, mapping, &params, edge] {
-	if (edge == edge_t::LEFT) {
-	  if (params.data_begin > mapping.get_key()) {
-	    return ctx.tm.punch_left_mapping<ObjectDataBlock>(
-	      ctx.t, params.data_begin, std::move(mapping)
-	    ).si_then([ctx](auto mapping) {
-	      return ctx.tm.next_mapping(ctx.t, std::move(mapping));
-	    });
-	  } else {
-	    return ObjectDataHandler::base_iertr::make_ready_future<
-	      LBAMapping>(std::move(mapping));
-	  }
-	} else if (params.data_end < mapping.get_key() + mapping.get_length()){
-	  assert(edge == edge_t::RIGHT);
-	  return ctx.tm.punch_right_mapping<ObjectDataBlock>(
-	    ctx.t, params.data_end, std::move(mapping)
-	  );
-	} else {
-	  return ctx.tm.remove(ctx.t, std::move(mapping)
-	  ).handle_error_interruptible(
-	    ObjectDataHandler::base_iertr::pass_further{},
-	    crimson::ct_error::assert_all{"unexpected error"}
-	  );
-	}
-      });
-
+      assert(edge & edge_t::RIGHT);
+      assert(params.raw_end > mapping.get_key());
+      assert(params.raw_end < mapping.get_key() + mapping.get_length());
     }
-    return ObjectDataHandler::base_iertr::make_ready_future<
-      LBAMapping>(mapping);
-  });
+
+    auto fut = ObjectDataHandler::base_iertr::now();
+    if (((edge & edge_t::LEFT) && params.raw_begin.get_offset()) ||
+	((edge & edge_t::RIGHT) && params.raw_end.get_offset())) {
+      fut = handle_unaligned_edge(ctx, params, data, mapping, edge);
+    }
+    return fut.si_then([ctx, mapping, &params, edge] {
+      if (edge == edge_t::LEFT) {
+	if (params.data_begin > mapping.get_key()) {
+	  return ctx.tm.punch_left_mapping<ObjectDataBlock>(
+	    ctx.t, params.data_begin, std::move(mapping)
+	  ).si_then([ctx](auto mapping) {
+	    return ctx.tm.next_mapping(ctx.t, std::move(mapping));
+	  });
+	} else {
+	  return ObjectDataHandler::base_iertr::make_ready_future<
+	    LBAMapping>(std::move(mapping));
+	}
+      } else if (params.data_end < mapping.get_key() + mapping.get_length()){
+	assert(edge == edge_t::RIGHT);
+	return ctx.tm.punch_right_mapping<ObjectDataBlock>(
+	  ctx.t, params.data_end, std::move(mapping)
+	);
+      } else {
+	return ctx.tm.remove(ctx.t, std::move(mapping)
+	).handle_error_interruptible(
+	  ObjectDataHandler::base_iertr::pass_further{},
+	  crimson::ct_error::assert_all{"unexpected error"}
+	);
+      }
+    });
+
+  }
+  return ObjectDataHandler::base_iertr::make_ready_future<
+    LBAMapping>(mapping);
 }
 
 ObjectDataHandler::base_iertr::future<LBAMapping> punch_hole(
