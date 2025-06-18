@@ -157,19 +157,13 @@ struct overwrite_params_t {
   laddr_offset_t raw_end;
   laddr_t data_end = L_ADDR_NULL;
 
-  bool is_in_block_overwrite(size_t block_size) const {
-    return raw_begin + len <
-      (raw_begin + laddr_t::UNIT_SIZE).get_aligned_laddr(block_size);
+  bool is_in_mapping_overwrite(LBAMapping &mapping) const {
+    return raw_begin > mapping.get_key() &&
+       raw_end < mapping.get_key() + mapping.get_length();
   }
-
-  // if the overwrite range is within a single 4KB block
-  // or a single pending mapping, we don't go through the
-  // the normal "punch_hole" process
-  bool is_in_mapping_overwrite(LBAMapping &mapping, size_t block_size) const {
-    return is_in_block_overwrite(block_size) ||
-      (!mapping.is_indirect() && !mapping.is_data_stable() &&
-       raw_begin > mapping.get_key() &&
-       raw_end <= mapping.get_key() + mapping.get_length());
+  bool needs_in_mapping_hole(LBAMapping &mapping) const {
+    return data_begin > mapping.get_key() &&
+      data_end < mapping.get_key() + mapping.get_length();
   }
 };
 
@@ -384,6 +378,7 @@ ObjectDataHandler::write_ret do_write(
 }
 
 enum edge_t : uint8_t {
+  NONE = 0x0,
   LEFT = 0x1,
   RIGHT = 0x2,
   BOTH = 0x3
@@ -392,6 +387,9 @@ enum edge_t : uint8_t {
 std::ostream& operator<<(std::ostream &out, const edge_t &edge) {
   out << "edge_t{";
   switch (edge) {
+  case edge_t::NONE:
+    out << "NONE";
+    break;
   case edge_t::LEFT:
     out << "LEFT";
     break;
@@ -415,6 +413,9 @@ handle_unaligned_edge(
   LBAMapping &mapping,
   edge_t edge)
 {
+  assert(edge != edge_t::NONE);
+  LOG_PREFIX(ObjectDataHandler::handle_unaligned_edge);
+  DEBUGT("{} {} {} edge={}", ctx.t, params, data, mapping, edge);
   std::vector<ObjectDataHandler::read_iertr::future<>> futs;
   if (edge & edge_t::LEFT) {
     auto off = mapping.get_key().template get_byte_distance<
@@ -451,6 +452,7 @@ merge_edge(
   LBAMapping &mapping,
   edge_t edge)
 {
+  assert(edge != edge_t::NONE);
   std::vector<ObjectDataHandler::read_iertr::future<>> futs;
   if (edge & edge_t::LEFT) {
     auto length = params.first_key.template get_byte_distance<
@@ -494,6 +496,7 @@ handle_edge_mapping(
   LBAMapping mapping,
   edge_t edge)
 {
+  assert(edge != edge_t::NONE);
   LOG_PREFIX(ObjectDataHandler::handle_edge_mapping);
   DEBUGT("{}, {}, {}, {}", ctx.t, params, data, mapping, edge);
   ceph_assert(edge != edge_t::BOTH);
@@ -529,9 +532,8 @@ handle_edge_mapping(
 	  if (params.data_begin > mapping.get_key()) {
 	    return ctx.tm.punch_left_mapping<ObjectDataBlock>(
 	      ctx.t, params.data_begin, std::move(mapping)
-	    ).si_then([](auto ret) {
-	      ceph_assert(ret.size() == 2);
-	      return std::move(ret.back());
+	    ).si_then([ctx](auto mapping) {
+	      return ctx.tm.next_mapping(ctx.t, std::move(mapping));
 	    });
 	  } else {
 	    return ObjectDataHandler::base_iertr::make_ready_future<
@@ -541,10 +543,7 @@ handle_edge_mapping(
 	  assert(edge == edge_t::RIGHT);
 	  return ctx.tm.punch_right_mapping<ObjectDataBlock>(
 	    ctx.t, params.data_end, std::move(mapping)
-	  ).si_then([](auto ret) {
-	    ceph_assert(ret.size() == 1);
-	    return std::move(ret.back());
-	  });
+	  );
 	} else {
 	  return ctx.tm.remove(ctx.t, std::move(mapping)
 	  ).handle_error_interruptible(
@@ -566,7 +565,32 @@ ObjectDataHandler::base_iertr::future<LBAMapping> punch_hole(
   data_t &data,
   LBAMapping left_mapping)
 {
-  return seastar::futurize_invoke([ctx, &params, &data, left_mapping] {
+  assert(left_mapping.is_indirect() ||
+	 left_mapping.is_data_stable());
+  auto fut = ObjectDataHandler::base_iertr::now();
+  if (params.is_in_mapping_overwrite(left_mapping)) {
+    edge_t edge =  edge_t::NONE;
+    if (params.raw_begin.get_offset() != 0) {
+      edge = static_cast<edge_t>(edge | edge_t::LEFT);
+    }
+    if (params.raw_end.get_offset() != 0) {
+      edge = static_cast<edge_t>(edge | edge_t::RIGHT);
+    }
+    if (edge != edge_t::NONE) {
+      fut = handle_unaligned_edge(ctx, params, data, left_mapping, edge);
+    }
+    if (params.needs_in_mapping_hole(left_mapping)) {
+      return fut.si_then([left_mapping=std::move(left_mapping),
+			  ctx, &params]() mutable {
+	auto len = params.data_end.template get_byte_distance<
+	  extent_len_t>(params.data_begin);
+	return ctx.tm.punch_hole_in_mapping<ObjectDataBlock>(
+	  ctx.t, params.data_begin, len, std::move(left_mapping));
+      });
+    }
+  } 
+
+  return fut.si_then([ctx, &params, &data, left_mapping] {
     if (params.raw_begin > left_mapping.get_key()) {
       // left_mapping crosses the left edge
       assert(params.raw_begin <
@@ -594,34 +618,16 @@ ObjectDataHandler::base_iertr::future<LBAMapping> punch_hole(
 
 // handle overwrites whose range is within a single 4KB block or
 // a single pending mapping
-ObjectDataHandler::write_ret handle_in_mapping_overwrite(
+ObjectDataHandler::write_ret handle_in_unstable_mapping_overwrite(
   context_t ctx,
   overwrite_params_t &params,
   data_t &data,
   LBAMapping mapping)
 {
-  return [ctx, &params, &data, mapping=std::move(mapping)]() mutable
-	  -> ObjectDataHandler::write_iertr::future<LBAMapping> {
-    if (bool pending = !mapping.is_indirect() && !mapping.is_data_stable();
-	pending) {
-      return merge_edge(ctx, params, data, mapping, edge_t::BOTH
-      ).si_then([ctx, mapping=std::move(mapping)]() mutable {
-	return ctx.tm.remove(ctx.t, std::move(mapping));
-      }).handle_error_interruptible(
-	ObjectDataHandler::write_iertr::pass_further{},
-	crimson::ct_error::assert_all{"unexpected error"}
-      );
-    } else {
-      assert(params.is_in_block_overwrite(ctx.tm.get_block_size()));
-      return handle_unaligned_edge(ctx, params, data, mapping, edge_t::BOTH
-      ).si_then([ctx, mapping=std::move(mapping), &params, &data]() mutable {
-	return punch_hole(ctx, params, data, std::move(mapping));
-      }).handle_error_interruptible(
-	ObjectDataHandler::write_iertr::pass_further{},
-	crimson::ct_error::assert_all{"unexpected error"}
-      );
-    }
-  }().si_then([&params, ctx, &data](auto pos) {
+  return merge_edge(ctx, params, data, mapping, edge_t::BOTH
+  ).si_then([ctx, mapping=std::move(mapping)]() mutable {
+    return ctx.tm.remove(ctx.t, std::move(mapping));
+  }).si_then([&params, ctx, &data](auto pos) {
     if (params.data_begin.template get_byte_distance<
 	  extent_len_t>(params.data_end) == ctx.tm.get_block_size()
 	&& (data.headbl || data.tailbl)) {
@@ -647,9 +653,12 @@ ObjectDataHandler::write_ret handle_in_mapping_overwrite(
     } else {
       return do_zero(ctx, std::move(pos), params, data);
     }
-  });
+  }).handle_error_interruptible(
+    ObjectDataHandler::write_iertr::pass_further{},
+    crimson::ct_error::assert_all{"unexpected error"}
+  );
 }
-ObjectDataHandler::write_ret handle_cross_mapping_overwrite(
+ObjectDataHandler::write_ret handle_overwrite(
   context_t ctx,
   overwrite_params_t &params,
   data_t &data,
@@ -729,11 +738,13 @@ ObjectDataHandler::write_ret ObjectDataHandler::overwrite(
 	// and can be applied through delta based overwrite
 	return write_iertr::now();
       }
-      if (params.is_in_mapping_overwrite(*mapping, ctx.tm.get_block_size())) {
-	return handle_in_mapping_overwrite(
+      if (bool pending = !mapping->is_indirect()
+	    && !mapping->is_data_stable();
+	  pending) {
+	return handle_in_unstable_mapping_overwrite(
 	  ctx, params, data, std::move(*mapping));
       } else {
-	return handle_cross_mapping_overwrite(
+	return handle_overwrite(
 	  ctx, params, data, std::move(*mapping));
       }
     });
