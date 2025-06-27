@@ -100,7 +100,7 @@ public:
     extent_ref_count_t refcount) = 0;
   virtual alloc_extents_ret alloc_extents(
     Transaction &t,
-    LBAMapping mapping,
+    LBAMapping pos,
     std::vector<LogicalChildNodeRef> ext) = 0;
 
   struct clone_mapping_ret_t {

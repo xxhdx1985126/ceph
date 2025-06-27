@@ -113,7 +113,7 @@ public:
 
   alloc_extents_ret alloc_extents(
     Transaction &t,
-    LBAMapping mapping,
+    LBAMapping pos,
     std::vector<LogicalChildNodeRef> ext) final;
 
   alloc_extent_ret alloc_extent(

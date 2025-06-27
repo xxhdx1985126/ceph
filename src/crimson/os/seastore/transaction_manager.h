@@ -546,16 +546,16 @@ public:
 
   reserve_extent_ret reserve_region(
     Transaction &t,
-    LBAMapping mapping,
+    LBAMapping pos,
     laddr_t hint,
     extent_len_t len) {
     LOG_PREFIX(TransactionManager::reserve_region);
     SUBDEBUGT(seastore_tm, "hint {}~0x{:x} ...", t, hint, len);
-    return mapping.refresh(
-    ).si_then([FNAME, this, &t, hint, len](auto mapping) {
+    return pos.refresh(
+    ).si_then([FNAME, this, &t, hint, len](auto pos) {
       return lba_manager->reserve_region(
 	t,
-	std::move(mapping),
+	std::move(pos),
 	hint,
 	len
       ).si_then([FNAME, &t](auto pin) {

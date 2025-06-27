@@ -461,23 +461,23 @@ BtreeLBAManager::reserve_region(
 BtreeLBAManager::alloc_extents_ret
 BtreeLBAManager::alloc_extents(
   Transaction &t,
-  LBAMapping mapping,
+  LBAMapping pos,
   std::vector<LogicalChildNodeRef> extents)
 {
   LOG_PREFIX(BtreeLBAManager::alloc_extents);
-  DEBUGT("{}", t, mapping);
-  assert(mapping.is_viewable());
+  DEBUGT("{}", t, pos);
+  assert(pos.is_viewable());
   auto c = get_context(t);
   return with_btree<LBABtree>(
     cache,
     c,
-    [c, FNAME, mapping=std::move(mapping), this,
+    [c, FNAME, pos=std::move(pos), this,
     extents=std::move(extents)](auto &btree) mutable {
-    auto &cursor = mapping.get_effective_cursor();
+    auto &cursor = pos.get_effective_cursor();
     return cursor.refresh(
     ).si_then(
       [&cursor, &btree, extents=std::move(extents),
-      mapping=std::move(mapping), c, FNAME, this] {
+      pos=std::move(pos), c, FNAME, this] {
       return seastar::do_with(
 	std::move(extents),
 	btree.make_partial_iter(c, cursor),
