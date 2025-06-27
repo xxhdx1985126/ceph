@@ -126,11 +126,11 @@ ObjectDataHandler::prepare_data_reservation(
 ObjectDataHandler::read_iertr::future<std::optional<bufferlist>> read_mapping(
   ObjectDataHandler::context_t ctx,
   LBAMapping read_pos,
-  extent_len_t offset,
-  extent_len_t len,
+  extent_len_t unaligned_offset,
+  extent_len_t unaligned_len,
   bool for_zero /* whether this is for zero overwrite*/)
 {
-  assert(len != 0);
+  assert(unaligned_len != 0);
   if (read_pos.is_zero_reserved()) {
     if (for_zero) {
       // if we are doing zero overwrite and the current read_pos
@@ -139,20 +139,22 @@ ObjectDataHandler::read_iertr::future<std::optional<bufferlist>> read_mapping(
 	std::optional<bufferlist>>();
     } else {
       bufferlist bl;
-      bl.append_zero(len);
+      bl.append_zero(unaligned_len);
       return ObjectDataHandler::read_iertr::make_ready_future<
 	std::optional<bufferlist>>(std::move(bl));
     }
   } else {
-    auto aligned_offset = p2align(offset, ctx.tm.get_block_size());
+    auto aligned_offset = p2align(unaligned_offset, ctx.tm.get_block_size());
     auto aligned_len =
-      p2roundup(offset + len, ctx.tm.get_block_size()) - aligned_offset;
+      p2roundup(unaligned_offset + unaligned_len,
+		ctx.tm.get_block_size()) - aligned_offset;
     return ctx.tm.read_pin<ObjectDataBlock>(
       ctx.t, read_pos, aligned_offset, aligned_len
-    ).si_then([offset, len](auto maybe_indirect_left_extent) {
+    ).si_then([unaligned_offset, unaligned_len]
+	      (auto maybe_indirect_left_extent) {
       auto read_bl = maybe_indirect_left_extent.get_bl();
       ceph::bufferlist prepend_bl;
-      prepend_bl.substr_of(read_bl, offset, len);
+      prepend_bl.substr_of(read_bl, unaligned_offset, unaligned_len);
       return ObjectDataHandler::read_iertr::make_ready_future<
 	std::optional<bufferlist>>(std::move(prepend_bl));
     });
@@ -181,14 +183,14 @@ std::ostream& operator<<(std::ostream &out, const data_t &data) {
 ObjectDataHandler::write_ret
 ObjectDataHandler::delta_based_overwrite(
   context_t ctx,
-  extent_len_t offset,
-  extent_len_t len,
+  extent_len_t unaligned_offset,
+  extent_len_t unaligned_len,
   LBAMapping overwrite_mapping,
   std::optional<bufferlist> data)
 {
   LOG_PREFIX(ObjectDataHandler::delta_based_overwrite);
   DEBUGT("{}~{} {} zero={}",
-    ctx.t, offset, len, overwrite_mapping, !data.has_value());
+    ctx.t, unaligned_offset, unaligned_len, overwrite_mapping, !data.has_value());
   // delta based overwrite
   return ctx.tm.read_pin<ObjectDataBlock>(
     ctx.t,
@@ -201,15 +203,16 @@ ObjectDataHandler::delta_based_overwrite(
   ).si_then([ctx](auto maybe_indirect_extent) {
     assert(!maybe_indirect_extent.is_indirect());
     return ctx.tm.get_mutable_extent(ctx.t, maybe_indirect_extent.extent);
-  }).si_then([overwrite_mapping, offset, len, data=std::move(data)](auto extent) {
+  }).si_then([overwrite_mapping, unaligned_offset,
+	      unaligned_len, data=std::move(data)](auto extent) {
     bufferlist bl;
     if (data) {
       bl.append(*data);
     } else {
-      bl.append_zero(len);
+      bl.append_zero(unaligned_len);
     }
     auto odblock = extent->template cast<ObjectDataBlock>();
-    odblock->overwrite(offset, std::move(bl));
+    odblock->overwrite(unaligned_offset, std::move(bl));
   });
 }
 
@@ -375,21 +378,25 @@ ObjectDataHandler::read_unaligned_edge_data(
   DEBUGT("{} {} {} edge={}", ctx.t, overwrite_range, data, read_pos, edge);
   std::vector<ObjectDataHandler::read_iertr::future<>> futs;
   if (edge & edge_t::LEFT) {
-    auto off = read_pos.get_key().template get_byte_distance<
+    auto unaligned_off = read_pos.get_key().template get_byte_distance<
       extent_len_t>(overwrite_range.aligned_begin);
-    auto length = overwrite_range.unaligned_begin.get_offset();
-    futs.emplace_back(read_mapping(ctx, read_pos, off, length, !data.bl
+    auto unaligned_length = overwrite_range.unaligned_begin.get_offset();
+    futs.emplace_back(read_mapping(
+      ctx, read_pos, unaligned_off, unaligned_length, !data.bl
     ).si_then([&data](auto bl) {
       data.headbl = std::move(bl);
     }));
   }
 
   if (edge & edge_t::RIGHT) {
-    auto off = overwrite_range.unaligned_end.template get_byte_distance<
-      extent_len_t>(read_pos.get_key());
-    auto length = overwrite_range.aligned_end.template get_byte_distance<
-      extent_len_t>(overwrite_range.unaligned_end);
-    futs.emplace_back(read_mapping(ctx, read_pos, off, length, !data.bl
+    auto unaligned_off =
+      overwrite_range.unaligned_end.template get_byte_distance<
+	extent_len_t>(read_pos.get_key());
+    auto unaligned_length =
+      overwrite_range.aligned_end.template get_byte_distance<
+	extent_len_t>(overwrite_range.unaligned_end);
+    futs.emplace_back(read_mapping(
+	ctx, read_pos, unaligned_off, unaligned_length, !data.bl
     ).si_then([&data](auto bl) {
       data.tailbl = std::move(bl);
     }));
@@ -416,11 +423,11 @@ ObjectDataHandler::merge_pending_edge(
   assert(edge != edge_t::NONE);
   std::vector<ObjectDataHandler::read_iertr::future<>> futs;
   if (edge & edge_t::LEFT) {
-    auto length = edge_mapping.get_key().template get_byte_distance<
+    auto unaligned_length = edge_mapping.get_key().template get_byte_distance<
       extent_len_t>(overwrite_range.unaligned_begin);
-    if (length != 0) {
+    if (unaligned_length != 0) {
       overwrite_range.expand_begin(edge_mapping.get_key());
-      futs.emplace_back(read_mapping(ctx, edge_mapping, 0, length, !data.bl
+      futs.emplace_back(read_mapping(ctx, edge_mapping, 0, unaligned_length, !data.bl
       ).si_then([&data](auto bl) {
 	data.headbl = std::move(bl);
       }));
@@ -428,14 +435,15 @@ ObjectDataHandler::merge_pending_edge(
   }
 
   if (edge & edge_t::RIGHT) {
-    auto offset = overwrite_range.unaligned_end.template get_byte_distance<
+    auto unaligned_offset = overwrite_range.unaligned_end.template get_byte_distance<
       extent_len_t>(edge_mapping.get_key());
-    auto len = edge_mapping.get_length() - offset;
+    auto len = edge_mapping.get_length() - unaligned_offset;
     if (len != 0) {
       auto end = (edge_mapping.get_key() + edge_mapping.get_length()
 	).checked_to_laddr();
       overwrite_range.expand_end(end);
-      futs.emplace_back(read_mapping(ctx, edge_mapping, offset, len, !data.bl
+      futs.emplace_back(read_mapping(
+	ctx, edge_mapping, unaligned_offset, len, !data.bl
       ).si_then([&data](auto bl) {
 	data.tailbl = std::move(bl);
       }));
@@ -467,22 +475,22 @@ ObjectDataHandler::do_delta_based_edge_punch(
     assert(overwrite_range.is_end_in_mapping(edge_mapping));
   }
   if (data.bl) {
-    extent_len_t len =
+    extent_len_t unaligned_len =
       (edge == edge_t::LEFT)
 	? overwrite_range.unaligned_begin.template get_byte_distance<
 	    extent_len_t>(edge_mapping.get_key() + edge_mapping.get_length())
 	: overwrite_range.unaligned_end.template get_byte_distance<
 	    extent_len_t>(edge_mapping.get_key());
-    extent_len_t offset =
-      (edge == edge_t::LEFT) ? 0 : data.bl->length() - len;
-    assert(offset + len <= data.bl->length());
+    extent_len_t unaligned_offset =
+      (edge == edge_t::LEFT) ? 0 : data.bl->length() - unaligned_len;
+    assert(unaligned_offset + unaligned_len <= data.bl->length());
     bl = std::make_optional<bufferlist>();
-    bl->substr_of(*data.bl, offset, len);
+    bl->substr_of(*data.bl, unaligned_offset, unaligned_len);
     bufferlist t_bl;
     if (edge == edge_t::LEFT) {
-      t_bl.substr_of(*data.bl, len, data.bl->length() - len);
+      t_bl.substr_of(*data.bl, unaligned_len, data.bl->length() - unaligned_len);
     } else {
-      t_bl.substr_of(*data.bl, 0, offset);
+      t_bl.substr_of(*data.bl, 0, unaligned_offset);
     }
     data.bl = std::move(t_bl);
   }
@@ -670,12 +678,12 @@ ObjectDataHandler::base_iertr::future<LBAMapping>
 ObjectDataHandler::punch_inner_mappings(
   context_t ctx,
   overwrite_range_t &overwrite_range,
-  LBAMapping mapping /*the first inner mapping*/)
+  LBAMapping first_mapping)
 {
   auto len = overwrite_range.unaligned_end.template get_byte_distance<
     extent_len_t>(overwrite_range.aligned_begin);
   return ctx.tm.remove_mappings_in_range(
-    ctx.t, overwrite_range.aligned_begin, len, std::move(mapping));
+    ctx.t, overwrite_range.aligned_begin, len, std::move(first_mapping));
 }
 
 // The last step in the multi-mapping-hole-punching scenario: remap
@@ -728,10 +736,10 @@ ObjectDataHandler::punch_single_mapping_hole(
   } else {
     auto fut = ObjectDataHandler::base_iertr::now();
     edge_t edge =  edge_t::NONE;
-    if (overwrite_range.unaligned_begin.get_offset() != 0) {
+    if (!overwrite_range.is_begin_aligned(ctx.tm.get_block_size())) {
       edge = static_cast<edge_t>(edge | edge_t::LEFT);
     }
-    if (overwrite_range.unaligned_end.get_offset() != 0) {
+    if (!overwrite_range.is_end_aligned(ctx.tm.get_block_size())) {
       edge = static_cast<edge_t>(edge | edge_t::RIGHT);
     }
     if (edge != edge_t::NONE) {
@@ -793,11 +801,11 @@ ObjectDataHandler::handle_single_mapping_overwrite(
 	mapping,
 	overwrite_range.aligned_begin,
 	overwrite_range.aligned_len)) {
-    auto offset = mapping.get_key().template get_byte_distance<
+    auto unaligned_offset = mapping.get_key().template get_byte_distance<
       extent_len_t>(overwrite_range.unaligned_begin);
-    auto len = overwrite_range.unaligned_len;
+    auto unaligned_len = overwrite_range.unaligned_len;
     return delta_based_overwrite(
-      ctx, offset, len, std::move(mapping), data.bl);
+      ctx, unaligned_offset, unaligned_len, std::move(mapping), data.bl);
   } else {
     return punch_single_mapping_hole(
       ctx, overwrite_range, data, std::move(mapping)

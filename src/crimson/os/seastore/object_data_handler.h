@@ -91,7 +91,7 @@ struct overwrite_range_t {
     laddr_offset_t unaligned_begin,
     laddr_offset_t unaligned_end,
     extent_len_t block_size)
-    : overwrite_range_len(unaligned_len),
+    : unaligned_len(unaligned_len),
       unaligned_begin(unaligned_begin),
       unaligned_end(unaligned_end),
       aligned_begin(unaligned_begin.get_aligned_laddr(block_size)),
@@ -107,8 +107,8 @@ struct overwrite_range_t {
   bool is_range_in_mapping(
     const LBAMapping &mapping) const
   {
-    return unaligned_begin > mapping.get_key() &&
-       unaligned_end < mapping.get_key() + mapping.get_length();
+    return unaligned_begin >= mapping.get_key() &&
+       unaligned_end <= mapping.get_key() + mapping.get_length();
   }
   bool is_begin_aligned(size_t alignment) const {
     return unaligned_begin.is_aligned(alignment);

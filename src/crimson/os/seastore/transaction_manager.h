@@ -993,7 +993,10 @@ public:
    * punch_hole_in_mapping
    *
    * punch an lba hole inside a single mapping, this requires laddr~len
-   * is within the mapping
+   * is within the mapping.
+   *
+   * Return: the position for later inserts, e.g. the mapping next to
+   * 	     the hole
    */
   using punch_mappings_iertr = base_iertr;
   using punch_mappings_ret = punch_mappings_iertr::future<LBAMapping>;
@@ -1027,7 +1030,10 @@ public:
 	return std::move(ret.back());
       });
     } else if (laddr > mapping.get_key()) {
-      return cut_mapping<T>(t, laddr, std::move(mapping), true);
+      return cut_mapping<T>(t, laddr, std::move(mapping), true
+      ).si_then([](auto mapping) {
+	return mapping.next();
+      });
     } else if (laddr + aligned_len < mapping.get_key() + mapping.get_length()) {
       return cut_mapping<T>(
 	t, (laddr + aligned_len).checked_to_laddr(), std::move(mapping), false);
@@ -1044,6 +1050,8 @@ public:
    * cut_mapping
    *
    * remove the left/right part of the mapping
+   *
+   * Return: the remaining part of the mapping
    */
   using cut_mapping_iertr = punch_mappings_ret;
   using cut_mapping_ret = punch_mappings_ret;
@@ -1082,19 +1090,21 @@ public:
    * remove_mappings_in_range
    *
    * remove the mappings that are completely inside the range start~len
+   *
+   * Return: the mapping next to the right boundary of the range
    */
   punch_mappings_ret remove_mappings_in_range(
     Transaction &t,
     laddr_t start,
     objaddr_t len,
-    LBAMapping mapping)
+    LBAMapping first_mapping)
   {
     LOG_PREFIX(TransactionManager::remove_mappings_in_range);
-    SUBDEBUGT(seastore_tm, "{}~{}, mapping: {}",
-      t, start, len, mapping);
+    SUBDEBUGT(seastore_tm, "{}~{}, first_mapping: {}",
+      t, start, len, first_mapping);
     // remove all middle mappings
     return seastar::do_with(
-      std::move(mapping),
+      std::move(first_mapping),
       [&t, this, start, len](auto &mapping) {
       return trans_intr::repeat([&t, this, start, len, &mapping] {
 	if (mapping.is_end()) {
