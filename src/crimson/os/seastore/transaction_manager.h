@@ -125,7 +125,7 @@ public:
    */
   get_pin_ret get_containing_pin(
     Transaction &t,
-    laddr_offset_t laddr) {
+    laddr_t laddr) {
     LOG_PREFIX(TransactionManager::get_containing_pin);
     SUBDEBUGT(seastore_tm, "{} ...", t, laddr);
     return lba_manager->get_mapping(
