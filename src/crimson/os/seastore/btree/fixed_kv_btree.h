@@ -101,7 +101,9 @@ public:
       op_context_t c,
       mapped_space_visitor_t *visitor=nullptr) const
     {
+#ifndef NDEBUG
       assert_valid();
+#endif
       assert(!is_end());
 
       auto ret = *this;
@@ -126,7 +128,9 @@ public:
 
     iterator_fut prev(op_context_t c) const
     {
+#ifndef NDEBUG
       assert_valid();
+#endif
       assert(!is_begin());
 
       auto ret = *this;
@@ -562,9 +566,11 @@ public:
         "ret.leaf.pos {}",
         c.trans,
         ret.leaf.pos);
+#ifndef NDEBUG
       if (min_depth == 1) {
         ret.assert_valid();
       }
+#endif
       return std::move(ret);
     });
   }
