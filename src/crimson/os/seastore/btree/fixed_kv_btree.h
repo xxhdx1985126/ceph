@@ -144,20 +144,12 @@ public:
         [](const internal_node_t &internal) { return --internal.end(); },
         [](const leaf_node_t &leaf) { return --leaf.end(); },
         [c] (auto &depth_with_space, auto &ret, auto &li, auto &ll) {
-        return trans_intr::repeat([&depth_with_space, c, &ret] {
-          if (depth_with_space > ret.get_depth()) {
-            return ensure_internal_iertr::template make_ready_future<
-              seastar::stop_iteration>(seastar::stop_iteration::yes);
-          }
-          return ret.ensure_internal(c, depth_with_space
-          ).si_then([&ret, &depth_with_space] {
-            if (ret.get_internal(depth_with_space).pos > 0) {
-              return seastar::stop_iteration::yes;
-            }
-            ++depth_with_space;
-            return seastar::stop_iteration::no;
-          });
-        }).si_then([&depth_with_space, &ret, c, &li, &ll] {
+        return ret.ensure_internal_bottom_up(
+          c,
+          depth_with_space,
+          [&ret](auto depth_with_space) {
+          return ret.get_internal(depth_with_space).pos > 0;
+        }).si_then([&ret, c, &li, &ll](auto depth_with_space) {
           assert(depth_with_space <= ret.get_depth()); // must not be begin()
           for (depth_t depth = 2; depth < depth_with_space; ++depth) {
             ret.get_internal(depth).reset();
@@ -287,6 +279,7 @@ public:
           min_max_t<node_key_t>::min;
     }
 
+    // handle_boundary() must be called before get_cursor
     boost::intrusive_ptr<cursor_t> get_cursor(op_context_t ctx) const {
       return new cursor_t(
         ctx,
@@ -349,6 +342,40 @@ public:
       return leaf.pos == leaf.node->get_size();
     }
 
+    using ensure_internal_bottom_up_ret =
+      ensure_internal_iertr::template future<depth_t>;
+    template <typename Func>
+    ensure_internal_bottom_up_ret ensure_internal_bottom_up(
+      op_context_t c,
+      depth_t start_from,
+      Func &&stop_f)
+    {
+      return seastar::do_with(
+        start_from,
+        std::move(stop_f),
+        [c, this](auto &start_from, auto &stop_f) {
+        return trans_intr::repeat([this, c, &stop_f, &start_from] {
+          if (start_from > get_depth()) {
+            return ensure_internal_iertr::template make_ready_future<
+              seastar::stop_iteration>(seastar::stop_iteration::yes);
+          }
+          return ensure_internal(c, start_from
+          ).si_then([&stop_f, &start_from] {
+            return seastar::futurize_invoke(stop_f, start_from);
+          }).si_then([&start_from](bool stop) {
+            if (stop) {
+              return seastar::stop_iteration::yes;
+            } else {
+              start_from++;
+              return seastar::stop_iteration::no;
+            }
+          });
+        }).si_then([&start_from] {
+          return start_from;
+        });
+      });
+    }
+
     using handle_boundary_ertr = base_iertr;
     using handle_boundary_ret = handle_boundary_ertr::future<>;
     handle_boundary_ret handle_boundary(
@@ -359,21 +386,13 @@ public:
       return seastar::do_with(
         (depth_t)2,
         [c, this, visitor](auto &depth_with_space) {
-        return trans_intr::repeat([c, this, &depth_with_space] {
-          if (depth_with_space > get_depth()) {
-            return ensure_internal_iertr::template make_ready_future<
-              seastar::stop_iteration>(seastar::stop_iteration::yes);
-          }
-          return ensure_internal(c, depth_with_space
-          ).si_then([this, &depth_with_space] {
-            if ((get_internal(depth_with_space).pos + 1) <
-                get_internal(depth_with_space).node->get_size()) {
-              return seastar::stop_iteration::yes;
-            }
-            ++depth_with_space;
-            return seastar::stop_iteration::no;
-          });
-        }).si_then([&depth_with_space, c, this, visitor] {
+        return ensure_internal_bottom_up(
+          c,
+          depth_with_space,
+          [this](auto depth_with_space) {
+          return this->get_internal(depth_with_space).pos + 1 <
+              this->get_internal(depth_with_space).node->get_size();
+        }).si_then([c, this, visitor](auto depth_with_space) {
           if (depth_with_space <= get_depth()) {
             return seastar::do_with(
               [](const internal_node_t &internal) { return internal.begin(); },
@@ -406,20 +425,14 @@ public:
       return seastar::do_with(
         (depth_t)1,
         [c, this](auto &split_from) {
-        return trans_intr::repeat([&split_from, c, this] {
-          if (split_from >= get_depth()) {
-            return ensure_internal_iertr::template make_ready_future<
-              seastar::stop_iteration>(seastar::stop_iteration::yes);
-          }
-          return ensure_internal(c, split_from + 1
-          ).si_then([&split_from, this] {
-            if (!get_internal(split_from + 1).node->at_max_capacity()) {
-              return seastar::stop_iteration::yes;
-            }
-            split_from++;
-            return seastar::stop_iteration::no;
-          });
-        }).si_then([&split_from, this] {
+        return ensure_internal_bottom_up(
+          c,
+          split_from + 1,
+          [this](auto depth) {
+          return !this->get_internal(depth).node->at_max_capacity();
+        }).si_then([this](auto depth) {
+          assert(depth > 1);
+          auto split_from = depth - 1;
           if (split_from >= get_depth()) {
             return get_depth();
           } else {
