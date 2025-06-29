@@ -81,13 +81,13 @@ struct rewrite_stats_t {
   }
 };
 
-struct cursor_stats_t {
+struct btree_cursor_stats_t {
   uint64_t num_refresh_parent_total = 0;
   uint64_t num_refresh_invalid_parent = 0;
   uint64_t num_refresh_unviewable_parent = 0;
   uint64_t num_refresh_modified_viewable_parent = 0;
 
-  void apply(cursor_stats_t &stats) {
+  void apply(btree_cursor_stats_t &stats) {
     num_refresh_parent_total +=
       stats.num_refresh_parent_total;
     num_refresh_invalid_parent +=
@@ -618,7 +618,7 @@ public:
     return cache_hint;
   }
 
-  cursor_stats_t cursor_stats;
+  btree_cursor_stats_t cursor_stats;
 private:
   friend class Cache;
   friend Ref make_test_transaction();
