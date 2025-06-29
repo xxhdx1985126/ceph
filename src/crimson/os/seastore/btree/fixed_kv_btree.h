@@ -167,6 +167,7 @@ public:
       });
     }
 
+#ifndef NDEBUG
     void assert_valid() const {
       assert(leaf.node);
       assert(leaf.pos <= leaf.node->get_size());
@@ -183,6 +184,7 @@ public:
         }
       }
     }
+#endif
 
     depth_t get_depth() const {
       return internal.size() + 1;
