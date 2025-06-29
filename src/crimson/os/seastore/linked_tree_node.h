@@ -310,9 +310,9 @@ public:
     ceph_assert(me.is_valid());
     auto [viewable, state] = me.is_viewable_by_trans(t);
     if (viewable) {
-      return {false, &me};
+      return {viewable, &me};
     }
-    return {true, find_pending_version(t, key, state)};
+    return {viewable, find_pending_version(t, key, state)};
   }
 
   template <typename ChildT>

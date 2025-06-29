@@ -180,8 +180,7 @@ LBACursor::base_iertr::future<> LBACursor::refresh()
     assert(parent->is_stable() ||
       parent->is_pending_in_trans(c.trans.get_trans_id()));
     auto leaf = parent->cast<lba::LBALeafNode>();
-    auto [got_new, l] = leaf->resolve_transaction(c.trans, key);
-    bool viewable = !got_new;
+    auto [viewable, l] = leaf->resolve_transaction(c.trans, key);
     TRACET("cursor: {} viewable: {}",
       c.trans, *this, viewable);
     if (!viewable) {
