@@ -956,7 +956,8 @@ ObjectDataHandler::zero_ret ObjectDataHandler::zero(
 	    std::nullopt, std::move(*mapping));
 	}
 	laddr_offset_t l_start = data_base + offset;
-	return ctx.tm.get_containing_pin(ctx.t, l_start
+	return ctx.tm.get_containing_pin(
+	  ctx.t, l_start.get_aligned_laddr(ctx.tm.get_block_size())
 	).si_then([this, ctx, data_base, offset, len](auto pin) {
 	  return overwrite(
 	    ctx, data_base, offset, len,
@@ -998,7 +999,8 @@ ObjectDataHandler::write_ret ObjectDataHandler::write(
 	    bufferlist(bl), std::move(*mapping));
 	}
 	laddr_offset_t l_start = data_base + offset;
-	return ctx.tm.get_containing_pin(ctx.t, l_start
+	return ctx.tm.get_containing_pin(
+	  ctx.t, l_start.get_aligned_laddr(ctx.tm.get_block_size())
 	).si_then([this, ctx, offset, data_base, &bl](auto pin) {
 	  return overwrite(
 	    ctx, data_base, offset, bl.length(),
@@ -1022,7 +1024,8 @@ ObjectDataHandler::clear_ret ObjectDataHandler::trim_data_reservation(
   ceph_assert(size <= object_data.get_reserved_data_len());
   auto data_base = object_data.get_reserved_data_base();
   auto unaligned_begin = data_base + size;
-  return ctx.tm.get_containing_pin(ctx.t, unaligned_begin
+  return ctx.tm.get_containing_pin(
+    ctx.t, unaligned_begin.get_aligned_laddr(ctx.tm.get_block_size())
   ).si_then([ctx, data_base, size, this,
 	    unaligned_begin, &object_data](auto mapping) {
     assert(mapping.get_key() <= unaligned_begin &&
