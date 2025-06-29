@@ -445,7 +445,7 @@ public:
     Transaction &t,
     laddr_t laddr_hint,
     extent_len_t len,
-    std::optional<LBAMapping> mapping = std::nullopt,
+    std::optional<LBAMapping> pos = std::nullopt,
     placement_hint_t placement_hint = placement_hint_t::HOT) {
     static_assert(is_data_type(T::TYPE));
     LOG_PREFIX(TransactionManager::alloc_data_extents);
@@ -457,14 +457,14 @@ public:
 	len,
 	placement_hint,
 	INIT_GENERATION),
-      [mapping=std::move(mapping), this, &t,
+      [pos=std::move(pos), this, &t,
       FNAME, laddr_hint](auto &exts) mutable {
       // user must initialize the logical extent themselves
       assert(is_user_transaction(t.get_src()));
       for (auto& ext : exts) {
 	ext->set_seen_by_users();
       }
-      if (mapping) {
+      if (pos) {
 	// laddr_hint is determined
 	auto off = laddr_hint;
 	for (auto &extent : exts) {
@@ -474,12 +474,12 @@ public:
       }
       auto fut = alloc_extents_iertr::make_ready_future<
 	std::vector<LBAMapping>>();
-      if (mapping) {
-	fut = mapping->refresh(
-	).si_then([&t, &exts, this](auto mapping) {
+      if (pos) {
+	fut = pos->refresh(
+	).si_then([&t, &exts, this](auto pos) {
 	  return lba_manager->alloc_extents(
 	    t,
-	    std::move(mapping),
+	    std::move(pos),
 	    std::vector<LogicalChildNodeRef>(
 	      exts.begin(), exts.end()));
 	});

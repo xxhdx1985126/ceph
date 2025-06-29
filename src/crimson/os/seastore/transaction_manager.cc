@@ -261,7 +261,7 @@ TransactionManager::ref_iertr::future<LBAMapping> TransactionManager::remove(
         auto fut = ref_iertr::now();
         if (result.refcount == 0) {
           if (result.addr.is_paddr() &&
-              !result.addr.get_paddr().is_zero()) {
+              result.addr.get_paddr().is_real_location()) {
             if (extent) {
               cache->retire_extent(t, extent);
             } else {
