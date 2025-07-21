@@ -31,6 +31,10 @@ public:
   RetiredExtentPlaceholder(extent_len_t length)
     : CachedExtent(CachedExtent::retired_placeholder_construct_t{}, length) {}
 
+  void on_invalidated(Transaction&) final {
+    this->lba_child_node_t::on_invalidated();
+  }
+
   CachedExtentRef duplicate_for_write(Transaction&) final {
     ceph_abort_msg("Should never happen for a placeholder");
     return CachedExtentRef();
