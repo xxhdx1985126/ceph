@@ -447,8 +447,8 @@ BtreeLBAManager::clone_mapping(
 	assert(mapping.direct_cursor->is_viewable());
 	return update_refcount(c.trans, cursor.get(), 1, false
 	).si_then([&mapping](auto res) {
-	  assert(!res.get_cursor().is_indirect());
-	  mapping.direct_cursor = res.take_cursor();
+	  assert(!res.result.mapping.is_indirect());
+	  mapping.direct_cursor = std::move(res.result.mapping.direct_cursor);
 	  return std::move(mapping);
 	});
       });
@@ -1125,19 +1125,12 @@ BtreeLBAManager::update_refcount(
       TRACET("decref intermediate {} -> {}",
 	     t, addr, val.pladdr.get_laddr());
       return _decref_intermediate(t, val.pladdr.get_laddr(), val.len
-      ).si_then([ires=std::move(res)](auto res) mutable {
-	return ires.get_removed_mapping().next->refresh(
-	).si_then([res=std::move(res), ires=std::move(ires)]() mutable {
-	  if (res.is_removed_mapping()) {
-	    res.get_removed_mapping().next =
-	      std::move(ires.get_removed_mapping().next);
-	    return std::move(res);
-	  } else {
-	    auto &cursor = res.get_cursor();
-	    return update_mapping_ret_bare_t{
-	      cursor.key, *cursor.val,
-	      std::move(ires.get_removed_mapping().next)};
-	  }
+      ).si_then([indirect_res=std::move(res), this](auto res) mutable {
+	return indirect_res.get_removed_mapping().next->refresh(
+	).si_then([this, res=std::move(res),
+		  ires=std::move(indirect_res)]() mutable {
+	  return update_mapping_iertr::make_ready_future<
+	    ref_update_result_t>(get_ref_update_result(ires, std::move(res)));
 	});
       }).handle_error_interruptible(
 	update_mapping_iertr::pass_further{},
@@ -1147,7 +1140,7 @@ BtreeLBAManager::update_refcount(
       );
     }
     return update_mapping_iertr::make_ready_future<
-      update_mapping_ret_bare_t>(std::move(res));
+      ref_update_result_t>(get_ref_update_result(res, std::nullopt));
   });
 }
 
@@ -1325,8 +1318,8 @@ BtreeLBAManager::remap_mappings(
       return update_refcount(c.trans, &cursor, -1, false
       ).si_then([&mapping, &btree, &iter, c, &ret,
 		&remaps, pladdr=val.pladdr](auto r) {
-	assert(r.is_removed_mapping());
-	auto &cursor = *r.get_removed_mapping().next;
+	assert(r.result.refcount == 0);
+	auto &cursor = r.result.mapping.get_effective_cursor();
 	iter = btree.make_partial_iter(c, cursor);
 	return trans_intr::do_for_each(
 	  remaps,

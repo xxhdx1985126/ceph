@@ -207,12 +207,15 @@ TransactionManager::ref_ret TransactionManager::remove(
   DEBUGT("{} ...", t, *ref);
   return lba_manager->remove_mapping(t, ref->get_laddr()
   ).si_then([this, FNAME, &t, ref](auto result) {
-    if (result.refcount == 0) {
+    assert(!result.direct_result);
+    auto &primary_result = result.result;
+    if (primary_result.refcount == 0) {
       cache->retire_extent(t, ref);
     }
     DEBUGT("removed {}~0x{:x} refcount={} -- {}",
-           t, result.addr, result.length, result.refcount, *ref);
-    return result.refcount;
+           t, primary_result.addr, primary_result.length,
+           primary_result.refcount, *ref);
+    return primary_result.refcount;
   });
 }
 
@@ -225,17 +228,23 @@ TransactionManager::ref_ret TransactionManager::remove(
   return lba_manager->remove_mapping(t, offset
   ).si_then([this, FNAME, offset, &t](auto result) -> ref_ret {
     auto fut = ref_iertr::now();
-    if (result.refcount == 0) {
-      if (result.addr.is_paddr() &&
-          !result.addr.get_paddr().is_zero()) {
-        fut = cache->retire_extent_addr(
-          t, result.addr.get_paddr(), result.length);
-      }
+    auto &primary_result = result.result;
+    assert(primary_result.refcount == 0);
+    if (primary_result.need_to_remove_extent()) {
+      ceph_assert(!result.direct_result);
+      fut = cache->retire_extent_addr(
+        t, primary_result.addr.get_paddr(), primary_result.length);
+    } else if (auto &direct_result = result.direct_result;
+               direct_result.has_value() &&
+               direct_result->need_to_remove_extent()) {
+      fut = cache->retire_extent_addr(
+        t, direct_result->addr.get_paddr(), direct_result->length);
     }
     return fut.si_then([result=std::move(result), offset, &t, FNAME] {
       DEBUGT("removed {}~0x{:x} refcount={} -- offset={}",
-             t, result.addr, result.length, result.refcount, offset);
-      return result.refcount;
+             t, result.result.addr, result.result.length,
+             result.result.refcount, offset);
+      return result.result.refcount;
     });
   });
 }
@@ -259,21 +268,30 @@ TransactionManager::ref_iertr::future<LBAMapping> TransactionManager::remove(
       return lba_manager->remove_mapping(t, std::move(mapping)
       ).si_then([FNAME, this, extent, &t, offset](auto result) {
         auto fut = ref_iertr::now();
-        if (result.refcount == 0) {
-          if (result.addr.is_paddr() &&
-              result.addr.get_paddr().is_real_location()) {
-            if (extent) {
-              cache->retire_extent(t, extent);
-            } else {
-              fut = cache->retire_extent_addr(
-                t, result.addr.get_paddr(), result.length);
-            }
+        auto &primary_result = result.result;
+        assert(primary_result.refcount == 0);
+        if (primary_result.need_to_remove_extent()) {
+          ceph_assert(!result.direct_result);
+          if (extent) {
+            cache->retire_extent(t, extent);
+          } else {
+            fut = cache->retire_extent_addr(
+              t, primary_result.addr.get_paddr(), primary_result.length);
           }
+        } else if (auto &direct_result = result.direct_result;
+                   direct_result.has_value() &&
+                   direct_result->need_to_remove_extent()) {
+          ceph_assert(!extent);
+          fut = cache->retire_extent_addr(
+            t, direct_result->addr.get_paddr(), direct_result->length);
+        } else {
+          ceph_assert(!extent);
         }
         return fut.si_then([result=std::move(result), &t, FNAME, offset]() mutable {
           DEBUGT("removed {}~0x{:x} refcount={} -- offset={}",
-                 t, result.addr, result.length, result.refcount, offset);
-          return std::move(result.mapping);
+                 t, result.result.addr, result.result.length,
+                 result.result.refcount, offset);
+          return std::move(result.result.mapping);
         });
       });
     });
