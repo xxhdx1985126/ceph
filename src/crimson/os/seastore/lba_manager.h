@@ -65,6 +65,10 @@ public:
     laddr_t offset,
     bool search_containing = false) = 0;
 
+  /*
+   * Fetches the mapping corresponding to the "extent"
+   *
+   */
   virtual get_mapping_ret get_mapping(
     Transaction &t,
     LogicalChildNode &extent) = 0;
@@ -98,6 +102,11 @@ public:
     laddr_t hint,
     std::vector<LogicalChildNodeRef> extents,
     extent_ref_count_t refcount) = 0;
+  /*
+   * Allocate extents at "pos"
+   *
+   * Returns the inserted lba mappings
+   */
   virtual alloc_extents_ret alloc_extents(
     Transaction &t,
     LBAMapping pos,
@@ -121,6 +130,10 @@ public:
     laddr_t hint,
     extent_len_t len) = 0;
 
+  /*
+   * Inserts a zero mapping at the position "pos" with
+   * the key "laddr" and length "len"
+   */
   virtual alloc_extent_ret reserve_region(
     Transaction &t,
     LBAMapping pos,
@@ -150,11 +163,21 @@ public:
   /**
    * Removes a mapping and deal with indirection
    *
-   * @return returns resulting refcount
+   * @return returns the information about the removed
+   * mappings including the corresponding direct mapping
+   * if the mapping of laddr is indirect.
    */
   virtual ref_ret remove_mapping(
     Transaction &t,
     laddr_t addr) = 0;
+
+  /*
+   * Removes the mapping and deal with indirection
+   *
+   * @return returns the information about the removed
+   * mappings including the corresponding direct mapping
+   * if the mapping of laddr is indirect.
+   */
   virtual ref_ret remove_mapping(
     Transaction &t,
     LBAMapping mapping) = 0;
@@ -287,6 +310,11 @@ public:
   using complete_lba_mapping_iertr = get_mappings_iertr;
   using complete_lba_mapping_ret =
     complete_lba_mapping_iertr::future<LBAMapping>;
+  /*
+   * Completes an incomplete indirect mappings
+   *
+   * No effect if the indirect mapping is already complete
+   */
   virtual complete_lba_mapping_ret complete_indirect_lba_mapping(
     Transaction &t,
     LBAMapping mapping) = 0;
