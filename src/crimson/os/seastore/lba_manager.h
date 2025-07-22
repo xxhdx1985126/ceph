@@ -118,6 +118,10 @@ public:
   };
   using clone_mapping_iertr = alloc_extent_iertr;
   using clone_mapping_ret = clone_mapping_iertr::future<clone_mapping_ret_t>;
+  /*
+   * Clones "mapping" at the position "pos" with new laddr "laddr", if updateref
+   * is true, update the refcount of the mapping "mapping"
+   */
   virtual clone_mapping_ret clone_mapping(
     Transaction &t,
     LBAMapping pos,
