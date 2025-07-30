@@ -1061,6 +1061,7 @@ BtreeLBAManager::_decref_intermediate(
       auto val = iter.get_val();
       ceph_assert(key + val.len >= addr + len);
       ceph_assert(val.pladdr.is_paddr());
+      ceph_assert(!val.pladdr.get_paddr().is_zero());
       ceph_assert(val.refcount >= 1);
       val.refcount -= 1;
 
@@ -1069,10 +1070,15 @@ BtreeLBAManager::_decref_intermediate(
 	     c.trans, key, val);
 
       if (val.refcount == 0) {
+	std::optional<removed_child_t> removed_child =
+	  iter.get_leaf_node()->template get_child<LogicalChildNode>(
+	    c.trans, c.cache, iter.get_leaf_pos(), iter.get_key());
 	return btree.remove(c, iter
-	).si_then([key, val, c](auto iter) {
+	).si_then([removed_child=std::move(removed_child),
+		  key, val, c](auto iter) mutable {
 	  return ref_iertr::make_ready_future<
-	    update_mapping_ret_bare_t>(key, val, iter.get_cursor(c));
+	    update_mapping_ret_bare_t>(
+	      key, val, iter.get_cursor(c), std::move(removed_child));
 	});
       } else {
 	return btree.update(c, iter, val
@@ -1160,12 +1166,19 @@ BtreeLBAManager::_update_mapping(
     auto iter = btree.make_partial_iter(c, cursor);
     auto ret = f(iter.get_val());
     if (ret.refcount == 0) {
+      std::optional<removed_child_t> removed_child;
+      if (!cursor.is_indirect() && !cursor.get_paddr().is_zero()) {
+	auto parent = cursor.parent->cast<LBALeafNode>();
+	removed_child = parent->template get_child<LogicalChildNode>(
+	  c.trans, c.cache, cursor.pos, cursor.key);
+      }
       return btree.remove(
 	c,
 	iter
-      ).si_then([ret, c, laddr=cursor.key](auto iter) {
+      ).si_then([removed_child=std::move(removed_child),
+		ret, c, laddr=cursor.key](auto iter) mutable {
 	return update_mapping_ret_bare_t{
-	  laddr, std::move(ret), iter.get_cursor(c)};
+	  laddr, std::move(ret), iter.get_cursor(c), std::move(removed_child)};
       });
     } else {
       return btree.update(
@@ -1212,14 +1225,24 @@ BtreeLBAManager::_update_mapping(
 	  return crimson::ct_error::enoent::make();
 	}
 
-	auto ret = f(iter.get_val());
+	auto val = iter.get_val();
+	auto ret = f(val);
 	if (ret.refcount == 0) {
 	  assert(nextent == nullptr);
+	  std::optional<removed_child_t> removed_child;
+	  if (val.pladdr.is_paddr() &&
+	      !val.pladdr.get_paddr().is_zero()) {
+	    removed_child = iter.get_leaf_node()->template get_child<
+	      LogicalChildNode>(
+		c.trans, c.cache, iter.get_leaf_pos(), iter.get_key());
+	  }
 	  return btree.remove(
 	    c,
 	    iter
-	  ).si_then([addr, ret, c](auto iter) {
-	    return update_mapping_ret_bare_t(addr, ret, iter.get_cursor(c));
+	  ).si_then([removed_child=std::move(removed_child),
+		    addr, ret, c](auto iter) mutable {
+	    return update_mapping_ret_bare_t(
+	      addr, ret, iter.get_cursor(c), std::move(removed_child));
 	  });
 	} else {
 	  return btree.update(

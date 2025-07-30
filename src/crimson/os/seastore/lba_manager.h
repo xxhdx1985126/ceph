@@ -144,6 +144,8 @@ public:
     laddr_t hint,
     extent_len_t len) = 0;
 
+  using removed_child_t = get_child_ret_t<
+    lba::LBALeafNode, LogicalChildNode>;
   struct mapping_update_result_t {
     laddr_t direct_key;
     extent_ref_count_t refcount = 0;
@@ -152,6 +154,10 @@ public:
     LBAMapping mapping; // the mapping pointing to the updated lba entry if
 			// refcount is non-zero; the next lba entry or the
 			// end mapping otherwise.
+    // if the removed mapping corresponds to an extent (non-indirect
+    // and non-zero), this field is that extent or its pos in the
+    // stable lba leaf node.
+    std::optional<removed_child_t> removed_child;
     bool need_to_remove_extent() const {
       return refcount == 0 && addr.is_paddr() && !addr.get_paddr().is_zero();
     }

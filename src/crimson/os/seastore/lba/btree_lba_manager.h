@@ -361,13 +361,22 @@ private:
 	: ret(std::move(cursor)) {}
 
     update_mapping_ret_bare_t(
-      laddr_t laddr, lba_map_val_t value, LBACursorRef &&cursor)
-	: ret(removed_mapping_t{laddr, value, std::move(cursor)}) {}
+      laddr_t laddr,
+      lba_map_val_t value,
+      LBACursorRef &&cursor,
+      std::optional<removed_child_t> &&removed_child)
+	: ret(removed_mapping_t{
+	    laddr,
+	    value,
+	    std::move(cursor),
+	    std::move(removed_child)}) 
+      {}
 
     struct removed_mapping_t {
       laddr_t laddr;
       lba_map_val_t map_value;
       LBACursorRef next;
+      std::optional<removed_child_t> removed_child;
     };
     std::variant<removed_mapping_t, LBACursorRef> ret;
 
@@ -416,7 +425,8 @@ private:
 	      val.len,
 	      v.next->is_indirect()
 		? LBAMapping::create_indirect(nullptr, std::move(v.next))
-		: LBAMapping::create_direct(std::move(v.next))};
+		: LBAMapping::create_direct(std::move(v.next)),
+	      std::move(v.removed_child)};
     } else {
       assert(result.is_alive_mapping());
       auto &c = result.get_cursor();
