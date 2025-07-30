@@ -1276,7 +1276,7 @@ private:
 	  t, original_laddr, original_len, original_paddr, remaps.size(), pin);
         ceph_assert(!pin.is_clone());
 	fut = pin.refresh().si_then([this, &t, &pin, original_paddr,
-				    original_len](auto newpin) {
+				    original_laddr, original_len](auto newpin) {
 	  pin = std::move(newpin);
 	  if (full_extent_integrity_check) {
 	    return read_pin<T>(t, pin
@@ -1298,7 +1298,11 @@ private:
 	      });
 	    } else {
 	      // absent
-	      cache->retire_absent_extent_addr(t, original_paddr, original_len);
+	      auto retired_placeholder = cache->retire_absent_extent_addr(
+		t, original_laddr, original_paddr, original_len
+	      )->template cast<RetiredExtentPlaceholder>();
+	      auto &unlinked_child = std::get<0>(ret);
+	      unlinked_child.child_pos.link_child(retired_placeholder.get());
 	      return base_iertr::make_ready_future<TCachedExtentRef<T>>();
 	    }
 	  }

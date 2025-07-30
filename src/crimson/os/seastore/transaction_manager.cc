@@ -228,17 +228,38 @@ TransactionManager::ref_ret TransactionManager::remove(
   return lba_manager->remove_mapping(t, offset
   ).si_then([this, FNAME, offset, &t](auto result) -> ref_ret {
     auto fut = ref_iertr::now();
-    auto &primary_result = result.result;
-    assert(primary_result.refcount == 0);
-    if (primary_result.need_to_remove_extent()) {
+    assert(result.result.refcount == 0);
+    std::optional<LBAManager::removed_child_t> removed_child;
+    paddr_t extent_paddr = P_ADDR_NULL;
+    extent_len_t extent_len = 0;
+    if (auto &primary_result = result.result;
+        primary_result.need_to_remove_extent()) {
       ceph_assert(!result.direct_result);
-      fut = cache->retire_extent_addr(
-        t, primary_result.addr.get_paddr(), primary_result.length);
+      ceph_assert(primary_result.removed_child.has_value());
+      removed_child = std::move(primary_result.removed_child);
+      extent_paddr = primary_result.addr.get_paddr();
+      extent_len = primary_result.length;
     } else if (auto &direct_result = result.direct_result;
                direct_result.has_value() &&
                direct_result->need_to_remove_extent()) {
-      fut = cache->retire_extent_addr(
-        t, direct_result->addr.get_paddr(), direct_result->length);
+      ceph_assert(direct_result->removed_child.has_value());
+      removed_child = std::move(direct_result->removed_child);
+      extent_paddr = direct_result->addr.get_paddr();
+      extent_len = direct_result->length;
+    }
+    if (removed_child->has_child()) {
+      fut = removed_child->get_child_fut(
+      ).si_then([this, &t](auto extent) {
+        cache->retire_extent(t, extent);
+      });
+    } else {
+      assert(extent_paddr != P_ADDR_NULL);
+      assert(extent_len != 0);
+      auto retired_placeholder = cache->retire_absent_extent_addr(
+        t, offset, extent_paddr, extent_len
+      )->template cast<RetiredExtentPlaceholder>();
+      auto &child_pos = removed_child->get_child_pos();
+      child_pos.link_child(retired_placeholder.get());
     }
     return fut.si_then([result=std::move(result), offset, &t, FNAME] {
       DEBUGT("removed {}~0x{:x} refcount={} -- offset={}",
@@ -272,18 +293,40 @@ TransactionManager::ref_iertr::future<LBAMapping> TransactionManager::remove(
         assert(primary_result.refcount == 0);
         if (primary_result.need_to_remove_extent()) {
           ceph_assert(!result.direct_result);
+          ceph_assert(primary_result.removed_child.has_value());
           if (extent) {
             cache->retire_extent(t, extent);
           } else {
-            fut = cache->retire_extent_addr(
-              t, primary_result.addr.get_paddr(), primary_result.length);
+            auto &removed_child = *primary_result.removed_child;
+            auto retired_placeholder = cache->retire_absent_extent_addr(
+              t,
+              primary_result.direct_key,
+              primary_result.addr.get_paddr(),
+              primary_result.length
+            )->template cast<RetiredExtentPlaceholder>();
+            auto &child_pos = removed_child.get_child_pos();
+            child_pos.link_child(retired_placeholder.get());
           }
         } else if (auto &direct_result = result.direct_result;
                    direct_result.has_value() &&
                    direct_result->need_to_remove_extent()) {
           ceph_assert(!extent);
-          fut = cache->retire_extent_addr(
-            t, direct_result->addr.get_paddr(), direct_result->length);
+          auto &removed_child = *direct_result->removed_child;
+          if (removed_child.has_child()) {
+            fut = removed_child.get_child_fut(
+            ).si_then([this, &t](auto extent) {
+              cache->retire_extent(t, extent);
+            });
+          } else {
+            auto retired_placeholder = cache->retire_absent_extent_addr(
+              t,
+              direct_result->direct_key,
+              direct_result->addr.get_paddr(),
+              direct_result->length
+            )->template cast<RetiredExtentPlaceholder>();
+            auto &child_pos = removed_child.get_child_pos();
+            child_pos.link_child(retired_placeholder.get());
+          }
         } else {
           ceph_assert(!extent);
         }
