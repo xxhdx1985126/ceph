@@ -805,6 +805,7 @@ seastar::future<int> run_tool(StoreTool& st, objectstore_config_t& config) {
         co_return object_data_result.error();
       }
 
+      fmt::println(std::cout, "set bytes to pgid: {}, object: {}", config.coll, config.ghobj);
       bool success = co_await st.set_bytes(config.coll, config.ghobj, *object_data_result);
       if (success) {
         fmt::println(std::cout, "set bytes success: data size={}", object_data_result->size());
@@ -1085,15 +1086,9 @@ int main(int argc, const char* argv[])
             auto stop_conf = seastar::deferred_stop(sharded_conf());
             local_conf().start().get();
             seastar_apps_lib::stop_signal should_stop;
-            if (config.debug) {
-              seastar::global_logger_registry().set_all_loggers_level(
-                seastar::log_level::debug
-              );
-            } else {
-              seastar::global_logger_registry().set_all_loggers_level(
-                seastar::log_level::error
-              );
-            }
+	    seastar::global_logger_registry().set_all_loggers_level(
+	      seastar::log_level::debug
+	    );
             auto store = crimson::os::FuturizedStore::create(
               config.type,
               config.data_path,
