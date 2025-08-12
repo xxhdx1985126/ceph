@@ -1383,6 +1383,38 @@ ObjectDataHandler::clear_ret ObjectDataHandler::clear(
     });
 }
 
+ObjectDataHandler::clone_ret
+ObjectDataHandler::do_clone(
+  context_t ctx,
+  object_data_t &object_data,
+  LBAMapping first_mapping)
+{
+  LOG_PREFIX("ObjectDataHandler::do_clone");
+  auto reserve_len = object_data.get_reserved_data_len();
+  object_data.clear();
+  auto mapping = co_await prepare_data_reservation(
+    ctx, object_data, reserve_len);
+  ceph_assert(mapping.has_value());
+  ctx.onode.unset_need_cow(ctx.t);
+  DEBUGT("new obj reserve_data_base: {}, len 0x{:x}",
+    ctx.t,
+    object_data.get_reserved_data_base(),
+    object_data.get_reserved_data_len());
+  auto pos = co_await ctx.tm.remove(ctx.t, std::move(*mapping)
+  ).handle_error_interruptible(
+    clone_iertr::pass_further{},
+    crimson::ct_error::assert_all{"unexpected enoent"}
+  );
+  auto base = object_data.get_reserved_data_base();
+  auto len = object_data.get_reserved_data_len();
+  auto shared_direct_mapping = co_await ctx.tm.clone_range(
+    ctx.t, base, len, std::move(pos), std::move(first_mapping), true);
+  if (ctx.d_onode != nullptr &&
+      shared_direct_mapping) {
+    ctx.d_onode->set_need_cow(ctx.t);
+  }
+}
+
 ObjectDataHandler::clone_ret ObjectDataHandler::clone(
   context_t ctx)
 {
@@ -1403,50 +1435,11 @@ ObjectDataHandler::clone_ret ObjectDataHandler::clone(
     }
     return ctx.tm.get_pin(ctx.t, object_data.get_reserved_data_base()
     ).si_then([this, &object_data, &d_object_data, ctx](auto mapping) {
-      auto old_base = object_data.get_reserved_data_base();
-      auto old_len = object_data.get_reserved_data_len();
-      return prepare_data_reservation(
-	ctx,
-	d_object_data,
-	object_data.get_reserved_data_len()
-      ).si_then([&object_data, &d_object_data, ctx](auto mapping) {
-	assert(!object_data.is_null());
-	assert(mapping);
-	LOG_PREFIX(ObjectDataHandler::clone);
-	DEBUGT("cloned obj reserve_data_base: {}, len 0x{:x}",
-	  ctx.t,
-	  d_object_data.get_reserved_data_base(),
-	  d_object_data.get_reserved_data_len());
-	return ctx.tm.remove(ctx.t, std::move(*mapping));
-      }).si_then([mapping, &d_object_data, ctx](auto pos) mutable {
-	auto base = d_object_data.get_reserved_data_base();
-	auto len = d_object_data.get_reserved_data_len();
-	return ctx.tm.clone_range(
-	  ctx.t, base, len, std::move(pos), std::move(mapping), true);
-      }).si_then([ctx, &object_data, &d_object_data, this] {
-	object_data.clear();
-	return prepare_data_reservation(
-	  ctx,
-	  object_data,
-	  d_object_data.get_reserved_data_len()
-	).si_then([ctx, &object_data](auto mapping) {
-	  LOG_PREFIX("ObjectDataHandler::clone");
-	  DEBUGT("head obj reserve_data_base: {}, len 0x{:x}",
-	    ctx.t,
-	    object_data.get_reserved_data_base(),
-	    object_data.get_reserved_data_len());
-	  return ctx.tm.remove(ctx.t, std::move(*mapping));
-	});
-      }).si_then([ctx, &object_data, mapping](auto pos) mutable {
-	auto base = object_data.get_reserved_data_base();
-	auto len = object_data.get_reserved_data_len();
-	return ctx.tm.clone_range(
-	  ctx.t, base, len, std::move(pos), std::move(mapping), false);
-      }).si_then([ctx, mapping, old_base, old_len] {
-	return ctx.tm.remove_mappings_in_range(
-	  ctx.t, old_base, old_len, std::move(mapping), true
-	).discard_result();
-      });
+      d_object_data.update_reserved(
+	object_data.get_reserved_data_base(),
+	object_data.get_reserved_data_len());
+      ceph_assert(ctx.d_onode);
+      return do_clone(ctx, object_data, std::move(mapping));
     }).handle_error_interruptible(
       clone_iertr::pass_further{},
       crimson::ct_error::assert_all{"unexpected enoent"}

@@ -337,6 +337,11 @@ private:
     std::optional<bufferlist> &&bl,
     LBAMapping first_mapping);
 
+  clone_ret do_clone(
+    context_t ctx,
+    object_data_t &object_data,
+    LBAMapping first_mapping);
+
   /// Ensures object_data reserved region is prepared
   write_iertr::future<std::optional<LBAMapping>>
   prepare_data_reservation(
