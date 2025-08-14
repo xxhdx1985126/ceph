@@ -625,77 +625,100 @@ public:
     });
   }
 
+  struct clone_range_ret_t {
+    bool shared_direct_mapping = false;
+    LBAMapping next_mapping;
+  };
   // clone the mappings in range base~len, returns true if there exists
   // direct mappings that are cloned.
   using clone_iertr = base_iertr;
-  using clone_ret = clone_iertr::future<bool>;
+  using clone_ret = clone_iertr::future<clone_range_ret_t>;
   clone_ret clone_range(
     Transaction &t,
-    laddr_t base,
+    laddr_t src_base,
+    laddr_t dst_base,
+    extent_len_t offset,
     extent_len_t len,
     LBAMapping pos,
     LBAMapping mapping,
     bool updateref)
   {
     LOG_PREFIX(TransactionManager::clone_range);
-    SUBDEBUGT(seastore_tm, "object_data={}~{} mapping={} updateref={}",
-      t, base, len, mapping, updateref);
+    SUBDEBUGT(seastore_tm,
+      "src_base={}, dst_base={}, {}~{}, mapping={}, pos={}, updateref={}",
+      t, src_base, dst_base, offset, len, mapping, pos, updateref);
     return seastar::do_with(
       std::move(pos),
       std::move(mapping),
-      (extent_len_t)0,
+      offset,
+      len,
       false,
-      [&t, this, updateref, base, len]
-      (auto &pos, auto &mapping, auto &offset, auto &ret) {
-      return trans_intr::repeat(
-	[&t, this, &pos, &mapping, &offset, updateref, base, len, &ret]()
-	-> clone_iertr::future<seastar::stop_iteration> {
-	if (offset >= len) {
-	  return clone_iertr::make_ready_future<
-	    seastar::stop_iteration>(seastar::stop_iteration::yes);
-	}
-	if (!mapping.is_indirect() && mapping.is_zero_reserved()) {
-	  return reserve_region(
-	    t,
-	    std::move(pos),
-	    (base + offset).checked_to_laddr(),
-	    mapping.get_length()
-	  ).si_then([base, &offset](auto r) {
-	    assert((base + offset).checked_to_laddr() == r.get_key());
-	    offset += r.get_length();
-	    return r.next();
-	  }).si_then([&pos, &mapping](auto r) {
-	    pos = std::move(r);
-	    return mapping.next();
-	  }).si_then([&mapping](auto p) {
-	    mapping = std::move(p);
-	    return seastar::stop_iteration::no;
-	  }).handle_error_interruptible(
-	    clone_iertr::pass_further{},
-	    crimson::ct_error::assert_all{"unexpected error"}
-	  );
-	}
-	if (mapping.is_real()) {
-	  ret = true;
-	}
-	auto len = mapping.get_length();
-	return clone_pin(
-	  t, std::move(pos), std::move(mapping),
-	  (base + offset).checked_to_laddr(),
-	  0, len, updateref
-	).si_then([&offset, &pos, &mapping](auto ret) {
-	  offset += ret.cloned_mapping.get_length();
-	  return ret.cloned_mapping.next(
-	  ).si_then([&pos, ret=std::move(ret)](auto p) mutable {
-	    pos = std::move(p);
-	    return ret.orig_mapping.next();
-	  }).si_then([&mapping](auto p) {
-	    mapping = std::move(p);
-	    return seastar::stop_iteration::no;
-	  });
+      [&t, this, updateref, src_base, dst_base]
+      (auto &pos, auto &mapping, auto &cloned_to,
+       auto &left, bool &shared_direct) {
+      return pos.refresh().si_then([&pos, &mapping](auto s) {
+        pos = std::move(s);
+        return mapping.refresh();
+      }).si_then([this, &t, &pos, &mapping, src_base, updateref,
+                  &cloned_to, &left, &shared_direct, dst_base](auto m) {
+        mapping = std::move(m);
+        return trans_intr::repeat(
+          [&t, this, &pos, &mapping, &cloned_to, &shared_direct,
+          updateref, src_base, dst_base, &left]()
+          -> clone_iertr::future<seastar::stop_iteration> {
+          if (left == 0) {
+            return clone_iertr::make_ready_future<
+              seastar::stop_iteration>(seastar::stop_iteration::yes);
+          }
+          auto src_offset = src_base.template get_byte_distance<
+            extent_len_t>(mapping.get_key());
+          ceph_assert(cloned_to >= src_offset);
+          extent_len_t clone_offset = cloned_to - src_offset;
+          extent_len_t clone_len = mapping.get_length() - clone_offset;
+          clone_len = std::min(clone_len, left);
+          left -= clone_len;
+          if (!mapping.is_indirect() && mapping.get_val().is_zero()) {
+            return reserve_region(
+              t,
+              std::move(pos),
+              (dst_base + cloned_to).checked_to_laddr(),
+              clone_len
+            ).si_then([dst_base, &cloned_to, clone_len](auto r) {
+              assert((dst_base + cloned_to).checked_to_laddr() == r.get_key());
+              cloned_to += clone_len;
+              return r.next();
+            }).si_then([&pos, &mapping](auto r) {
+              pos = std::move(r);
+              return mapping.next();
+            }).si_then([&mapping](auto p) {
+              mapping = std::move(p);
+              return seastar::stop_iteration::no;
+            }).handle_error_interruptible(
+              clone_iertr::pass_further{},
+              crimson::ct_error::assert_all{"unexpected error"}
+            );
+          }
+	  if (mapping.is_real()) {
+	    shared_direct = true;
+	  }
+          return clone_pin(
+            t, std::move(pos), std::move(mapping),
+            (dst_base + cloned_to).checked_to_laddr(),
+            clone_offset, clone_len, updateref
+          ).si_then([&cloned_to, clone_len, &pos, &mapping](auto ret) {
+            cloned_to += clone_len;
+            return ret.cloned_mapping.next(
+            ).si_then([&pos, ret=std::move(ret)](auto p) mutable {
+              pos = std::move(p);
+              return ret.orig_mapping.next();
+            }).si_then([&mapping](auto p) {
+              mapping = std::move(p);
+              return seastar::stop_iteration::no;
+            });
+          });
 	});
-      }).si_then([&ret] {
-	return ret;
+      }).si_then([&shared_direct, &pos] {
+	return clone_range_ret_t{shared_direct, std::move(pos)};
       });
     });
   }
