@@ -1664,25 +1664,23 @@ ObjectDataHandler::copy_on_write(
 {
   return with_object_data(
     ctx,
-    seastar::coroutine::lambda(
-      [ctx, this](auto &object_data) -> clone_ret {
-      auto mapping = co_await ctx.tm.get_pin(
-	ctx.t, object_data.get_reserved_data_base()
-      ).handle_error_interruptible(
-	clone_iertr::pass_further{},
-	crimson::ct_error::assert_all{"unexpected enoent"}
-      );
-      auto old_base = object_data.get_reserved_data_base();
-      auto old_len = object_data.get_reserved_data_len();
-      co_await do_clone(ctx, object_data, mapping);
-      co_await ctx.tm.remove_mappings_in_range(
-	ctx.t, old_base, old_len, std::move(mapping), true
-      ).handle_error_interruptible(
-	clone_iertr::pass_further{},
-	crimson::ct_error::assert_all{"unexpected enoent"}
-      ).discard_result();
-    })
-  );
+    [ctx, this](auto &object_data) -> clone_ret {
+    auto mapping = co_await ctx.tm.get_pin(
+      ctx.t, object_data.get_reserved_data_base()
+    ).handle_error_interruptible(
+      clone_iertr::pass_further{},
+      crimson::ct_error::assert_all{"unexpected enoent"}
+    );
+    auto old_base = object_data.get_reserved_data_base();
+    auto old_len = object_data.get_reserved_data_len();
+    co_await do_clone(ctx, object_data, mapping);
+    co_await ctx.tm.remove_mappings_in_range(
+      ctx.t, old_base, old_len, std::move(mapping), true
+    ).handle_error_interruptible(
+      clone_iertr::pass_further{},
+      crimson::ct_error::assert_all{"unexpected enoent"}
+    ).discard_result();
+  });
 }
 
 ObjectDataHandler::clone_ret
