@@ -960,6 +960,28 @@ private:
   extent_2q_state_t cache_state = extent_2q_state_t::Fresh;
 
 protected:
+
+  void commit_to_prior() {
+    ceph_assert(prior_instance);
+    auto &prior = *prior_instance;
+    prior.dirty_from = std::move(dirty_from);
+    prior.ptr = std::move(ptr);
+    prior.length = length;
+    prior.loaded_length = loaded_length;
+    prior.buffer_space = std::move(buffer_space);
+    // XXX: We can go ahead and change the prior's version because
+    // transactions don't hold a local view of the version field,
+    // unlike FixedKVLeafNode::modifications
+    prior.version = version;
+    prior.poffset = std::move(poffset);
+    prior.user_hint = std::move(user_hint);
+    prior.rewrite_generation = std::move(rewrite_generation);
+    prior.last_touch_end = std::move(last_touch_end);
+    prior.cache_state = std::move(cache_state);
+    do_commit_to_prior();
+  }
+
+  virtual void do_commit_to_prior () = 0;
   trans_view_set_t mutation_pending_extents;
   trans_view_set_t retired_transactions;
 

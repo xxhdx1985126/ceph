@@ -61,6 +61,11 @@ class SeastoreNodeExtent final: public NodeExtent {
     return recorder.get();
   }
 
+  void do_commit_to_prior() final {
+    auto &prior = static_cast<SeastoreNodeExtent&>(*get_prior_instance());
+    prior.recorder = std::move(recorder);
+  }
+
   CachedExtentRef duplicate_for_write(Transaction&) override {
     return CachedExtentRef(new SeastoreNodeExtent(*this));
   }

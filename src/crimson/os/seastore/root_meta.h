@@ -29,6 +29,8 @@ struct RootMetaBlock : LogicalChildNode {
     return extent_types_t::ROOT_META;
   }
 
+  void do_commit_to_prior() final {}
+
   /// dumps root meta as delta
   ceph::bufferlist get_delta() final {
     ceph::bufferlist bl;

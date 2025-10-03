@@ -56,6 +56,10 @@ class TestReplayExtent final: public NodeExtent {
   void apply_delta(const ceph::bufferlist&) override {
     ceph_abort_msg("impossible path"); }
 
+  void do_commit_to_prior() final {
+    auto &prior = static_cast<TestReplayExtent&>(*get_prior_instance());
+    prior.recorder = std::move(recorder);
+  }
  private:
   TestReplayExtent(ceph::bufferptr&& ptr, DeltaRecorderURef&& recorder)
       : NodeExtent(std::move(ptr)), recorder(std::move(recorder)) {

@@ -70,6 +70,12 @@ struct TestBlock : crimson::os::seastore::LogicalChildNode {
 
   ceph::bufferlist get_delta() final;
 
+  void do_commit_to_prior() final {
+    auto &prior = static_cast<TestBlock&>(*get_prior_instance());
+    prior.delta = std::move(delta);
+    prior.modified_region = std::move(modified_region);
+  }
+
   void set_contents(char c, extent_len_t offset, extent_len_t len) {
     assert(offset + len <= get_length());
     assert(len > 0);
@@ -128,6 +134,11 @@ struct TestBlockPhysical : crimson::os::seastore::CachedExtent{
   static constexpr extent_types_t TYPE = extent_types_t::TEST_BLOCK_PHYSICAL;
   extent_types_t get_type() const final {
     return TYPE;
+  }
+
+  void do_commit_to_prior() final {
+    auto &prior = static_cast<TestBlockPhysical&>(*get_prior_instance());
+    prior.delta = std::move(delta);
   }
 
   void set_contents(char c, extent_len_t offset, extent_len_t len) {

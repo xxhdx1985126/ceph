@@ -244,6 +244,13 @@ struct ObjectDataBlock : crimson::os::seastore::LogicalChildNode {
   // to provide the local modified view during transaction
   overwrite_buf_t cached_overwrites;
 
+  void do_commit_to_prior() final {
+    auto &prior = static_cast<ObjectDataBlock&>(*get_prior_instance());
+    prior.delta = std::move(delta);
+    prior.modified_region = std::move(modified_region);
+    prior.cached_overwrites = std::move(cached_overwrites);
+  }
+
   explicit ObjectDataBlock(ceph::bufferptr &&ptr)
     : LogicalChildNode(std::move(ptr)) {}
   explicit ObjectDataBlock(const ObjectDataBlock &other, share_buffer_t s)

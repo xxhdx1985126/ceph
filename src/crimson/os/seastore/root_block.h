@@ -50,6 +50,7 @@ struct RootBlock : CachedExtent {
       backref_root_node(nullptr)
   {}
 
+  void do_commit_to_prior() final {}
   void on_rewrite(Transaction&, CachedExtent&, extent_len_t) final {}
 
   CachedExtentRef duplicate_for_write(Transaction&) final {

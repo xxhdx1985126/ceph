@@ -49,6 +49,10 @@ struct FixedKVNode : CachedExtent {
   virtual ~FixedKVNode() = default;
   virtual void do_on_rewrite(Transaction &t, CachedExtent &extent) = 0;
 
+  void do_commit_to_prior() override {
+    auto &prior = static_cast<FixedKVNode&>(*get_prior_instance());
+    prior.range = std::move(range);
+  }
   bool is_in_range(const node_key_t key) const {
     return get_node_meta().is_in_range(key);
   }
@@ -175,6 +179,12 @@ struct FixedKVInternalNode
 
   uint16_t get_node_split_pivot() const final{
     return this->get_split_pivot().get_offset();
+  }
+
+  void do_commit_to_prior() override {
+    base_t::do_commit_to_prior();
+    auto &prior = static_cast<this_type_t&>(*this->get_prior_instance());
+    prior.delta_buffer = std::move(delta_buffer);
   }
 
   void prepare_commit() final {
@@ -550,6 +560,18 @@ struct FixedKVLeafNode
   // it will increase for each transaction-local change, so that
   // modifications can be detected (see BtreeLBAMapping.parent_modifications)
   uint64_t modifications = 0;
+
+  void do_commit_to_prior() override {
+    base_t::do_commit_to_prior();
+    auto &prior = static_cast<this_type_t&>(*this->get_prior_instance());
+    // We don't touch the prior's modifications field here, because there maybe
+    // other transactions accessing the prior, and the modifications field is
+    // not to be tainted.
+    if (!prior.is_mutation_pending()) {
+      assert(!prior.modifications);
+    }
+    prior.delta_buffer = std::move(delta_buffer);
+  }
 
   void on_invalidated(Transaction &t) final {
     this->child_node_t::on_invalidated();
