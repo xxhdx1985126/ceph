@@ -507,7 +507,6 @@ public:
   StringKVInnerNodeLayout(char *buf) : buf(buf) {}
 
   void set_layout_buf(char *_buf) {
-    assert(buf == nullptr);
     assert(_buf != nullptr);
     buf = _buf;
   }
@@ -1142,7 +1141,6 @@ public:
 
   void set_layout_buf(char *_buf, extent_len_t _len) {
     assert(_len > 0);
-    assert(buf == nullptr);
     assert(_buf != nullptr);
     buf = _buf;
     len = _len;

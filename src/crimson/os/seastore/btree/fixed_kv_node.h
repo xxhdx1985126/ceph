@@ -185,10 +185,13 @@ struct FixedKVInternalNode
     base_t::do_commit_to_prior();
     auto &prior = static_cast<this_type_t&>(*this->get_prior_instance());
     prior.delta_buffer = std::move(delta_buffer);
+    prior.set_layout_buf(prior.get_bptr().c_str());
   }
 
-  void prepare_commit() final {
-    parent_node_t::prepare_commit();
+  void prepare_commit(Transaction &t) final {
+    if (!is_rewrite_transaction(t.get_src())) {
+      parent_node_t::prepare_commit();
+    }
   }
 
   virtual ~FixedKVInternalNode() {
@@ -201,11 +204,17 @@ struct FixedKVInternalNode
     }
   }
 
-  void on_initial_write() final {
+  void on_initial_write(Transaction &t) final {
     // All in-memory relative addrs are necessarily block-relative
     resolve_relative_addrs(this->get_paddr());
     if (this->is_btree_root()) {
       this->root_node_t::on_initial_write();
+    }
+    auto prior = this->get_prior_instance();
+    if (prior) {
+      // this must have been a rewriten extent
+      this->commit_to_prior(t);
+      static_cast<this_type_t&>(*prior).complete_io();
     }
   }
 
@@ -240,12 +249,14 @@ struct FixedKVInternalNode
     return CachedExtentRef(new node_type_t(*this));
   };
 
-  void on_replace_prior() final {
-    this->parent_node_t::on_replace_prior();
-    if (this->is_btree_root()) {
-      this->root_node_t::on_replace_prior();
-    } else {
-      this->child_node_t::on_replace_prior();
+  void on_replace_prior(Transaction &t) final {
+    if (!is_rewrite_transaction(t.get_src())) {
+      this->parent_node_t::on_replace_prior();
+      if (this->is_btree_root()) {
+        this->root_node_t::on_replace_prior();
+      } else {
+        this->child_node_t::on_replace_prior();
+      }
     }
   }
 
@@ -571,17 +582,24 @@ struct FixedKVLeafNode
       assert(!prior.modifications);
     }
     prior.delta_buffer = std::move(delta_buffer);
+    prior.set_layout_buf(prior.get_bptr().c_str());
   }
 
   void on_invalidated(Transaction &t) final {
     this->child_node_t::on_invalidated();
   }
 
-  void on_initial_write() final {
+  void on_initial_write(Transaction &t) final {
     // All in-memory relative addrs are necessarily block-relative
     this->resolve_relative_addrs(this->get_paddr());
     if (this->is_btree_root()) {
       this->root_node_t::on_initial_write();
+    }
+    auto prior = this->get_prior_instance();
+    if (prior) {
+      // this must have been a rewriten extent
+      this->commit_to_prior(t);
+      static_cast<this_type_t&>(*prior).complete_io();
     }
   }
 
@@ -613,19 +631,23 @@ struct FixedKVLeafNode
   }
 
   virtual void do_prepare_commit() = 0;
-  void prepare_commit() final {
-    do_prepare_commit();
+  void prepare_commit(Transaction &t) final {
+    if (!is_rewrite_transaction(t.get_src())) {
+      do_prepare_commit();
+    }
     modifications = 0;
   }
 
   virtual void do_on_replace_prior() = 0;
-  void on_replace_prior() final {
+  void on_replace_prior(Transaction &t) final {
     ceph_assert(!this->is_rewrite());
-    do_on_replace_prior();
-    if (this->is_btree_root()) {
-      this->root_node_t::on_replace_prior();
-    } else {
-      this->child_node_t::on_replace_prior();
+    if (!is_rewrite_transaction(t.get_src())) {
+      do_on_replace_prior();
+      if (this->is_btree_root()) {
+        this->root_node_t::on_replace_prior();
+      } else {
+        this->child_node_t::on_replace_prior();
+      }
     }
     modifications = 0;
   }

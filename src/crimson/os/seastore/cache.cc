@@ -910,11 +910,12 @@ void Cache::commit_replace_extent(
   assert(next->get_paddr() == prev->get_paddr());
   assert(next->get_paddr().is_absolute() || next->get_paddr().is_root());
   assert(next->version == prev->version + 1);
-  if (booting) {
+  const auto t_src = t.get_src();
+  bool t_rewrite = is_rewrite_transaction(t_src);
+  if (booting && !t_rewrite) {
     extents_index.replace(*next, *prev);
   }
 
-  const auto t_src = t.get_src();
   if (is_root_type(prev->get_type())) {
     assert(prev->is_stable_dirty());
     assert(prev->is_linked_to_list());
@@ -922,13 +923,24 @@ void Cache::commit_replace_extent(
     remove_from_dirty(prev, nullptr/* exclude root */);
     add_to_dirty(next, nullptr/* exclude root */);
   } else if (prev->is_stable_dirty()) {
-    replace_dirty(next, prev, t_src);
+    if (t_rewrite) {
+      next->commit_to_prior(t);
+    } else {
+      replace_dirty(next, prev, t_src);
+    }
   } else {
     pinboard->remove(*prev);
-    add_to_dirty(next, &t_src);
+    if (t_rewrite) {
+      next->commit_to_prior(t);
+      add_to_dirty(prev, &t_src);
+    } else {
+      add_to_dirty(next, &t_src);
+    }
   }
 
-  invalidate_extent(t, *prev);
+  if (!t_rewrite) {
+    invalidate_extent(t, *prev);
+  }
 }
 
 void Cache::invalidate_extent(
@@ -1312,10 +1324,10 @@ record_t Cache::prepare_record(
     }
 
     i->prepare_write();
-    i->prepare_commit();
+    i->prepare_commit(t);
 
     if (i->is_mutation_pending()) {
-      i->on_replace_prior();
+      i->on_replace_prior(t);
     } // else, is_exist_mutation_pending():
       // - it doesn't have prior_instance to replace
 
@@ -1377,12 +1389,12 @@ record_t Cache::prepare_record(
     delta_stat.increment(delta_length);
   }
 
-  t.for_each_finalized_fresh_block([](auto &e) {
+  t.for_each_finalized_fresh_block([&t](auto &e) {
     // fresh blocks' `prepare_commit` must be invoked before
     // retiering extents, this is because logical linked tree
     // nodes needs to access their prior instances in this
     // phase if they are rewritten.
-    e->prepare_commit();
+    e->prepare_commit(t);
   });
 
   /*
@@ -1417,7 +1429,22 @@ record_t Cache::prepare_record(
     retire_stat.increment(extent->get_length());
     DEBUGT("retired and remove extent {}~0x{:x} -- {}",
 	   t, extent->get_paddr(), extent->get_length(), *extent);
-    commit_retire_extent(t, extent);
+    if (!is_rewrite_transaction(t.get_src())) {
+      commit_retire_extent(t, extent);
+    } else {
+      assert(extent->is_stable());
+      if (extent->is_stable_dirty()) {
+        remove_from_dirty(extent, &trans_src);
+        // set the version to zero because the extent state is now clean
+        // in order to handle this transparently
+        extent->version = 0;
+        extent->dirty_from = JOURNAL_SEQ_MIN;
+        // no set_io_wait(), skip complete_commit()
+        extent->set_io_wait(CachedExtent::extent_state_t::CLEAN);
+      }
+      touch_extent_fully(*extent, &trans_src, t.get_cache_hint());
+      DEBUGT("inplace rewrite ool block is commmitted -- {}", t, *extent);
+    }
 
     // Note: commit extents and backref allocations in the same place
     if (is_backref_mapped_type(extent->get_type()) ||
@@ -1824,6 +1851,10 @@ void Cache::complete_commit(
   LOG_PREFIX(Cache::complete_commit);
   SUBTRACET(seastore_t, "final_block_start={}, start_seq={}",
             t, final_block_start, start_seq);
+  for (auto &i: t.retired_set) {
+    auto &extent = i.extent;
+    epm.mark_space_free(extent->get_paddr(), extent->get_length());
+  }
 
   backref_entry_refs_t backref_entries;
   t.for_each_finalized_fresh_block([&](const CachedExtentRef &i) {
@@ -1845,16 +1876,22 @@ void Cache::complete_commit(
     }
 #endif
     i->pending_for_transaction = TRANS_ID_NULL;
-    i->on_initial_write();
-    i->reset_prior_instance();
-    DEBUGT("add extent as fresh, inline={} -- {}",
-	   t, is_inline, *i);
-    i->invalidate_hints();
-    add_extent(i);
+    i->on_initial_write(t);
     const auto t_src = t.get_src();
-    touch_extent_fully(*i, &t_src, t.get_cache_hint());
-    i->complete_io();
+    if (is_rewrite_transaction(t_src)) {
+      DEBUGT("committing rewritten extent into existing, inline={} -- {}",
+             t, is_inline, *i);
+      touch_extent_fully(*i->get_prior_instance(), &t_src, t.get_cache_hint());
+    } else {
+      DEBUGT("add extent as fresh, inline={} -- {}",
+             t, is_inline, *i);
+      i->invalidate_hints();
+      add_extent(i);
+      touch_extent_fully(*i, &t_src, t.get_cache_hint());
+    }
+    i->reset_prior_instance();
     epm.commit_space_used(i->get_paddr(), i->get_length());
+    i->complete_io();
 
     // Note: commit extents and backref allocations in the same place
     if (is_backref_mapped_type(i->get_type())) {
@@ -1911,10 +1948,6 @@ void Cache::complete_commit(
     i->complete_io();
   }
 
-  for (auto &i: t.retired_set) {
-    auto &extent = i.extent;
-    epm.mark_space_free(extent->get_paddr(), extent->get_length());
-  }
   for (auto &i: t.existing_block_list) {
     if (!i->is_valid()) {
       continue;
@@ -1931,6 +1964,17 @@ void Cache::complete_commit(
 
   apply_backref_byseq(t.move_backref_entries(), start_seq);
   commit_backref_entries(std::move(backref_entries), start_seq);
+
+  if (is_rewrite_transaction(t.get_src())) {
+    t.for_each_finalized_fresh_block([&t](const CachedExtentRef &i) {
+      i->set_invalid(t);
+    });
+    for (auto &i: t.mutated_block_list) {
+      if (i->get_type() != extent_types_t::ROOT) {
+        i->set_invalid(t);
+      }
+    }
+  }
 }
 
 void Cache::init()

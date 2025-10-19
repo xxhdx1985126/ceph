@@ -149,7 +149,6 @@ protected:
   void set_root(bool is_root) {
     root = is_root;
   }
-  void do_commit_to_prior() final {}
 private:
   bool root = false;
   std::string begin;

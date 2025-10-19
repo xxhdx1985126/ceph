@@ -67,6 +67,11 @@ struct OMapInnerNode
     return iter_end();
   }
 
+  void do_commit_to_prior() final {
+    auto &prior = static_cast<OMapInnerNode&>(*get_prior_instance());
+    prior.set_layout_buf(prior.get_bptr().c_str());
+  }
+
   void do_on_rewrite(Transaction &t, LogicalCachedExtent &extent) final {
     auto &ext = static_cast<OMapInnerNode&>(extent);
     this->parent_node_t::on_rewrite(t, ext);
@@ -80,7 +85,9 @@ struct OMapInnerNode
     }
   }
 
-  void prepare_commit() final {
+  void prepare_commit(Transaction &t) final {
+    if (is_rewrite_transaction(t.get_src())) {
+    }
     if (unlikely(!is_seen_by_users())) {
       ceph_assert(is_rewrite());
       auto &prior = *get_prior_instance()->template cast<OMapInnerNode>();
@@ -111,12 +118,14 @@ struct OMapInnerNode
     }
   }
 
-  void do_on_replace_prior() final {
-    this->parent_node_t::on_replace_prior();
-    if (!this->is_btree_root()) {
-      auto &prior = *get_prior_instance()->template cast<OMapInnerNode>();
-      assert(prior.base_child_t::has_parent_tracker());
-      this->child_node_t::on_replace_prior();
+  void do_on_replace_prior(Transaction &t) final {
+    if (!is_rewrite_transaction(t.get_src())) {
+      this->parent_node_t::on_replace_prior();
+      if (!this->is_btree_root()) {
+        auto &prior = *get_prior_instance()->template cast<OMapInnerNode>();
+        assert(prior.base_child_t::has_parent_tracker());
+        this->child_node_t::on_replace_prior();
+      }
     }
   }
 
@@ -124,7 +133,7 @@ struct OMapInnerNode
     this->child_node_t::on_invalidated();
   }
 
-  void on_initial_write() final {
+  void on_initial_write(Transaction &) final {
     if (this->is_btree_root()) {
       //TODO: should involve RootChildNode
       this->child_node_t::reset_parent_tracker();
@@ -333,7 +342,17 @@ struct OMapLeafNode
     this->child_node_t::on_invalidated();
   }
 
-  void prepare_commit() final {
+  void do_commit_to_prior() final {
+    auto &prior = static_cast<OMapLeafNode&>(*get_prior_instance());
+    prior.set_layout_buf(
+      prior.get_bptr().c_str(),
+      prior.get_bptr().length());
+  }
+
+  void prepare_commit(Transaction &t) final {
+    if (is_rewrite_transaction(t.get_src())) {
+      return;
+    }
     if (unlikely(!is_seen_by_users())) {
       ceph_assert(is_rewrite());
       auto &prior = *get_prior_instance()->template cast<OMapLeafNode>();
@@ -363,9 +382,9 @@ struct OMapLeafNode
     }
   }
 
-  void do_on_replace_prior() final {
+  void do_on_replace_prior(Transaction &t) final {
     ceph_assert(!this->is_rewrite());
-    if (!this->is_btree_root()) {
+    if (!this->is_btree_root() && !is_rewrite_transaction(t.get_src())) {
       auto &prior = *get_prior_instance()->template cast<OMapLeafNode>();
       assert(prior.base_child_t::has_parent_tracker());
       this->child_node_t::on_replace_prior();

@@ -277,6 +277,19 @@ class CachedExtent
   : public boost::intrusive_ref_counter<
       CachedExtent, boost::thread_unsafe_counter>,
     public trans_spec_view_t {
+  // allow a dummy extent to pretend it is at a specific state
+  friend class onode::DummyNodeExtent;
+  friend class onode::TestReplayExtent;
+
+  uint32_t last_committed_crc = 0;
+
+  // Points at the prior stable version while in state MUTATION_PENDING
+  // or is rewriting (in state INITIAL_WRITE_PENDING).
+  CachedExtentRef prior_instance;
+
+  // time of the last modification
+  sea_time_point modify_time = NULL_TIME;
+protected:
   enum class extent_state_t : uint8_t {
     INITIAL_WRITE_PENDING, // In Transaction::write_set and fresh_block_list,
                            // has prior_instance under rewrite
@@ -300,18 +313,19 @@ class CachedExtent
     INVALID                // Part of no ExtentIndex set
   } state = extent_state_t::INVALID;
   friend std::ostream &operator<<(std::ostream &, extent_state_t);
-  // allow a dummy extent to pretend it is at a specific state
-  friend class onode::DummyNodeExtent;
-  friend class onode::TestReplayExtent;
 
-  uint32_t last_committed_crc = 0;
+  void set_io_wait(extent_state_t new_state) {
+    ceph_assert(!io_wait);
+    io_wait.emplace(seastar::shared_promise<>(), state);
+    state = new_state;
+    assert(is_data_stable());
+  }
 
-  // Points at the prior stable version while in state MUTATION_PENDING
-  // or is rewriting (in state INITIAL_WRITE_PENDING).
-  CachedExtentRef prior_instance;
-
-  // time of the last modification
-  sea_time_point modify_time = NULL_TIME;
+  void complete_io() {
+    ceph_assert(io_wait.has_value());
+    io_wait->pr.set_value();
+    io_wait = std::nullopt;
+  }
 
 public:
   void init(extent_state_t _state,
@@ -362,7 +376,7 @@ public:
    * Called prior to committing the transaction in which this extent
    * is living.
    */
-  virtual void prepare_commit() {}
+  virtual void prepare_commit(Transaction &t) {}
 
   /**
    * on_initial_write
@@ -371,7 +385,7 @@ public:
    * Implentation may use this call to fixup the buffer
    * with the newly available absolute get_paddr().
    */
-  virtual void on_initial_write() {}
+  virtual void on_initial_write(Transaction &t) {}
 
   /**
    * on_fully_loaded
@@ -413,7 +427,7 @@ public:
    * with the states of Cache and can't wait till transaction
    * completes.
    */
-  virtual void on_replace_prior() {}
+  virtual void on_replace_prior(Transaction&) {}
 
   /**
    * on_invalidated
@@ -921,19 +935,6 @@ private:
   };
   std::optional<io_wait_t> io_wait;
 
-  void set_io_wait(extent_state_t new_state) {
-    ceph_assert(!io_wait);
-    io_wait.emplace(seastar::shared_promise<>(), state);
-    state = new_state;
-    assert(is_data_stable());
-  }
-
-  void complete_io() {
-    ceph_assert(io_wait.has_value());
-    io_wait->pr.set_value();
-    io_wait = std::nullopt;
-  }
-
   seastar::future<> wait_io() {
     if (!io_wait) {
       return seastar::now();
@@ -961,11 +962,13 @@ private:
 
 protected:
 
-  void commit_to_prior() {
+  void commit_to_prior(Transaction&) {
     ceph_assert(prior_instance);
     auto &prior = *prior_instance;
-    prior.dirty_from = std::move(dirty_from);
-    prior.ptr = std::move(ptr);
+    prior.modify_time = modify_time;
+    prior.last_committed_crc = last_committed_crc;
+    prior.dirty_from = dirty_from;
+    prior.ptr = ptr;
     prior.length = length;
     prior.loaded_length = loaded_length;
     prior.buffer_space = std::move(buffer_space);
@@ -973,11 +976,12 @@ protected:
     // transactions don't hold a local view of the version field,
     // unlike FixedKVLeafNode::modifications
     prior.version = version;
-    prior.poffset = std::move(poffset);
-    prior.user_hint = std::move(user_hint);
-    prior.rewrite_generation = std::move(rewrite_generation);
-    prior.last_touch_end = std::move(last_touch_end);
-    prior.cache_state = std::move(cache_state);
+    prior.poffset = poffset;
+    prior.user_hint = user_hint;
+    prior.rewrite_generation = rewrite_generation;
+    prior.last_touch_end = last_touch_end;
+    prior.cache_state = cache_state;
+    prior.state = state;
     do_commit_to_prior();
   }
 

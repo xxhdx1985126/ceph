@@ -62,7 +62,7 @@ struct RootBlock : CachedExtent {
     return extent_types_t::ROOT;
   }
 
-  void on_replace_prior() final;
+  void on_replace_prior(Transaction&) final;
 
   /// dumps root as delta
   ceph::bufferlist get_delta() final {
@@ -91,7 +91,7 @@ struct RootBlock : CachedExtent {
     ceph_abort_msg("Root is only written via deltas");
   }
 
-  void on_initial_write() final {
+  void on_initial_write(Transaction &) final {
     ceph_abort_msg("Root is only written via deltas");
   }
 
