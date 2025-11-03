@@ -2022,7 +2022,7 @@ private:
           right->get_paddr(),
           right.get());
 
-        SUBTRACET(
+        SUBINFOT(
           seastore_fixedkv_tree,
           "splitted {} into left: {}, right: {}",
           c.trans,
@@ -2045,7 +2045,7 @@ private:
 
         if (split_from > 1) {
           auto &pos = iter.get_internal(split_from);
-          SUBTRACET(
+          SUBINFOT(
             seastore_fixedkv_tree,
             "splitting internal {} at depth {}, parent: {} at pos: {}",
             c.trans,
@@ -2065,7 +2065,7 @@ private:
           }
         } else {
           auto &pos = iter.leaf;
-          SUBTRACET(
+          SUBINFOT(
             seastore_fixedkv_tree,
             "splitting leaf {}, parent: {} at pos: {}",
             c.trans,
@@ -2238,7 +2238,7 @@ private:
       ? parent_pos.node->get_node_meta().end
       : next_iter->get_key();
     
-    SUBTRACET(seastore_fixedkv_tree, "parent: {}, node: {}", c.trans, *parent_pos.node, *pos.node);
+    SUBINFOT(seastore_fixedkv_tree, "parent: {}, node: {}", c.trans, *parent_pos.node, *pos.node);
     auto do_merge = [c, iter, donor_iter, donor_is_left, &parent_pos, &pos](
                 typename NodeType::Ref donor) {
       LOG_PREFIX(FixedKVBtree::merge_level);
@@ -2263,7 +2263,7 @@ private:
           parent_pos.pos--;
         }
 
-        SUBTRACET(seastore_fixedkv_tree, "l: {}, r: {}, replacement: {}", c.trans, *l, *r, *replacement);
+        SUBINFOT(seastore_fixedkv_tree, "l: {}, r: {}, replacement: {}", c.trans, *l, *r, *replacement);
         c.cache.retire_extent(c.trans, l);
         c.cache.retire_extent(c.trans, r);
         get_tree_stats<self_type>(c.trans).extents_num_delta--;
@@ -2303,7 +2303,7 @@ private:
           pos.pos = orig_position - replacement_l->get_size();
         }
 
-        SUBTRACET(
+        SUBINFOT(
           seastore_fixedkv_tree,
           "l: {}, r: {}, replacement_l: {}, replacement_r: {}",
           c.trans, *l, *r, *replacement_l, *replacement_r);

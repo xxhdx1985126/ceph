@@ -49,7 +49,7 @@ struct FixedKVNode : CachedExtent {
   virtual ~FixedKVNode() = default;
   virtual void do_on_rewrite(Transaction &t, CachedExtent &extent) = 0;
 
-  void do_commit_to_prior() override {
+  void do_commit_state_to_prior() override {
     auto &prior = static_cast<FixedKVNode&>(*get_prior_instance());
     prior.range = std::move(range);
   }
@@ -181,11 +181,14 @@ struct FixedKVInternalNode
     return this->get_split_pivot().get_offset();
   }
 
-  void do_commit_to_prior() override {
-    base_t::do_commit_to_prior();
+  void do_commit_data_to_prior() final {
     auto &prior = static_cast<this_type_t&>(*this->get_prior_instance());
     prior.delta_buffer = std::move(delta_buffer);
     prior.set_layout_buf(prior.get_bptr().c_str());
+  }
+
+  void sync_layout_buf() {
+    this->set_layout_buf(this->get_bptr().c_str());
   }
 
   void prepare_commit(Transaction &t) final {
@@ -210,11 +213,67 @@ struct FixedKVInternalNode
     if (this->is_btree_root()) {
       this->root_node_t::on_initial_write();
     }
-    auto prior = this->get_prior_instance();
-    if (prior) {
-      // this must have been a rewriten extent
-      this->commit_to_prior(t);
-      static_cast<this_type_t&>(*prior).complete_io();
+  }
+
+  template <template <typename...> typename Container, typename... T>
+  void merge_content_to(Transaction &t, Container<T...> &container) {
+    auto iter = this->begin();
+    for (auto &copy_dest : container) {
+      auto &pending_version = static_cast<this_type_t&>(*copy_dest);
+      ceph_assert(pending_version.is_pending());
+      auto it = pending_version.begin();
+      while (it != pending_version.end() && iter != this->end()) {
+        if (is_valid_child_ptr(pending_version.children[it->get_offset()])) {
+          it++;
+          continue;
+        }
+        if (it->get_key() == iter->get_key()) {
+          it->set_val(iter->get_val());
+          it++;
+          iter++;
+        } else if (it->get_key() > iter->get_key()) {
+          iter++;
+        } else {
+          it++;
+        }
+      }
+    }
+  }
+
+  void merge_content_to_pending_versions(Transaction &t) {
+    ceph_assert(is_rewrite_transaction(t.get_src()));
+    this->for_each_copy_dest_set(t, [this](auto &copy_dests) {
+      auto iter = this->begin();
+      for (auto &copy_dest : copy_dests.dests_by_key) {
+        auto &pending_version = static_cast<this_type_t&>(*copy_dest);
+        ceph_assert(pending_version.is_pending());
+        auto it = pending_version.begin();
+        while (it != pending_version.end() && iter != this->end()) {
+          if (is_valid_child_ptr(pending_version.children[it->get_offset()])) {
+            it++;
+            continue;
+          }
+          if (it->get_key() == iter->get_key()) {
+            it->set_val(iter->get_val());
+            it++;
+            iter++;
+          } else if (it->get_key() > iter->get_key()) {
+            iter++;
+          } else {
+            it++;
+          }
+        }
+      }
+    });
+  }
+
+  void set_invalidaters(Transaction &t) final {
+    auto copy_dests = this->get_copy_dests(t);
+    if (!copy_dests) {
+      return;
+    }
+    for (auto &dest : copy_dests->dests_by_key) {
+      this->invalidaters.emplace_back(dest);
     }
   }
 
@@ -245,7 +304,6 @@ struct FixedKVInternalNode
   }
 
   CachedExtentRef duplicate_for_write(Transaction&) override {
-    assert(delta_buffer.empty());
     return CachedExtentRef(new node_type_t(*this));
   };
 
@@ -258,6 +316,10 @@ struct FixedKVInternalNode
         this->child_node_t::on_replace_prior();
       }
     }
+  }
+
+  void clear_delta() final {
+    delta_buffer.clear();
   }
 
   void update(
@@ -472,6 +534,16 @@ struct FixedKVInternalNode
     return bl;
   }
 
+  void reapply_delta() final {
+    if (delta_buffer.empty()) {
+      return;
+    }
+    delta_buffer.replay(*this);
+    auto crc = calc_crc32c();
+    this->set_last_committed_crc(crc);
+    this->update_in_extent_chksum_field(crc);
+  }
+
   void apply_delta_and_adjust_crc(
     paddr_t base, const ceph::bufferlist &_bl) {
     assert(_bl.length());
@@ -572,8 +644,8 @@ struct FixedKVLeafNode
   // modifications can be detected (see BtreeLBAMapping.parent_modifications)
   uint64_t modifications = 0;
 
-  void do_commit_to_prior() override {
-    base_t::do_commit_to_prior();
+  void do_commit_state_to_prior() override {
+    base_t::do_commit_state_to_prior();
     auto &prior = static_cast<this_type_t&>(*this->get_prior_instance());
     // We don't touch the prior's modifications field here, because there maybe
     // other transactions accessing the prior, and the modifications field is
@@ -581,8 +653,16 @@ struct FixedKVLeafNode
     if (!prior.is_mutation_pending()) {
       assert(!prior.modifications);
     }
+  }
+
+  void do_commit_data_to_prior() final {
+    auto &prior = static_cast<this_type_t&>(*this->get_prior_instance());
     prior.delta_buffer = std::move(delta_buffer);
     prior.set_layout_buf(prior.get_bptr().c_str());
+  }
+
+  void sync_layout_buf() {
+    this->set_layout_buf(this->get_bptr().c_str());
   }
 
   void on_invalidated(Transaction &t) final {
@@ -594,12 +674,6 @@ struct FixedKVLeafNode
     this->resolve_relative_addrs(this->get_paddr());
     if (this->is_btree_root()) {
       this->root_node_t::on_initial_write();
-    }
-    auto prior = this->get_prior_instance();
-    if (prior) {
-      // this must have been a rewriten extent
-      this->commit_to_prior(t);
-      static_cast<this_type_t&>(*prior).complete_io();
     }
   }
 
@@ -674,9 +748,12 @@ struct FixedKVLeafNode
   }
 
   CachedExtentRef duplicate_for_write(Transaction&) override {
-    assert(delta_buffer.empty());
     return CachedExtentRef(new node_type_t(*static_cast<node_type_t*>(this)));
   };
+
+  void clear_delta() final {
+    delta_buffer.clear();
+  }
 
   virtual void update(
     internal_const_iterator_t iter,
@@ -795,6 +872,16 @@ struct FixedKVLeafNode
     ceph::bufferlist bl;
     bl.push_back(bptr);
     return bl;
+  }
+
+  void reapply_delta() final {
+    if (delta_buffer.empty()) {
+      return;
+    }
+    delta_buffer.replay(*this);
+    auto crc = calc_crc32c();
+    this->set_last_committed_crc(crc);
+    this->update_in_extent_chksum_field(crc);
   }
 
   void apply_delta_and_adjust_crc(

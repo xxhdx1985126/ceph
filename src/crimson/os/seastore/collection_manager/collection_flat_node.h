@@ -107,7 +107,7 @@ struct CollectionNode : LogicalChildNode {
   coll_map_t decoded;
   delta_buffer_t delta_buffer;
 
-  void do_commit_to_prior() final {
+  void do_commit_state_to_prior() final {
     auto &prior = static_cast<CollectionNode&>(*get_prior_instance());
     prior.delta_buffer = std::move(delta_buffer);
     prior.decoded = std::move(decoded);

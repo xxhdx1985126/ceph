@@ -85,6 +85,9 @@ struct clone_range_t {
   laddr_t dest_base = L_ADDR_NULL;
   extent_len_t offset = 0;
   extent_len_t len = 0;
+  base_iertr::future<> refresh() {
+    first_src_mapping = co_await first_src_mapping.refresh();
+  }
 };
 std::ostream& operator<<(std::ostream &out, const clone_range_t &);
 
@@ -244,7 +247,7 @@ struct ObjectDataBlock : crimson::os::seastore::LogicalChildNode {
   // to provide the local modified view during transaction
   overwrite_buf_t cached_overwrites;
 
-  void do_commit_to_prior() final {
+  void do_commit_state_to_prior() final {
     auto &prior = static_cast<ObjectDataBlock&>(*get_prior_instance());
     prior.delta = std::move(delta);
     prior.modified_region = std::move(modified_region);

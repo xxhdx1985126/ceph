@@ -924,22 +924,29 @@ void Cache::commit_replace_extent(
     add_to_dirty(next, nullptr/* exclude root */);
   } else if (prev->is_stable_dirty()) {
     if (t_rewrite) {
-      next->commit_to_prior(t);
+      next->commit_state_to_prior(t);
+      if (is_lba_backref_node(next->get_type())) {
+        next->commit_data_to_prior();
+      }
     } else {
       replace_dirty(next, prev, t_src);
     }
   } else {
     pinboard->remove(*prev);
     if (t_rewrite) {
-      next->commit_to_prior(t);
+      next->commit_state_to_prior(t);
+      if (is_lba_backref_node(next->get_type())) {
+        next->commit_data_to_prior();
+      }
       add_to_dirty(prev, &t_src);
     } else {
       add_to_dirty(next, &t_src);
     }
   }
 
-  if (!t_rewrite) {
+  if (!t_rewrite || is_root_type(prev->get_type())) {
     invalidate_extent(t, *prev);
+    prev->invalidater = next;
   }
 }
 
@@ -1008,6 +1015,7 @@ void Cache::mark_transaction_conflicted(
       }
       efforts.mutate.increment(i->get_length());
       delta_stat.increment(i->get_delta().length());
+      i->trans_view_hook.unlink();
     }
     efforts.mutate_delta_bytes += delta_stat.bytes;
 
@@ -1293,31 +1301,23 @@ record_t Cache::prepare_record(
     auto delta_bl = i->get_delta();
     auto delta_length = delta_bl.length();
     i->set_modify_time(commit_time);
-    DEBUGT("mutated extent with {}B delta -- {}",
+    INFOT("mutated extent with {}B delta -- {}",
 	   t, delta_length, *i);
     assert(delta_length);
 
     if (i->is_mutation_pending()) {
-      // If inplace rewrite happens from a concurrent transaction,
-      // i->prior_instance will be changed from DIRTY to CLEAN implicitly, thus
-      // i->prior_instance->version become 0. This won't cause conflicts
-      // intentionally because inplace rewrite won't modify the shared extent.
+      DEBUGT("commit replace extent ... -- {}, prior={}",
+             t, *i, *i->prior_instance);
+      // Rewrite transactions will be change stable extents' versions implicitly,
+      // and i->prior_instance->version will become different than i->version + 1.
+      // This won't cause conflicts intentionally because rewrite transactions
+      // only modifies lba/backref addresses.
       //
       // However, this leads to version mismatch below, thus we reset the
-      // version to 1 in this case.
-      if (i->prior_instance->version == 0 && i->version > 1) {
-        DEBUGT("commit replace extent (inplace-rewrite) ... -- {}, prior={}",
-               t, *i, *i->prior_instance);
-
-	assert(can_inplace_rewrite(i->get_type()));
-	assert(can_inplace_rewrite(i->prior_instance->get_type()));
-	assert(i->prior_instance->dirty_from == JOURNAL_SEQ_MIN);
-	assert(i->prior_instance->state == CachedExtent::extent_state_t::CLEAN);
-	assert(i->prior_instance->get_paddr().is_absolute_random_block());
-	i->version = 1;
-      } else {
-        DEBUGT("commit replace extent ... -- {}, prior={}",
-               t, *i, *i->prior_instance);
+      // version to i->prior_instance->1 in this case.
+      if (i->version != i->prior_instance->version + 1) {
+	assert(i->prior_instance->is_stable());
+	i->version = i->prior_instance->version + 1;
       }
     } else {
       assert(i->is_exist_mutation_pending());
@@ -1387,6 +1387,7 @@ record_t Cache::prepare_record(
     get_by_ext(efforts.delta_bytes_by_ext,
                i->get_type()) += delta_length;
     delta_stat.increment(delta_length);
+    i->trans_view_hook.unlink();
   }
 
   t.for_each_finalized_fresh_block([&t](auto &e) {
@@ -1406,7 +1407,9 @@ record_t Cache::prepare_record(
   for (auto &i: t.mutated_block_list) {
     if (i->is_valid()) {
       if (i->is_mutation_pending()) {
-        i->set_io_wait(CachedExtent::extent_state_t::DIRTY);
+        i->set_io_wait(
+          CachedExtent::extent_state_t::DIRTY,
+          is_rewrite_transaction(trans_src));
         commit_replace_extent(t, i, i->prior_instance);
       } // else, is_exist_mutation_pending():
         // - it doesn't have prior_instance to replace
@@ -1427,9 +1430,11 @@ record_t Cache::prepare_record(
     get_by_ext(efforts.retire_by_ext,
                extent->get_type()).increment(extent->get_length());
     retire_stat.increment(extent->get_length());
-    DEBUGT("retired and remove extent {}~0x{:x} -- {}",
+    INFOT("retired and remove extent {}~0x{:x} -- {}",
 	   t, extent->get_paddr(), extent->get_length(), *extent);
     if (!is_rewrite_transaction(t.get_src())) {
+      ceph_assert(extent->invalidaters.empty());
+      extent->set_invalidaters(t);
       commit_retire_extent(t, extent);
     } else {
       assert(extent->is_stable());
@@ -1438,12 +1443,8 @@ record_t Cache::prepare_record(
         // set the version to zero because the extent state is now clean
         // in order to handle this transparently
         extent->version = 0;
-        extent->dirty_from = JOURNAL_SEQ_MIN;
-        // no set_io_wait(), skip complete_commit()
-        extent->set_io_wait(CachedExtent::extent_state_t::CLEAN);
       }
       touch_extent_fully(*extent, &trans_src, t.get_cache_hint());
-      DEBUGT("inplace rewrite ool block is commmitted -- {}", t, *extent);
     }
 
     // Note: commit extents and backref allocations in the same place
@@ -1487,12 +1488,12 @@ record_t Cache::prepare_record(
   alloc_delta.op = alloc_delta_t::op_types_t::SET;
   for (auto &i: t.inline_block_list) {
     if (!i->is_valid()) {
-      DEBUGT("invalid fresh inline extent -- {}", t, *i);
+      INFOT("invalid fresh inline extent -- {}", t, *i);
       fresh_invalid_stat.increment(i->get_length());
       get_by_ext(efforts.fresh_invalid_by_ext,
                  i->get_type()).increment(i->get_length());
     } else {
-      TRACET("fresh inline extent -- {}", t, *i);
+      INFOT("fresh inline extent -- {}", t, *i);
     }
     fresh_stat.increment(i->get_length());
     get_by_ext(efforts.fresh_inline_by_ext,
@@ -1550,9 +1551,19 @@ record_t Cache::prepare_record(
 	  i->get_length(),
 	  i->get_type()));
     }
-    i->set_io_wait(CachedExtent::extent_state_t::CLEAN);
+    i->set_io_wait(
+      CachedExtent::extent_state_t::CLEAN,
+      is_rewrite_transaction(trans_src));
     // Note, paddr is known until complete_commit(),
     // so add_extent() later.
+    if (is_rewrite_transaction(t.get_src())) {
+      assert(i->get_prior_instance());
+      // this must have been a rewriten extent
+      i->commit_state_to_prior(t);
+      if (is_lba_backref_node(i->get_type())) {
+        i->commit_data_to_prior();
+      }
+    }
   }
 
   for (auto &i: t.ool_block_list) {
@@ -1576,9 +1587,19 @@ record_t Cache::prepare_record(
 	  i->get_length(),
 	  i->get_type()));
     }
-    i->set_io_wait(CachedExtent::extent_state_t::CLEAN);
+    i->set_io_wait(
+      CachedExtent::extent_state_t::CLEAN,
+      is_rewrite_transaction(trans_src));
     // Note, paddr is (can be) known until complete_commit(),
     // so add_extent() later.
+    if (is_rewrite_transaction(t.get_src())) {
+      assert(i->get_prior_instance());
+      // this must have been a rewriten extent
+      i->commit_state_to_prior(t);
+      if (is_lba_backref_node(i->get_type())) {
+        i->commit_data_to_prior();
+      }
+    }
   }
 
   for (auto &i: t.inplace_ool_block_list) {
@@ -1593,7 +1614,6 @@ record_t Cache::prepare_record(
     // set the version to zero because the extent state is now clean
     // in order to handle this transparently
     i->version = 0;
-    i->dirty_from = JOURNAL_SEQ_MIN;
     // no set_io_wait(), skip complete_commit()
     assert(!i->is_pending_io());
     i->state = CachedExtent::extent_state_t::CLEAN;
@@ -1625,7 +1645,8 @@ record_t Cache::prepare_record(
       i->state = CachedExtent::extent_state_t::CLEAN;
     } else {
       assert(i->is_exist_mutation_pending());
-      i->set_io_wait(CachedExtent::extent_state_t::DIRTY);
+      i->set_io_wait(CachedExtent::extent_state_t::DIRTY,
+                     is_rewrite_transaction(trans_src));
     }
 
     // exist mutation pending extents must be in t.mutated_block_list
@@ -1853,6 +1874,20 @@ void Cache::complete_commit(
             t, final_block_start, start_seq);
   for (auto &i: t.retired_set) {
     auto &extent = i.extent;
+    auto trans_src = t.get_src();
+    if (is_rewrite_transaction(trans_src)) {
+      if (!extent->is_valid()) {
+        if (extent->invalidater) {
+          // the extent must have been invalidated by
+          // a mutation by another MUTATE transaction
+          epm.mark_space_free(
+            extent->get_paddr(),
+            extent->get_length());
+        }
+        continue;
+      }
+      INFOT("touch retired extents for rewrite transactions -- {}", t, *extent);
+    }
     epm.mark_space_free(extent->get_paddr(), extent->get_length());
   }
 
@@ -1879,11 +1914,95 @@ void Cache::complete_commit(
     i->on_initial_write(t);
     const auto t_src = t.get_src();
     if (is_rewrite_transaction(t_src)) {
-      DEBUGT("committing rewritten extent into existing, inline={} -- {}",
-             t, is_inline, *i);
-      touch_extent_fully(*i->get_prior_instance(), &t_src, t.get_cache_hint());
+      auto &prior = *i->get_prior_instance();
+      if (prior.is_valid()) {
+        INFOT("committing rewritten extent into "
+               "existing, inline={} -- {}, prior={}",
+               t, is_inline, *i, prior);
+        i->commit_paddr_to_prior();
+        if (is_lba_backref_node(i->get_type())) {
+          i->commit_to_mutations();
+          switch (i->get_type()) {
+          case extent_types_t::LADDR_LEAF:
+            static_cast<lba::LBALeafNode&>(*i->get_prior_instance()
+              ).merge_content_to_pending_versions(t);
+            break;
+          case extent_types_t::LADDR_INTERNAL:
+            static_cast<lba::LBAInternalNode&>(*i->get_prior_instance()
+              ).merge_content_to_pending_versions(t);
+            break;
+          case extent_types_t::BACKREF_INTERNAL:
+            static_cast<backref::BackrefInternalNode&>(*i->get_prior_instance()
+              ).merge_content_to_pending_versions(t);
+            break;
+          default:
+            break;
+          }
+        }
+      } else if (prior.invalidater) {
+        INFOT("set paddr for the new extent {}, "
+               "inline={} -- {}, prior={}",
+               t, *prior.invalidater, is_inline, *i, prior);
+        auto old_paddr = prior.get_paddr();
+        for (auto &item : prior.invalidater->read_transactions) {
+          item.sync_extent_state(
+            old_paddr, i->get_paddr(), i->dirty_from, 0);
+        }
+        prior.invalidater->set_paddr(i->get_paddr());
+        if (is_lba_backref_node(i->get_type())) {
+          prior.invalidater->set_bptr(i->get_bptr());
+          switch (i->get_type()) {
+          case extent_types_t::LADDR_LEAF:
+            static_cast<lba::LBALeafNode&>(*prior.invalidater
+              ).sync_layout_buf();
+            break;
+          case extent_types_t::LADDR_INTERNAL:
+            static_cast<lba::LBAInternalNode&>(*prior.invalidater
+              ).sync_layout_buf();
+            break;
+          case extent_types_t::BACKREF_INTERNAL:
+            static_cast<backref::BackrefInternalNode&>(*prior.invalidater
+              ).sync_layout_buf();
+          case extent_types_t::BACKREF_LEAF:
+            static_cast<backref::BackrefLeafNode&>(*prior.invalidater
+              ).sync_layout_buf();
+            break;
+          default:
+            break;
+          }
+          prior.invalidater->reapply_delta();
+        }
+        prior.invalidater.reset();
+      } else {
+        assert(!prior.invalidaters.empty());
+        if (is_lba_backref_node(i->get_type())) {
+          switch (i->get_type()) {
+          case extent_types_t::LADDR_LEAF:
+            {
+              auto &node = static_cast<lba::LBALeafNode&>(*i);
+              node.merge_content_to(t, prior.invalidaters);
+              break;
+            }
+          case extent_types_t::LADDR_INTERNAL:
+            {
+              auto &node = static_cast<lba::LBAInternalNode&>(*i);
+              node.merge_content_to(t, prior.invalidaters);
+              break;
+            }
+          case extent_types_t::BACKREF_INTERNAL:
+            {
+              auto &node = static_cast<lba::LBAInternalNode&>(*i);
+              node.merge_content_to(t, prior.invalidaters);
+              break;
+            }
+          default:
+            break;
+          }
+        }
+        prior.invalidaters.clear();
+      }
     } else {
-      DEBUGT("add extent as fresh, inline={} -- {}",
+      INFOT("add extent as fresh, inline={} -- {}",
              t, is_inline, *i);
       i->invalidate_hints();
       add_extent(i);
@@ -1935,17 +2054,117 @@ void Cache::complete_commit(
     assert(i->io_wait->from_state == CachedExtent::extent_state_t::EXIST_MUTATION_PENDING
            || (i->io_wait->from_state == CachedExtent::extent_state_t::MUTATION_PENDING
                && i->prior_instance));
-    i->on_delta_write(final_block_start);
-    i->pending_for_transaction = TRANS_ID_NULL;
-    i->reset_prior_instance();
-    assert(i->version > 0);
     if (i->version == 1 || is_root_type(i->get_type())) {
       i->dirty_from = start_seq;
-      DEBUGT("commit extent done, become dirty -- {}", t, *i);
-    } else {
-      DEBUGT("commit extent done -- {}", t, *i);
+      if (is_rewrite_transaction(t.get_src()) && !is_root_type(i->get_type())) {
+        auto &prior = *i->get_prior_instance();
+        prior.dirty_from = start_seq;
+        for (auto &mext : prior.mutation_pending_extents) {
+          auto &mextent = static_cast<CachedExtent&>(mext);
+          assert(mextent.dirty_from < start_seq ||
+            mextent.dirty_from == JOURNAL_SEQ_NULL);
+          mextent.dirty_from = start_seq;
+        }
+      }
     }
+    i->on_delta_write(final_block_start);
+    if (is_rewrite_transaction(t.get_src()) &&
+        !is_root_type(i->get_type())) {
+      INFOT("committing paddr to prior for {}, prior={}",
+        t, *i, *i->prior_instance);
+      auto &prior = *i->prior_instance;
+      if (prior.is_valid()) {
+        i->commit_paddr_to_prior();
+        if (is_lba_backref_node(i->get_type())) {
+          i->commit_to_mutations();
+          switch (i->get_type()) {
+          case extent_types_t::LADDR_LEAF:
+            static_cast<lba::LBALeafNode&>(*i->get_prior_instance()
+              ).merge_content_to_pending_versions(t);
+            break;
+          case extent_types_t::LADDR_INTERNAL:
+            static_cast<lba::LBAInternalNode&>(*i->get_prior_instance()
+              ).merge_content_to_pending_versions(t);
+            break;
+          case extent_types_t::BACKREF_INTERNAL:
+            static_cast<backref::BackrefInternalNode&>(*i->get_prior_instance()
+              ).merge_content_to_pending_versions(t);
+            break;
+          default:
+            break;
+          }
+        }
+      } else if (prior.invalidater) {
+        auto old_paddr = prior.get_paddr();
+        for (auto &item : prior.invalidater->read_transactions) {
+          item.sync_extent_state(
+            old_paddr, i->get_paddr(), i->dirty_from, 0);
+        }
+        prior.invalidater->set_paddr(i->get_paddr());
+        if (is_lba_backref_node(i->get_type())) {
+          prior.invalidater->set_bptr(i->get_bptr());
+          switch (i->get_type()) {
+          case extent_types_t::LADDR_LEAF:
+            static_cast<lba::LBALeafNode&>(*prior.invalidater
+              ).sync_layout_buf();
+            break;
+          case extent_types_t::LADDR_INTERNAL:
+            static_cast<lba::LBAInternalNode&>(*prior.invalidater
+              ).sync_layout_buf();
+            break;
+          case extent_types_t::BACKREF_INTERNAL:
+            static_cast<backref::BackrefInternalNode&>(*prior.invalidater
+              ).sync_layout_buf();
+          case extent_types_t::BACKREF_LEAF:
+            static_cast<backref::BackrefLeafNode&>(*prior.invalidater
+              ).sync_layout_buf();
+            break;
+          default:
+            break;
+          }
+          prior.invalidater->reapply_delta();
+          prior.invalidater->prior_instance->dirty_from = start_seq;
+        }
+      } else {
+        assert(!prior.invalidaters.empty());
+        if (is_lba_backref_node(i->get_type())) {
+          switch (i->get_type()) {
+          case extent_types_t::LADDR_LEAF:
+            {
+              auto &node = static_cast<lba::LBALeafNode&>(*i);
+              node.merge_content_to(t, prior.invalidaters);
+              break;
+            }
+          case extent_types_t::LADDR_INTERNAL:
+            {
+              auto &node = static_cast<lba::LBAInternalNode&>(*i);
+              node.merge_content_to(t, prior.invalidaters);
+              break;
+            }
+          case extent_types_t::BACKREF_INTERNAL:
+            {
+              auto &node = static_cast<lba::LBAInternalNode&>(*i);
+              node.merge_content_to(t, prior.invalidaters);
+              break;
+            }
+          default:
+            break;
+          }
+        }
+        prior.invalidaters.clear();
+      }
+      i->prior_instance->clear_delta();
+    }
+    i->pending_for_transaction = TRANS_ID_NULL;
+    assert(i->version > 0);
+    if (i->version == 1 || is_root_type(i->get_type())) {
+      INFOT("commit extent done, become dirty -- {}", t, *i);
+    } else {
+      INFOT("commit extent done -- {}", t, *i);
+    }
+    i->reset_prior_instance();
     i->complete_io();
+    i->clear_delta();
   }
 
   for (auto &i: t.existing_block_list) {
@@ -1959,8 +2178,6 @@ void Cache::complete_commit(
       epm.mark_space_free(i->get_paddr(), i->get_length());
     }
   }
-
-  last_commit = start_seq;
 
   apply_backref_byseq(t.move_backref_entries(), start_seq);
   commit_backref_entries(std::move(backref_entries), start_seq);

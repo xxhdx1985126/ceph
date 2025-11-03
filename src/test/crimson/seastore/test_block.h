@@ -70,7 +70,7 @@ struct TestBlock : crimson::os::seastore::LogicalChildNode {
 
   ceph::bufferlist get_delta() final;
 
-  void do_commit_to_prior() final {
+  void do_commit_state_to_prior() final {
     auto &prior = static_cast<TestBlock&>(*get_prior_instance());
     prior.delta = std::move(delta);
     prior.modified_region = std::move(modified_region);
@@ -136,7 +136,7 @@ struct TestBlockPhysical : crimson::os::seastore::CachedExtent{
     return TYPE;
   }
 
-  void do_commit_to_prior() final {
+  void do_commit_state_to_prior() final {
     auto &prior = static_cast<TestBlockPhysical&>(*get_prior_instance());
     prior.delta = std::move(delta);
   }

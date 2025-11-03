@@ -61,7 +61,7 @@ class SeastoreNodeExtent final: public NodeExtent {
     return recorder.get();
   }
 
-  void do_commit_to_prior() final {
+  void do_commit_state_to_prior() final {
     auto &prior = static_cast<SeastoreNodeExtent&>(*get_prior_instance());
     prior.recorder = std::move(recorder);
   }

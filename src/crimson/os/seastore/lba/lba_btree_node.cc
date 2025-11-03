@@ -38,7 +38,8 @@ void LBALeafNode::resolve_relative_addrs(paddr_t base)
     if (val.pladdr.is_paddr() &&
 	val.pladdr.get_paddr().is_relative()) {
       val.pladdr = base.add_relative(val.pladdr.get_paddr());
-      TRACE("{} -> {}", i->get_val().pladdr, val.pladdr);
+      TRACE("laddr={} {} -> {}",
+        i->get_key(), i->get_val().pladdr, val.pladdr);
       i->set_val(val);
     }
   }

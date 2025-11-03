@@ -67,11 +67,6 @@ struct OMapInnerNode
     return iter_end();
   }
 
-  void do_commit_to_prior() final {
-    auto &prior = static_cast<OMapInnerNode&>(*get_prior_instance());
-    prior.set_layout_buf(prior.get_bptr().c_str());
-  }
-
   void do_on_rewrite(Transaction &t, LogicalCachedExtent &extent) final {
     auto &ext = static_cast<OMapInnerNode&>(extent);
     this->parent_node_t::on_rewrite(t, ext);
@@ -87,6 +82,7 @@ struct OMapInnerNode
 
   void prepare_commit(Transaction &t) final {
     if (is_rewrite_transaction(t.get_src())) {
+      return;
     }
     if (unlikely(!is_seen_by_users())) {
       ceph_assert(is_rewrite());
@@ -133,10 +129,14 @@ struct OMapInnerNode
     this->child_node_t::on_invalidated();
   }
 
-  void on_initial_write(Transaction &) final {
+  void on_initial_write(Transaction &t) final {
     if (this->is_btree_root()) {
       //TODO: should involve RootChildNode
       this->child_node_t::reset_parent_tracker();
+    }
+    auto prior = get_prior_instance();
+    if (prior) {
+      commit_state_to_prior(t);
     }
   }
 
@@ -340,13 +340,6 @@ struct OMapLeafNode
 
   void lcn_on_invalidated(Transaction &t) final {
     this->child_node_t::on_invalidated();
-  }
-
-  void do_commit_to_prior() final {
-    auto &prior = static_cast<OMapLeafNode&>(*get_prior_instance());
-    prior.set_layout_buf(
-      prior.get_bptr().c_str(),
-      prior.get_bptr().length());
   }
 
   void prepare_commit(Transaction &t) final {

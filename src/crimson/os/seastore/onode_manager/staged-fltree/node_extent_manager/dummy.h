@@ -63,7 +63,7 @@ class DummyNodeExtent final: public NodeExtent {
     ceph_abort_msg("impossible path"); }
   void apply_delta(const ceph::bufferlist&) override {
     ceph_abort_msg("impossible path"); }
-  void do_commit_to_prior() final {}
+  void do_commit_state_to_prior() final {}
 };
 
 template <bool SYNC>

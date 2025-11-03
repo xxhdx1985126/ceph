@@ -59,8 +59,8 @@ bool BtreeCursor<key_t, val_t, ParentT>::is_viewable() const {
   }
 
   auto [viewable, state] = parent->is_viewable_by_trans(ctx.trans);
-  SUBTRACET(seastore_cache, "{} with viewable state {}",
-            ctx.trans, *parent, state);
+  SUBTRACET(seastore_cache, "{} with viewable state {}~{}",
+            ctx.trans, *parent, viewable, state);
   return viewable;
 }
 

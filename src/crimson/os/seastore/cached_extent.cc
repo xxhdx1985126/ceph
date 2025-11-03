@@ -10,6 +10,8 @@
 #include "crimson/os/seastore/lba_mapping.h"
 #include "crimson/os/seastore/logical_child_node.h"
 
+SET_SUBSYS(seastore_cache);
+
 namespace {
   [[maybe_unused]] seastar::logger& logger() {
     return crimson::get_logger(ceph_subsys_seastore_tm);
@@ -341,6 +343,29 @@ ceph::bufferptr BufferSpace::to_full_ptr(extent_len_t length)
   assert(ptr.length() == length);
   buffer_map.clear();
   return ptr;
+}
+
+void CachedExtent::commit_state_to_prior(Transaction &t) {
+  LOG_PREFIX(CachedExtent::commit_state_to_prior);
+  INFOT("{} prior={}", t, *this, *get_prior_instance());
+  ceph_assert(prior_instance);
+  auto &prior = *prior_instance;
+  prior.modify_time = modify_time;
+  prior.last_committed_crc = last_committed_crc;
+  prior.dirty_from = dirty_from;
+  prior.length = length;
+  prior.loaded_length = loaded_length;
+  prior.buffer_space = std::move(buffer_space);
+  // XXX: We can go ahead and change the prior's version because
+  // transactions don't hold a local view of the version field,
+  // unlike FixedKVLeafNode::modifications
+  prior.version = version;
+  prior.user_hint = user_hint;
+  prior.rewrite_generation = rewrite_generation;
+  prior.last_touch_end = last_touch_end;
+  prior.cache_state = cache_state;
+  prior.state = state;
+  do_commit_state_to_prior();
 }
 
 }

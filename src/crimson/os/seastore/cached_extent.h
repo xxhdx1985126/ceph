@@ -119,6 +119,15 @@ public:
   T *t = nullptr;
   CachedExtentRef ref;
 
+  void sync_extent_state(
+    paddr_t old_paddr,
+    paddr_t new_paddr,
+    journal_seq_t &dirty_from,
+    extent_version_t version)
+  {
+    t->sync_extent_state(*this, old_paddr, new_paddr, dirty_from, version);
+  }
+
   bool is_extent_attached_to_trans() const {
     return extent_hook.is_linked();
   }
@@ -287,6 +296,10 @@ class CachedExtent
   // or is rewriting (in state INITIAL_WRITE_PENDING).
   CachedExtentRef prior_instance;
 
+  // back pointer to the extent that invalidated this one, must be a
+  // mutation_pending extent created by a client transaction
+  CachedExtentRef invalidater;
+
   // time of the last modification
   sea_time_point modify_time = NULL_TIME;
 protected:
@@ -314,9 +327,9 @@ protected:
   } state = extent_state_t::INVALID;
   friend std::ostream &operator<<(std::ostream &, extent_state_t);
 
-  void set_io_wait(extent_state_t new_state) {
+  void set_io_wait(extent_state_t new_state, bool rewriting) {
     ceph_assert(!io_wait);
-    io_wait.emplace(seastar::shared_promise<>(), state);
+    io_wait.emplace(seastar::shared_promise<>(), state, rewriting);
     state = new_state;
     assert(is_data_stable());
   }
@@ -444,6 +457,15 @@ public:
    * Returns concrete type.
    */
   virtual extent_types_t get_type() const = 0;
+
+  /**
+   * clear_delta
+   *
+   * clear the mutation delta buffer of the cached extent.
+   */
+  virtual void clear_delta() {}
+
+  virtual void set_invalidaters(Transaction &) {}
 
   virtual bool is_logical() const {
     assert(!is_logical_type(get_type()));
@@ -623,7 +645,7 @@ public:
 
   /// Returns true iff extent is stable and not io-pending
   bool is_stable_ready() const {
-    return is_stable() && !is_pending_io();
+    return is_stable() && (!is_pending_io() || io_wait->rewriting);
   }
 
   /// Returns true if extent can not be mutated,
@@ -860,6 +882,11 @@ public:
     last_touch_end = touch_end;
   }
 
+  std::vector<CachedExtentRef> take_invalidaters() {
+    ceph_assert(!is_valid());
+    return std::move(invalidaters);
+  }
+
 private:
   template <typename T>
   friend class read_set_item_t;
@@ -932,6 +959,7 @@ private:
   struct io_wait_t {
     seastar::shared_promise<> pr;
     extent_state_t from_state;
+    bool rewriting = false;
   };
   std::optional<io_wait_t> io_wait;
 
@@ -962,30 +990,36 @@ private:
 
 protected:
 
-  void commit_to_prior(Transaction&) {
-    ceph_assert(prior_instance);
-    auto &prior = *prior_instance;
-    prior.modify_time = modify_time;
-    prior.last_committed_crc = last_committed_crc;
-    prior.dirty_from = dirty_from;
-    prior.ptr = ptr;
-    prior.length = length;
-    prior.loaded_length = loaded_length;
-    prior.buffer_space = std::move(buffer_space);
-    // XXX: We can go ahead and change the prior's version because
-    // transactions don't hold a local view of the version field,
-    // unlike FixedKVLeafNode::modifications
-    prior.version = version;
-    prior.poffset = poffset;
-    prior.user_hint = user_hint;
-    prior.rewrite_generation = rewrite_generation;
-    prior.last_touch_end = last_touch_end;
-    prior.cache_state = cache_state;
-    prior.state = state;
-    do_commit_to_prior();
-  }
+  // back pointers to the extents that invalidated this one, this happens
+  // when lba/backref nodes are invalidated by split/merge/balance
+  std::vector<CachedExtentRef> invalidaters;
 
-  virtual void do_commit_to_prior () = 0;
+  void commit_state_to_prior(Transaction&);
+  virtual void do_commit_state_to_prior () {}
+
+  void commit_data_to_prior() {
+    assert(prior_instance);
+    prior_instance->set_bptr(get_bptr());
+    do_commit_data_to_prior();
+  }
+  virtual void do_commit_data_to_prior() {}
+  void commit_to_mutations() {
+    auto &prior = *prior_instance;
+    for (auto &mext : prior.mutation_pending_extents) {
+      auto &mextent = static_cast<CachedExtent&>(mext);
+      get_bptr().copy_out(0, length, mextent.get_bptr().c_str());
+      mextent.reapply_delta();
+    }
+  }
+  void commit_paddr_to_prior() {
+    auto &prior = *prior_instance;
+    auto old_paddr = prior.get_paddr();
+    for (auto &item : prior.read_transactions) {
+      item.sync_extent_state(old_paddr, poffset, dirty_from, version);
+    }
+    prior.set_paddr(poffset);
+  }
+  virtual void reapply_delta() {}
   trans_view_set_t mutation_pending_extents;
   trans_view_set_t retired_transactions;
 
@@ -1120,6 +1154,10 @@ protected:
 
   /// set bufferptr
   void set_bptr(ceph::bufferptr &&nptr) {
+    ptr = nptr;
+  }
+
+  void set_bptr(ceph::bufferptr &nptr) {
     ptr = nptr;
   }
 
@@ -1336,14 +1374,8 @@ public:
   }
 
   void erase(CachedExtent &extent) {
-    assert(extent.parent_index);
-    assert(extent.is_linked_to_index());
-    [[maybe_unused]] auto erased = extent_index.erase(
-      extent_index.s_iterator_to(extent));
-    extent.parent_index = nullptr;
-
-    assert(erased);
-    bytes -= extent.get_length();
+    auto it = extent_index.s_iterator_to(extent);
+    erase(it);
   }
 
   void replace(CachedExtent &to, CachedExtent &from) {
@@ -1359,6 +1391,16 @@ public:
 
   auto find_offset(paddr_t offset) {
     return extent_index.find(offset, paddr_cmp());
+  }
+
+  void erase(CachedExtent::index::iterator &it) {
+    auto &extent = *it;
+    assert(extent.parent_index);
+    assert(extent.is_linked_to_index());
+    [[maybe_unused]] auto erased = extent_index.erase(it);
+    assert(erased);
+    extent.parent_index = nullptr;
+    bytes -= extent.get_length();
   }
 
   bool exists(CachedExtent& extent) const {

@@ -37,7 +37,7 @@ public:
     }
   }
 
-  void do_commit_to_prior() final {}
+  void do_commit_state_to_prior() final {}
 
   void on_invalidated(Transaction&) final {
     this->lba_child_node_t::on_invalidated();

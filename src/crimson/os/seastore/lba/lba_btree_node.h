@@ -197,6 +197,84 @@ struct LBALeafNode
     }
   }
 
+  void set_invalidaters(Transaction &t) final {
+    auto copy_dests = this->get_copy_dests(t);
+    if (!copy_dests) {
+      return;
+    }
+    for (auto &dest : copy_dests->dests_by_key) {
+      this->invalidaters.emplace_back(dest);
+    }
+  }
+
+  template <template <typename...> typename Container, typename... T>
+  void merge_content_to(Transaction &t, Container<T...> &container) {
+    auto iter = this->begin();
+    for (auto &copy_dest : container) {
+      auto &pending_version = static_cast<LBALeafNode&>(*copy_dest);
+      ceph_assert(pending_version.is_pending());
+      auto it = pending_version.begin();
+      while (it != pending_version.end() && iter != this->end()) {
+        if (iter->get_val().pladdr.is_laddr() ||
+            iter->get_val().pladdr.get_paddr().is_zero()) {
+          iter++;
+          continue;
+        }
+        assert(iter->get_val().pladdr.get_paddr().is_absolute());
+        if (it->get_val().pladdr.is_laddr() ||
+            !it->get_val().pladdr.get_paddr().is_absolute() ||
+            is_valid_child_ptr(pending_version.children[it->get_offset()])) {
+          it++;
+          continue;
+        }
+        if (it->get_key() == iter->get_key()) {
+          it->set_val(iter->get_val());
+          it++;
+          iter++;
+        } else if (it->get_key() > iter->get_key()) {
+          iter++;
+        } else {
+          it++;
+        }
+      }
+    }
+  }
+
+  void merge_content_to_pending_versions(Transaction &t) {
+    ceph_assert(is_rewrite_transaction(t.get_src()));
+    this->for_each_copy_dest_set(t, [this](auto &copy_dests) {
+      auto iter = this->begin();
+      for (auto &copy_dest : copy_dests.dests_by_key) {
+        auto &pending_version = static_cast<LBALeafNode&>(*copy_dest);
+        ceph_assert(pending_version.is_pending());
+        auto it = pending_version.begin();
+        while (it != pending_version.end() && iter != this->end()) {
+          if (iter->get_val().pladdr.is_laddr() ||
+              iter->get_val().pladdr.get_paddr().is_zero()) {
+            iter++;
+            continue;
+          }
+          assert(iter->get_val().pladdr.get_paddr().is_absolute());
+          if (it->get_val().pladdr.is_laddr() ||
+              !it->get_val().pladdr.get_paddr().is_absolute() ||
+              is_valid_child_ptr(pending_version.children[it->get_offset()])) {
+            it++;
+            continue;
+          }
+          if (it->get_key() == iter->get_key()) {
+            it->set_val(iter->get_val());
+            it++;
+            iter++;
+          } else if (it->get_key() > iter->get_key()) {
+            iter++;
+          } else {
+            it++;
+          }
+        }
+      }
+    });
+  }
+
   extent_types_t get_type() const final {
     return TYPE;
   }

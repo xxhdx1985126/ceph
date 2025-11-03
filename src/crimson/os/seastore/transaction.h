@@ -315,6 +315,50 @@ public:
     }
   }
 
+  void sync_extent_state(
+    read_set_item_t<Transaction> &item,
+    paddr_t old_paddr,
+    paddr_t new_paddr,
+    journal_seq_t &dirty_from,
+    extent_version_t version) {
+    LOG_PREFIX(Transaction::sync_extent_state);
+    SUBTRACET(seastore_t, "new_paddr {} -- {}", *this, new_paddr, *item.ref);
+    ceph_assert(new_paddr.is_absolute());
+    ceph_assert(item.ref->get_paddr().is_absolute());
+#ifndef NDEBUG
+    auto [existed, it] = lookup_trans_from_read_extent(item.ref);
+    assert(existed);
+    assert(item.ref.get() == it->ref.get());
+    assert(item.t = it->t);
+#endif
+
+    auto &extent = *item.ref;
+    assert(item.is_extent_attached_to_trans());
+    read_set.erase(read_extent_set_t<Transaction>::s_iterator_to(item));
+    auto where1 = retired_set.find(extent.get_paddr());
+    bool retired = (where1 != retired_set.end());
+    if (where1 != retired_set.end()) {
+      retired_set.erase(where1);
+    }
+
+    extent.set_paddr(new_paddr);
+
+    read_set.insert(item);
+    if (retired) {
+      retired_set.emplace(&extent, trans_id);
+    }
+
+    auto where2 = write_set.find_offset(old_paddr);
+    if (where2 != write_set.end()) {
+      auto &mextent = *where2;
+      write_set.erase(where2);
+      mextent.set_paddr(new_paddr);
+      mextent.dirty_from = dirty_from;
+      mextent.version = version + 1;
+      write_set.insert(mextent);
+    }
+  }
+
   void replace_placeholder(CachedExtent& placeholder, CachedExtent& extent) {
     LOG_PREFIX(Transaction::replace_placeholder);
     ceph_assert(!is_weak());
