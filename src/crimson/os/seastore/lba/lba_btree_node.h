@@ -212,7 +212,6 @@ struct LBALeafNode
     auto iter = this->begin();
     for (auto &copy_dest : container) {
       auto &pending_version = static_cast<LBALeafNode&>(*copy_dest);
-      ceph_assert(pending_version.is_pending());
       auto it = pending_version.begin();
       while (it != pending_version.end() && iter != this->end()) {
         if (iter->get_val().pladdr.is_laddr() ||

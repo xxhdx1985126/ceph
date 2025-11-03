@@ -220,7 +220,6 @@ struct FixedKVInternalNode
     auto iter = this->begin();
     for (auto &copy_dest : container) {
       auto &pending_version = static_cast<this_type_t&>(*copy_dest);
-      ceph_assert(pending_version.is_pending());
       auto it = pending_version.begin();
       while (it != pending_version.end() && iter != this->end()) {
         if (is_valid_child_ptr(pending_version.children[it->get_offset()])) {

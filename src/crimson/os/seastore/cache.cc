@@ -2123,6 +2123,7 @@ void Cache::complete_commit(
             break;
           }
           prior.invalidater->reapply_delta();
+          prior.invalidater->dirty_from = i->dirty_from;
           prior.invalidater->prior_instance->dirty_from = start_seq;
         }
       } else {
