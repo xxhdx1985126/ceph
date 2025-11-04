@@ -1939,6 +1939,7 @@ void Cache::complete_commit(
             break;
           }
         }
+        touch_extent_fully(prior, &t_src, t.get_cache_hint());
       } else if (prior.invalidater) {
         INFOT("set paddr for the new extent {}, "
                "inline={} -- {}, prior={}",
