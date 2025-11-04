@@ -539,7 +539,6 @@ struct FixedKVInternalNode
     }
     delta_buffer.replay(*this);
     auto crc = calc_crc32c();
-    this->set_last_committed_crc(crc);
     this->update_in_extent_chksum_field(crc);
   }
 
@@ -879,7 +878,6 @@ struct FixedKVLeafNode
     }
     delta_buffer.replay(*this);
     auto crc = calc_crc32c();
-    this->set_last_committed_crc(crc);
     this->update_in_extent_chksum_field(crc);
   }
 
