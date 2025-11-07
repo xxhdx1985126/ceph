@@ -480,6 +480,56 @@ TransactionManager::submit_transaction_direct(
     trim_alloc_to);
 }
 
+void TransactionManager::update_fresh_phy_extents_crc(
+  Transaction &t,
+  std::list<CachedExtentRef> &pre_allocated_extents)
+{
+  LOG_PREFIX(TransactionManager::update_fresh_phy_extents_crc);
+  TRACET("", t);
+  std::list<CachedExtentRef> pextents;
+
+  auto scan_func = [&pextents](auto &extent) {
+    if (!extent->is_valid() ||
+        !extent->is_fully_loaded() ||
+        // EXIST_MUTATION_PENDING extents' crc will be calculated when
+        // preparing records
+        extent->is_exist_mutation_pending()) {
+      return;
+    }
+    if (!extent->is_logical()) {
+      assert(is_physical_type(extent->get_type()));
+      pextents.emplace_back(extent);
+    }
+  };
+
+  t.for_each_finalized_fresh_block(scan_func);
+  t.for_each_existing_block(scan_func);
+  std::for_each(
+    pre_allocated_extents.begin(),
+    pre_allocated_extents.end(),
+    scan_func);
+
+  for (auto &extent : pextents) {
+    if (extent->get_paddr().is_absolute()) {
+      // this extent's paddr should have been calc'd in update_lba_mappings
+      continue;
+    }
+    TRACET("{}", t, *extent);
+    assert(!extent->is_logical() && extent->is_valid());
+    // for non-logical extents, we update its last_committed_crc
+    // and in-extent checksum fields
+    // For pre-allocated fresh physical extents, update in-extent crc.
+    checksum_t crc;
+    if (get_checksum_needed(extent->get_paddr())) {
+      crc = extent->calc_crc32c();
+    } else {
+      crc = CRC_NULL;
+    }
+    extent->set_last_committed_crc(crc);
+    extent->update_in_extent_chksum_field(crc);
+  }
+}
+
 TransactionManager::update_lba_mappings_ret
 TransactionManager::update_lba_mappings(
   Transaction &t,
@@ -504,19 +554,19 @@ TransactionManager::update_lba_mappings(
         // for rewritten extents, last_committed_crc should have been set
         // because the crc of the original extent may be reused.
         // also see rewrite_logical_extent()
-	if (!extent->get_last_committed_crc()) {
-	  if (get_checksum_needed(extent->get_paddr())) {
-	    extent->set_last_committed_crc(extent->calc_crc32c());
-	  } else {
-	    extent->set_last_committed_crc(CRC_NULL);
-	  }
-	}
+        if (!extent->get_last_committed_crc()) {
+          if (get_checksum_needed(extent->get_paddr())) {
+            extent->set_last_committed_crc(extent->calc_crc32c());
+          } else {
+            extent->set_last_committed_crc(CRC_NULL);
+          }
+        }
 #ifndef NDEBUG
-	if (get_checksum_needed(extent->get_paddr())) {
-	  assert(extent->get_last_committed_crc() == extent->calc_crc32c());
-	} else {
-	  assert(extent->get_last_committed_crc() == CRC_NULL);
-	}
+        if (get_checksum_needed(extent->get_paddr())) {
+          assert(extent->get_last_committed_crc() == extent->calc_crc32c());
+        } else {
+          assert(extent->get_last_committed_crc() == CRC_NULL);
+        }
 #endif
         lextents.emplace_back(extent->template cast<LogicalChildNode>());
       } else {
@@ -542,17 +592,22 @@ TransactionManager::update_lba_mappings(
     ).si_then([&pextents, this] {
       for (auto &extent : pextents) {
         assert(!extent->is_logical() && extent->is_valid());
+        if (!extent->get_paddr().is_absolute()) {
+          // postpone the crc calc for relative-paddr extents later
+          // to in the "prepare" phase
+          continue;
+        }
         // for non-logical extents, we update its last_committed_crc
         // and in-extent checksum fields
         // For pre-allocated fresh physical extents, update in-extent crc.
-	checksum_t crc;
-	if (get_checksum_needed(extent->get_paddr())) {
-	  crc = extent->calc_crc32c();
-	} else {
-	  crc = CRC_NULL;
-	}
-	extent->set_last_committed_crc(crc);
-	extent->update_in_extent_chksum_field(crc);
+        checksum_t crc;
+        if (get_checksum_needed(extent->get_paddr())) {
+          crc = extent->calc_crc32c();
+        } else {
+          crc = CRC_NULL;
+        }
+        extent->set_last_committed_crc(crc);
+        extent->update_in_extent_chksum_field(crc);
       }
     });
   });
@@ -592,6 +647,7 @@ TransactionManager::do_submit_transaction(
     cache->trim_backref_bufs(*trim_alloc_to);
   }
 
+  update_fresh_phy_extents_crc(tref, allocated_extents);
   auto record = cache->prepare_record(
     tref,
     journal->get_trimmer().get_journal_head(),

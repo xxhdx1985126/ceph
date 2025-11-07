@@ -1577,6 +1577,10 @@ private:
     });
   }
 
+  void update_fresh_phy_extents_crc(
+    Transaction &t,
+    std::list<CachedExtentRef> &pre_allocated_extents);
+
   bool get_checksum_needed(paddr_t paddr) {
     if (paddr.is_record_relative()) {
       return journal->is_checksum_needed();

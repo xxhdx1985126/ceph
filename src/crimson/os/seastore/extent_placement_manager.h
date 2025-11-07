@@ -511,7 +511,7 @@ public:
    */
   alloc_paddr_iertr::future<> write_preallocated_ool_extents(
     Transaction &t,
-    std::list<CachedExtentRef> extents);
+    std::list<CachedExtentRef> &extents);
 
   seastar::future<> stop_background() {
     return background_process.stop_background();
