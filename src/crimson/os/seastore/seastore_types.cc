@@ -624,6 +624,7 @@ ceph::bufferlist encode_records(
   for (auto& r: record_group.records) {
     record_header_t rheader{
       r.trans_type,
+      r.tid,
       (extent_len_t)r.deltas.size(),
       (extent_len_t)r.extents.size(),
       timepoint_to_mod(r.modify_time)

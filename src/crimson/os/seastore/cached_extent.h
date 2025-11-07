@@ -934,6 +934,11 @@ private:
    */
   journal_seq_t dirty_from;
 
+  /// the journal seq at which the commit is written to disk, only has value
+  /// when the extent is committed by a rewrite transaction and there's a
+  /// mutating transaction committed concurrently
+  std::optional<journal_seq_t> committed_at;
+
   /// cache data contents, std::nullopt iff partially loaded
   std::optional<ceph::bufferptr> ptr;
 

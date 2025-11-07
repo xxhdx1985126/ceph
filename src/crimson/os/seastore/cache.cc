@@ -1379,7 +1379,9 @@ record_t Cache::prepare_record(
 	  i->get_version() - 1,
 	  sseq,
 	  stype,
-	  std::move(delta_bl)
+	  std::move(delta_bl),
+          (i->get_paddr().is_relative()
+            ? i->prior_instance->pending_for_transaction : 0)
 	});
       i->last_committed_crc = final_crc;
     }
@@ -1919,6 +1921,7 @@ void Cache::complete_commit(
         INFOT("committing rewritten extent into "
                "existing, inline={} -- {}, prior={}",
                t, is_inline, *i, prior);
+        prior.pending_for_transaction = TRANS_ID_NULL;
         i->commit_paddr_to_prior();
         if (is_lba_backref_node(i->get_type())) {
           i->commit_to_mutations();
@@ -1947,7 +1950,7 @@ void Cache::complete_commit(
         auto old_paddr = prior.get_paddr();
         for (auto &item : prior.invalidater->read_transactions) {
           item.sync_extent_state(
-            old_paddr, i->get_paddr(), i->dirty_from, 0);
+            old_paddr, i->get_paddr(), i->dirty_from, prior.invalidater->version);
         }
         prior.invalidater->set_paddr(i->get_paddr());
         if (is_lba_backref_node(i->get_type())) {
@@ -1972,6 +1975,7 @@ void Cache::complete_commit(
             break;
           }
           prior.invalidater->reapply_delta();
+          prior.invalidater->committed_at = start_seq;
         }
         prior.invalidater.reset();
       } else {
@@ -2261,7 +2265,8 @@ Cache::replay_delta(
   const delta_info_t &delta,
   const journal_seq_t &dirty_tail,
   const journal_seq_t &alloc_tail,
-  sea_time_point modify_time)
+  sea_time_point modify_time,
+  trans_base_set_t &trans_base_set)
 {
   LOG_PREFIX(Cache::replay_delta);
   assert(dirty_tail != JOURNAL_SEQ_NULL);
@@ -2362,7 +2367,15 @@ Cache::replay_delta(
     return replay_delta_ertr::make_ready_future<std::pair<bool, CachedExtentRef>>(
       std::make_pair(true, root));
   } else {
-    ceph_assert(delta.paddr.is_absolute());
+    auto paddr = delta.paddr;
+    if (delta.paddr.is_relative()) {
+      ceph_assert(delta.pversion == 0);
+      ceph_assert(delta.paddr.is_record_relative());
+      auto it = trans_base_set.find(delta.tid);
+      ceph_assert(it != trans_base_set.end());
+      auto base = it->second;
+      paddr = base.add_relative(delta.paddr);
+    }
     auto _get_extent_if_cached = [this](paddr_t addr)
       -> get_extent_ertr::future<CachedExtentRef> {
       // replay is not included by the cache hit metrics
@@ -2381,7 +2394,7 @@ Cache::replay_delta(
     auto extent_fut = (delta.pversion == 0 ?
       do_get_caching_extent_by_type(
         delta.type,
-        delta.paddr,
+        paddr,
         delta.laddr,
         delta.length,
         [](CachedExtent &) {},
@@ -2396,7 +2409,7 @@ Cache::replay_delta(
         },
         nullptr) :
       _get_extent_if_cached(
-	delta.paddr)
+	paddr)
     ).handle_error(
       replay_delta_ertr::pass_further{},
       crimson::ct_error::assert_all{
@@ -2415,7 +2428,7 @@ Cache::replay_delta(
       DEBUG("replay extent delta at {} {} ... -- {}, prv_extent={}",
             journal_seq, record_base, delta, *extent);
 
-      if (delta.paddr.is_absolute_segmented() ||
+      if (paddr.is_absolute_segmented() ||
 	  !can_inplace_rewrite(delta.type)) {
 	ceph_assert_always(extent->last_committed_crc == delta.prev_crc);
 	assert(extent->version == delta.pversion);

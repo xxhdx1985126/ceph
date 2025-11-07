@@ -228,14 +228,15 @@ SegmentedJournal::replay_segment(
   journal_seq_t seq,
   segment_header_t header,
   delta_handler_t &handler,
-  replay_stats_t &stats)
+  replay_stats_t &stats,
+  trans_base_set_t &trans_base_set)
 {
   LOG_PREFIX(Journal::replay_segment);
   INFO("starting at {} -- {}", seq, header);
   return seastar::do_with(
     scan_valid_records_cursor(seq),
     SegmentManagerGroup::found_record_handler_t(
-      [&handler, this, &stats](
+      [&handler, this, &stats, &trans_base_set](
       record_locator_t locator,
       const record_group_header_t& header,
       const bufferlist& mdbuf)
@@ -255,6 +256,7 @@ SegmentedJournal::replay_segment(
       return seastar::do_with(
         std::move(*maybe_record_deltas_list),
         [write_result=locator.write_result,
+         &trans_base_set,
          this,
          FNAME,
          &handler,
@@ -263,6 +265,7 @@ SegmentedJournal::replay_segment(
         return crimson::do_for_each(
           record_deltas_list,
           [write_result,
+           &trans_base_set,
            this,
            FNAME,
            &handler,
@@ -276,9 +279,12 @@ SegmentedJournal::replay_segment(
           DEBUG("processing {} deltas at block_base {}",
                 record_deltas.deltas.size(),
                 locator);
+          trans_base_set.emplace(record_deltas.trans_id,
+                                 record_deltas.record_block_base);
           return crimson::do_for_each(
             record_deltas.deltas,
             [locator,
+             &trans_base_set,
              this,
              &handler,
              &stats](auto &p)
@@ -290,7 +296,8 @@ SegmentedJournal::replay_segment(
 	      delta,
 	      trimmer.get_dirty_tail(),
 	      trimmer.get_alloc_tail(),
-              modify_time
+              modify_time,
+              trans_base_set
             ).safe_then([&stats, delta_type=delta.type](auto ret) {
 	      auto [is_applied, ext] = ret;
               if (is_applied) {
@@ -335,13 +342,18 @@ SegmentedJournal::replay_ret SegmentedJournal::replay(
       std::move(delta_handler),
       replay_segments_t(),
       replay_stats_t(),
+      trans_base_set_t(),
       [this, segment_headers=std::move(segment_headers), FNAME]
-      (auto &handler, auto &segments, auto &stats) mutable -> replay_ret {
+      (auto &handler, auto &segments, auto &stats,
+       auto &trans_base_set) mutable -> replay_ret {
 	return prep_replay_segments(std::move(segment_headers)
-	).safe_then([this, &handler, &segments, &stats](auto replay_segs) mutable {
+	).safe_then([this, &handler, &segments, &stats,
+                     &trans_base_set](auto replay_segs) mutable {
 	  segments = std::move(replay_segs);
-	  return crimson::do_for_each(segments,[this, &handler, &stats](auto i) mutable {
-	    return replay_segment(i.first, i.second, handler, stats);
+	  return crimson::do_for_each(
+            segments,
+            [&trans_base_set, this, &handler, &stats](auto i) mutable {
+	    return replay_segment(i.first, i.second, handler, stats, trans_base_set);
 	  });
         }).safe_then([&stats, FNAME] {
           INFO("replay done, record_groups={}, records={}, "
@@ -350,6 +362,9 @@ SegmentedJournal::replay_ret SegmentedJournal::replay(
                stats.num_records,
                stats.num_alloc_deltas,
                stats.num_dirty_deltas);
+        }).safe_then([&trans_base_set] {
+          // return the id of the latest committed transaction
+          return trans_base_set.rbegin()->first;
         });
       });
   });

@@ -115,7 +115,8 @@ TransactionManager::mount()
 	const auto &e,
 	const journal_seq_t &dirty_tail,
 	const journal_seq_t &alloc_tail,
-	sea_time_point modify_time)
+	sea_time_point modify_time,
+        trans_base_set_t &trans_base_set)
       {
 	auto start_seq = offsets.write_result.start_seq;
 	return cache->replay_delta(
@@ -124,7 +125,10 @@ TransactionManager::mount()
 	  e,
 	  dirty_tail,
 	  alloc_tail,
-	  modify_time);
+	  modify_time,
+          trans_base_set);
+      }).safe_then([this](auto last_tid) {
+        cache->set_next_trans_id(last_tid);
       });
   }).safe_then([this] {
     return journal->open_for_mount();

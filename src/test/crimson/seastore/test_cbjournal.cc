@@ -248,7 +248,8 @@ struct cbjournal_test_t : public seastar_test_suite_t, JournalTrimmer
 	     const auto &e,
 	     auto &dirty_seq,
 	     auto &alloc_seq,
-	     auto last_modified) {
+	     auto last_modified,
+             auto &trans_base_set) {
       bool found = false;
       for (auto &i : entries) {
 	paddr_t base = offsets.write_result.start_seq.offset; 
@@ -337,11 +338,11 @@ struct cbjournal_test_t : public seastar_test_suite_t, JournalTrimmer
     return mkfs(
     ).safe_then([this] {
       return replay(
-      ).safe_then([this] {
+      ).safe_then([this](auto) {
 	return open(
 	).safe_then([this] {
 	  return replay();
-	});
+	}).discard_result();
       });
     }).handle_error(crimson::ct_error::assert_all{});
   }
@@ -590,7 +591,8 @@ TEST_F(cbjournal_test_t, multiple_submit_at_end)
 	     const auto &e,
 	     auto &dirty_seq,
 	     auto &alloc_seq,
-	     auto last_modified) {
+	     auto last_modified,
+             auto &trans_base_set) {
       return Journal::replay_ertr::make_ready_future<
 	std::pair<bool, CachedExtentRef>>(true, nullptr);
     }).unsafe_get();

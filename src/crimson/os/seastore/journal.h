@@ -90,14 +90,15 @@ public:
     crimson::ct_error::invarg,
     crimson::ct_error::enoent,
     crimson::ct_error::erange>;
-  using replay_ret = replay_ertr::future<>;
+  using replay_ret = replay_ertr::future<transaction_id_t>;
   using delta_handler_t = std::function<
     replay_ertr::future<std::pair<bool, CachedExtentRef>>(
       const record_locator_t&,
       const delta_info_t&,
       const journal_seq_t&, // dirty_tail
       const journal_seq_t&, // alloc_tail
-      sea_time_point modify_time)>;
+      sea_time_point modify_time,
+      trans_base_set_t &trans_base_set)>;
   virtual replay_ret replay(
     delta_handler_t &&delta_handler) = 0;
 

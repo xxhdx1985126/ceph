@@ -185,7 +185,7 @@ struct journal_test_t : seastar_test_suite_t, SegmentProvider, JournalTrimmer {
       journal = journal::make_segmented(*this, *this);
       journal->set_write_pipeline(&pipeline);
       return journal->replay(std::forward<T>(std::move(f)));
-    }).safe_then([this] {
+    }).safe_then([this](auto) {
       return journal->open_for_mount();
     });
   }
@@ -212,7 +212,8 @@ struct journal_test_t : seastar_test_suite_t, SegmentProvider, JournalTrimmer {
        const auto &di,
        const journal_seq_t &,
        const journal_seq_t &,
-       auto t) mutable {
+       auto t,
+       trans_base_set_t &trans_base_set) mutable {
 	if (!delta_checker) {
 	  EXPECT_FALSE("No Deltas Left");
 	}

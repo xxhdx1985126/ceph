@@ -1372,7 +1372,8 @@ public:
     const delta_info_t &delta,
     const journal_seq_t &dirty_tail,
     const journal_seq_t &alloc_tail,
-    sea_time_point modify_time);
+    sea_time_point modify_time,
+    trans_base_set_t &trans_base_set);
 
   /**
    * init_cached_extents
@@ -1513,7 +1514,11 @@ public:
       SUBDEBUG(seastore_cache, "dirty_oldest: null");
       return std::nullopt;
     } else {
-      auto oldest = dirty.begin()->get_dirty_from();
+      auto &oldest_dirty = *dirty.begin();
+      auto oldest = oldest_dirty.get_dirty_from();
+      if (oldest_dirty.committed_at.has_value()) {
+        oldest = std::min(oldest, *oldest_dirty.committed_at);
+      }
       if (oldest == JOURNAL_SEQ_NULL) {
 	SUBDEBUG(seastore_cache, "dirty_oldest: pending");
       } else {
@@ -1601,6 +1606,11 @@ public:
   void boot_done() {
     booting = false;
     extents_index.clear();
+  }
+
+  void set_next_trans_id(transaction_id_t last_tid) {
+    ceph_assert(booting);
+    next_id = last_tid + 1;
   }
 private:
   void touch_extent_fully(

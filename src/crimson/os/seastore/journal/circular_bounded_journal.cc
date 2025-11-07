@@ -138,13 +138,15 @@ CircularBoundedJournal::submit_record(
   }
 }
 
-Journal::replay_ret CircularBoundedJournal::replay_segment(
-   cbj_delta_handler_t &handler, scan_valid_records_cursor& cursor)
+Journal::replay_ertr::future<> CircularBoundedJournal::replay_segment(
+   cbj_delta_handler_t &handler,
+   scan_valid_records_cursor& cursor,
+   trans_base_set_t &trans_base_set)
 {
   LOG_PREFIX(Journal::replay_segment);
   return seastar::do_with(
     RecordScanner::found_record_handler_t(
-      [this, &handler, FNAME](
+      [this, &handler, FNAME, &trans_base_set](
       record_locator_t locator,
       const record_group_header_t& r_header,
       const bufferlist& mdbuf)
@@ -185,11 +187,12 @@ Journal::replay_ret CircularBoundedJournal::replay_segment(
       return seastar::do_with(
         std::move(*maybe_record_deltas_list),
         [write_result,
+        &trans_base_set,
         &handler,
         FNAME](auto& record_deltas_list) {
         return crimson::do_for_each(
           record_deltas_list,
-          [write_result,
+          [write_result, &trans_base_set,
           &handler, FNAME](record_deltas_t& record_deltas) {
           auto locator = record_locator_t{
             record_deltas.record_block_base,
@@ -198,6 +201,8 @@ Journal::replay_ret CircularBoundedJournal::replay_segment(
           DEBUG("processing {} deltas at block_base {}",
               record_deltas.deltas.size(),
               locator);
+          trans_base_set.emplace(record_deltas.trans_id,
+                                 record_deltas.record_block_base);
           return crimson::do_for_each(
             record_deltas.deltas,
             [locator,
@@ -229,8 +234,10 @@ Journal::replay_ret CircularBoundedJournal::replay_segment(
 }
 
 
-Journal::replay_ret CircularBoundedJournal::scan_valid_record_delta(
-   cbj_delta_handler_t &&handler, journal_seq_t tail)
+Journal::replay_ertr::future<> CircularBoundedJournal::scan_valid_record_delta(
+   cbj_delta_handler_t &&handler,
+   journal_seq_t tail,
+   trans_base_set_t &trans_base_set)
 {
   LOG_PREFIX(Journal::scan_valid_record_delta);
   INFO("starting at {} ", tail);
@@ -238,11 +245,11 @@ Journal::replay_ret CircularBoundedJournal::scan_valid_record_delta(
     scan_valid_records_cursor(tail),
     std::move(handler),
     bool(false),
-    [this] (auto &cursor, auto &handler, auto &rolled) {
-    return crimson::repeat([this, &handler, &cursor, &rolled]()
+    [this, &trans_base_set] (auto &cursor, auto &handler, auto &rolled) {
+    return crimson::repeat([this, &handler, &cursor, &rolled, &trans_base_set]()
     -> replay_ertr::future<seastar::stop_iteration>
     {
-      return replay_segment(handler, cursor
+      return replay_segment(handler, cursor, trans_base_set
       ).safe_then([this, &cursor, &rolled] {
         if (!rolled) {
           cursor.last_valid_header_found = false;
@@ -346,7 +353,8 @@ Journal::replay_ret CircularBoundedJournal::replay(
       std::move(delta_handler),
       std::map<paddr_t, journal_seq_t>(),
       std::map<paddr_t, std::pair<CachedExtentRef, uint32_t>>(),
-      [this](auto &d_handler, auto &map, auto &crc_info) {
+      trans_base_set_t(),
+      [this](auto &d_handler, auto &map, auto &crc_info, auto &trans_base_set) {
       auto build_paddr_seq_map = [&map](
         const auto &offsets,
         const auto &e,
@@ -368,9 +376,11 @@ Journal::replay_ret CircularBoundedJournal::replay(
       set_written_to(tail);
       // The first pass to build the paddr->journal_seq_t map 
       // from extent allocations
-      return scan_valid_record_delta(std::move(build_paddr_seq_map), tail
-      ).safe_then([this, &map, &d_handler, tail, &crc_info]() {
-	auto call_d_handler_if_valid = [this, &map, &d_handler, &crc_info](
+      return scan_valid_record_delta(
+        std::move(build_paddr_seq_map), tail, trans_base_set
+      ).safe_then([this, &map, &d_handler, tail, &crc_info, &trans_base_set] {
+	auto call_d_handler_if_valid =
+          [this, &map, &d_handler, &crc_info, &trans_base_set](
 	  const auto &offsets,
 	  const auto &e,
 	  sea_time_point modify_time)
@@ -382,7 +392,8 @@ Journal::replay_ret CircularBoundedJournal::replay(
 	      e,
 	      get_dirty_tail(),
 	      get_alloc_tail(),
-	      modify_time
+	      modify_time,
+              trans_base_set
 	    ).safe_then([&e, &crc_info](auto ret) {
 	      auto [applied, ext] = ret;
 	      if (applied && ext && can_inplace_rewrite(
@@ -396,16 +407,22 @@ Journal::replay_ret CircularBoundedJournal::replay(
 	  return replay_ertr::make_ready_future<bool>(true);
 	};
 	// The second pass to replay deltas
-	return scan_valid_record_delta(std::move(call_d_handler_if_valid), tail
-	).safe_then([&crc_info]() {
+	return scan_valid_record_delta(
+          std::move(call_d_handler_if_valid), tail, trans_base_set
+	).safe_then([&crc_info, &trans_base_set] {
 	  for (auto p : crc_info) {
 	    ceph_assert_always(p.second.first->get_last_committed_crc() == p.second.second);	
 	  }
 	  crc_info.clear();
-	  return replay_ertr::now();
+          if (trans_base_set.empty()) {
+            return replay_ertr::make_ready_future<transaction_id_t>(0);
+          } else {
+            return replay_ertr::make_ready_future<
+              transaction_id_t>(trans_base_set.rbegin()->first);
+          }
 	});
       });
-    }).safe_then([this]() {
+    }).safe_then([this](auto last_tid) {
       // make sure that committed_to is JOURNAL_SEQ_NULL if jounal is the initial state
       if (get_written_to() != 
 	  journal_seq_t{0,
@@ -416,6 +433,7 @@ Journal::replay_ret CircularBoundedJournal::replay(
       trimmer.update_journal_tails(
 	get_dirty_tail(),
 	get_alloc_tail());
+      return replay_ertr::make_ready_future<transaction_id_t>(last_tid);
     });
   });
 }

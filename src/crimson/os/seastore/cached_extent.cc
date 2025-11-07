@@ -350,6 +350,7 @@ void CachedExtent::commit_state_to_prior(Transaction &t) {
   INFOT("{} prior={}", t, *this, *get_prior_instance());
   ceph_assert(prior_instance);
   auto &prior = *prior_instance;
+  prior.pending_for_transaction = pending_for_transaction;
   prior.modify_time = modify_time;
   prior.last_committed_crc = last_committed_crc;
   prior.dirty_from = dirty_from;
@@ -365,6 +366,7 @@ void CachedExtent::commit_state_to_prior(Transaction &t) {
   prior.last_touch_end = last_touch_end;
   prior.cache_state = cache_state;
   prior.state = state;
+  prior.committed_at.reset();
   do_commit_state_to_prior();
 }
 

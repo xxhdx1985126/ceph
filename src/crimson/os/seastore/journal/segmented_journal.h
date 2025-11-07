@@ -106,7 +106,8 @@ private:
     journal_seq_t start,             ///< [in] starting addr, seq
     segment_header_t header,         ///< [in] segment header
     delta_handler_t &delta_handler,  ///< [in] processes deltas in order
-    replay_stats_t &stats            ///< [out] replay stats
+    replay_stats_t &stats,           ///< [out] replay stats
+    trans_base_set_t &trans_base_set
   );
 };
 

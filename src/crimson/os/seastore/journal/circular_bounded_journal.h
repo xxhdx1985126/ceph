@@ -152,9 +152,10 @@ public:
     const delta_info_t&,
     sea_time_point modify_time)>;
 
-  Journal::replay_ret scan_valid_record_delta(
+  Journal::replay_ertr::future<> scan_valid_record_delta(
     cbj_delta_handler_t &&delta_handler,
-    journal_seq_t tail);
+    journal_seq_t tail,
+    trans_base_set_t &trans_base_set);
 
   void try_read_rolled_header(scan_valid_records_cursor &cursor) {
     paddr_t addr = convert_abs_addr_to_paddr(
@@ -168,8 +169,10 @@ public:
     cursor.block_size = get_block_size();
   };
 
-  Journal::replay_ret replay_segment(
-    cbj_delta_handler_t &handler, scan_valid_records_cursor& cursor);
+  Journal::replay_ertr::future<> replay_segment(
+    cbj_delta_handler_t &handler,
+    scan_valid_records_cursor& cursor,
+    trans_base_set_t &trans_base_set);
 
   read_ret read(paddr_t start, size_t len) final;
 
