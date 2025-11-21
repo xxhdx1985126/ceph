@@ -1282,7 +1282,7 @@ record_t Cache::prepare_record(
   t.clear_read_set();
   t.write_set.clear();
 
-  record_t record(record_type_t::JOURNAL, trans_src);
+  record_t record(record_type_t::JOURNAL, t.get_trans_id(), trans_src);
   auto commit_time = seastar::lowres_system_clock::now();
 
   // Add new copy of mutated blocks, set_io_wait to block until written
@@ -1366,10 +1366,11 @@ record_t Cache::prepare_record(
         }
       }
 
+      auto paddr = i->get_paddr_for_delta();
       record.push_back(
 	delta_info_t{
 	  i->get_type(),
-	  i->get_paddr(),
+	  paddr,
 	  (i->is_logical()
 	   ? i->cast<LogicalCachedExtent>()->get_laddr()
 	   : L_ADDR_NULL),
@@ -1380,8 +1381,7 @@ record_t Cache::prepare_record(
 	  sseq,
 	  stype,
 	  std::move(delta_bl),
-          (i->get_paddr().is_relative()
-            ? i->prior_instance->pending_for_transaction : 0)
+          i->prior_instance->pending_for_transaction
 	});
       i->last_committed_crc = final_crc;
     }

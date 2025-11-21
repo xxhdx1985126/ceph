@@ -1729,7 +1729,7 @@ struct delta_info_t {
   segment_seq_t ext_seq;		       ///< seq of the extent's segment
   segment_type_t seg_type;
   ceph::bufferlist bl;                         ///< payload
-  transaction_id_t tid = 0;
+  transaction_id_t tid = TRANS_ID_NULL;
 
   DENC(delta_info_t, v, p) {
     DENC_START(1, 1, p);
@@ -2319,15 +2319,17 @@ std::ostream &operator<<(std::ostream&, const record_size_t&);
 
 struct record_t {
   transaction_type_t trans_type = TRANSACTION_TYPE_NULL;
-  transaction_id_t tid = 0;
+  transaction_id_t tid = TRANS_ID_NULL;
   std::vector<extent_t> extents;
   std::vector<delta_info_t> deltas;
   record_size_t size;
   sea_time_point modify_time = NULL_TIME;
 
   record_t(record_type_t r_type,
+           transaction_id_t tid,
            transaction_type_t t_type)
-  : trans_type{t_type} {
+  : trans_type{t_type},
+    tid(tid) {
     assert(r_type != RECORD_TYPE_NULL);
     size.record_type = r_type;
   }
@@ -2395,7 +2397,7 @@ std::ostream &operator<<(std::ostream&, const record_t&);
 
 struct record_header_t {
   transaction_type_t type;
-  transaction_id_t trans_id = 0;
+  transaction_id_t trans_id = TRANS_ID_NULL;
   uint32_t deltas;              // number of deltas
   uint32_t extents;             // number of extents
   mod_time_point_t modify_time;
@@ -2561,7 +2563,7 @@ try_decode_record_headers(
 
 struct record_deltas_t {
   paddr_t record_block_base;
-  transaction_id_t trans_id = 0;
+  transaction_id_t trans_id = TRANS_ID_NULL;
   std::vector<std::pair<sea_time_point, delta_info_t>> deltas;
 };
 std::optional<std::vector<record_deltas_t> >

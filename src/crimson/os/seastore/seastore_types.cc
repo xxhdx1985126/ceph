@@ -817,6 +817,7 @@ try_decode_deltas(
   auto result_iter = record_deltas.begin();
   for (auto& r: *maybe_record_extent_infos) {
     result_iter->record_block_base = record_block_base;
+    result_iter->trans_id = r.header.trans_id;
     result_iter->deltas.resize(r.header.deltas);
     for (auto& i: result_iter->deltas) {
       try {

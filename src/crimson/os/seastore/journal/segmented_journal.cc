@@ -276,11 +276,14 @@ SegmentedJournal::replay_segment(
             record_deltas.record_block_base,
             write_result
           };
-          DEBUG("processing {} deltas at block_base {}",
-                record_deltas.deltas.size(),
-                locator);
-          trans_base_set.emplace(record_deltas.trans_id,
-                                 record_deltas.record_block_base);
+          INFO("processing {} deltas at block_base {}, trans_id {}",
+               record_deltas.deltas.size(),
+               locator,
+               record_deltas.trans_id);
+          if (record_deltas.trans_id != TRANS_ID_NULL) {
+            trans_base_set.emplace(record_deltas.trans_id,
+                                   record_deltas.record_block_base);
+          }
           return crimson::do_for_each(
             record_deltas.deltas,
             [locator,
