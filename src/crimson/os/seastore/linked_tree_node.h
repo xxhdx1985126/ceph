@@ -230,6 +230,8 @@ public:
   }
   virtual key_t node_begin() const = 0;
   virtual bool is_retired_placeholder() const = 0;
+  virtual bool _is_pending_io() const = 0;
+  virtual bool _is_pending() const = 0;
 protected:
   parent_tracker_ref<ParentT> parent_tracker;
   virtual bool _is_valid() const = 0;
@@ -1173,6 +1175,12 @@ private:
   }
   bool _is_stable() const final {
     return down_cast().is_stable();
+  }
+  bool _is_pending_io() const final{
+    return down_cast().is_pending_io();
+  }
+  bool _is_pending() const final {
+    return down_cast().is_pending();
   }
   key_t node_begin() const final {
     return down_cast().get_begin();

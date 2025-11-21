@@ -825,6 +825,15 @@ public:
     return ret;
   }
 
+  paddr_t get_prior_paddr() {
+    ceph_assert(prior_poffset.has_value());
+    return *prior_poffset;
+  }
+
+  void reset_prior_paddr() {
+    prior_poffset.reset();
+  }
+
   void set_invalid(Transaction &t);
 
   // a rewrite extent has an invalid prior_instance,
@@ -1008,6 +1017,13 @@ protected:
     do_commit_data_to_prior();
   }
   virtual void do_commit_data_to_prior() {}
+  void commit_crc_to_mutations() {
+    auto &prior = *prior_instance;
+    for (auto &mext : prior.mutation_pending_extents) {
+      auto &mextent = static_cast<CachedExtent&>(mext);
+      mextent.set_last_committed_crc(last_committed_crc);
+    }
+  }
   void commit_to_mutations() {
     auto &prior = *prior_instance;
     for (auto &mext : prior.mutation_pending_extents) {
@@ -1018,11 +1034,13 @@ protected:
   }
   void commit_paddr_to_prior() {
     auto &prior = *prior_instance;
-    auto old_paddr = prior.get_paddr();
+    auto old_paddr = prior.get_prior_paddr_and_reset();
     for (auto &item : prior.read_transactions) {
       item.sync_extent_state(old_paddr, poffset, dirty_from, version);
     }
-    prior.set_paddr(poffset);
+    if (prior.get_paddr() != poffset) {
+      prior.set_paddr(poffset, prior.get_paddr().is_absolute());
+    }
   }
   virtual void reapply_delta() {}
   trans_view_set_t mutation_pending_extents;
@@ -1060,11 +1078,16 @@ protected:
       dirty_from(other.dirty_from),
       length(other.get_length()),
       loaded_length(other.get_loaded_length()),
-      version(other.version),
-      poffset(other.poffset) {
+      version(other.version) {
     // the extent must be fully loaded before CoW
     assert(other.is_fully_loaded());
     assert(is_aligned(length, CEPH_PAGE_SIZE));
+    if (other.poffset.is_absolute() ||
+        !other.prior_poffset.has_value()) {
+      poffset = other.poffset;
+    } else {
+      poffset = *other.prior_poffset;
+    }
     if (length > 0) {
       ptr = create_extent_ptr_rand(length);
       other.ptr->copy_out(0, length, ptr->c_str());
@@ -1073,6 +1096,12 @@ protected:
     }
 
     assert(is_fully_loaded());
+  }
+
+  paddr_t get_paddr_for_delta() const {
+    ceph_assert(prior_instance);
+    ceph_assert(is_mutation_pending());
+    return prior_instance->get_paddr();
   }
 
   struct share_buffer_t {};
@@ -1084,7 +1113,9 @@ protected:
       length(other.get_length()),
       loaded_length(other.get_loaded_length()),
       version(other.version),
-      poffset(other.poffset) {
+      poffset(other.poffset.is_absolute()
+        ? other.poffset
+        : *other.prior_poffset) {
     // the extent must be fully loaded before CoW
     assert(other.is_fully_loaded());
     assert(is_aligned(length, CEPH_PAGE_SIZE));

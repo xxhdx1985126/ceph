@@ -219,10 +219,9 @@ struct LBALeafNode
           iter++;
           continue;
         }
-        assert(iter->get_val().pladdr.get_paddr().is_absolute());
-        if (it->get_val().pladdr.is_laddr() ||
-            !it->get_val().pladdr.get_paddr().is_absolute() ||
-            is_valid_child_ptr(pending_version.children[it->get_offset()])) {
+        if (auto child = pending_version.children[it->get_offset()];
+            is_valid_child_ptr(child) &&
+            (child->_is_pending() || child->_is_pending_io())) {
           it++;
           continue;
         }
@@ -253,10 +252,9 @@ struct LBALeafNode
             iter++;
             continue;
           }
-          assert(iter->get_val().pladdr.get_paddr().is_absolute());
-          if (it->get_val().pladdr.is_laddr() ||
-              !it->get_val().pladdr.get_paddr().is_absolute() ||
-              is_valid_child_ptr(pending_version.children[it->get_offset()])) {
+          if (auto child = pending_version.children[it->get_offset()];
+            is_valid_child_ptr(child) &&
+            (child->_is_pending() || child->_is_pending_io())) {
             it++;
             continue;
           }

@@ -907,7 +907,10 @@ void Cache::commit_replace_extent(
     CachedExtentRef next,
     CachedExtentRef prev)
 {
-  assert(next->get_paddr() == prev->get_paddr());
+  assert(next->get_paddr() == prev->get_paddr() ||
+         // prev is being rewritten by a trim_dirty
+         // or cleaner transaction
+         prev->get_paddr().is_record_relative());
   assert(next->get_paddr().is_absolute() || next->get_paddr().is_root());
   assert(next->version == prev->version + 1);
   const auto t_src = t.get_src();
@@ -926,7 +929,25 @@ void Cache::commit_replace_extent(
     if (t_rewrite) {
       next->commit_state_to_prior(t);
       if (is_lba_backref_node(next->get_type())) {
+        next->commit_crc_to_mutations();
         next->commit_data_to_prior();
+        next->commit_to_mutations();
+        switch (next->get_type()) {
+        case extent_types_t::LADDR_LEAF:
+          static_cast<lba::LBALeafNode&>(*next->get_prior_instance()
+            ).merge_content_to_pending_versions(t);
+          break;
+        case extent_types_t::LADDR_INTERNAL:
+          static_cast<lba::LBAInternalNode&>(*next->get_prior_instance()
+            ).merge_content_to_pending_versions(t);
+          break;
+        case extent_types_t::BACKREF_INTERNAL:
+          static_cast<backref::BackrefInternalNode&>(*next->get_prior_instance()
+            ).merge_content_to_pending_versions(t);
+          break;
+        default:
+          break;
+        }
       }
     } else {
       replace_dirty(next, prev, t_src);
@@ -936,7 +957,25 @@ void Cache::commit_replace_extent(
     if (t_rewrite) {
       next->commit_state_to_prior(t);
       if (is_lba_backref_node(next->get_type())) {
+        next->commit_crc_to_mutations();
         next->commit_data_to_prior();
+        next->commit_to_mutations();
+        switch (next->get_type()) {
+        case extent_types_t::LADDR_LEAF:
+          static_cast<lba::LBALeafNode&>(*next->get_prior_instance()
+            ).merge_content_to_pending_versions(t);
+          break;
+        case extent_types_t::LADDR_INTERNAL:
+          static_cast<lba::LBAInternalNode&>(*next->get_prior_instance()
+            ).merge_content_to_pending_versions(t);
+          break;
+        case extent_types_t::BACKREF_INTERNAL:
+          static_cast<backref::BackrefInternalNode&>(*next->get_prior_instance()
+            ).merge_content_to_pending_versions(t);
+          break;
+        default:
+          break;
+        }
       }
       add_to_dirty(prev, &t_src);
     } else {
@@ -1225,8 +1264,9 @@ CachedExtentRef Cache::duplicate_for_write(
   auto ret = i->duplicate_for_write(t);
   ret->pending_for_transaction = t.get_trans_id();
   ret->set_prior_instance(i);
-  // duplicate_for_write won't occur after ool write finished
-  assert(!i->prior_poffset);
+  if (!is_root_type(ret->get_type())) {
+    assert(ret->get_paddr().is_absolute());
+  }
   auto [iter, inserted] = i->mutation_pending_extents.insert(*ret);
   ceph_assert(inserted);
   if (is_root_type(ret->get_type())) {
@@ -1301,12 +1341,12 @@ record_t Cache::prepare_record(
     auto delta_bl = i->get_delta();
     auto delta_length = delta_bl.length();
     i->set_modify_time(commit_time);
-    INFOT("mutated extent with {}B delta -- {}",
+    DEBUGT("mutated extent with {}B delta -- {}",
 	   t, delta_length, *i);
     assert(delta_length);
 
     if (i->is_mutation_pending()) {
-      DEBUGT("commit replace extent ... -- {}, prior={}",
+      INFOT("commit replace extent ... -- {}, prior={}",
              t, *i, *i->prior_instance);
       // Rewrite transactions will be change stable extents' versions implicitly,
       // and i->prior_instance->version will become different than i->version + 1.
@@ -1562,9 +1602,36 @@ record_t Cache::prepare_record(
       assert(i->get_prior_instance());
       // this must have been a rewriten extent
       i->commit_state_to_prior(t);
+      // this mean that synchronizing record relative paddrs
+      // to other transactions' read set, although record
+      // relative paddrs may colide, there's only one rewrite
+      // transaction can be committing at any time, so this
+      // wouldn't cause any paddr conflict in other transactions
+      i->commit_paddr_to_prior();
       if (is_lba_backref_node(i->get_type())) {
         i->commit_data_to_prior();
+        i->commit_crc_to_mutations();
+        i->commit_to_mutations();
+        switch (i->get_type()) {
+        case extent_types_t::LADDR_LEAF:
+          static_cast<lba::LBALeafNode&>(*i->get_prior_instance()
+            ).merge_content_to_pending_versions(t);
+          break;
+        case extent_types_t::LADDR_INTERNAL:
+          static_cast<lba::LBAInternalNode&>(*i->get_prior_instance()
+            ).merge_content_to_pending_versions(t);
+          break;
+        case extent_types_t::BACKREF_INTERNAL:
+          static_cast<backref::BackrefInternalNode&>(*i->get_prior_instance()
+            ).merge_content_to_pending_versions(t);
+          break;
+        default:
+          break;
+        }
       }
+      i->get_prior_instance()->set_io_wait(
+        CachedExtent::extent_state_t::CLEAN,
+        true);
     }
   }
 
@@ -1598,8 +1665,27 @@ record_t Cache::prepare_record(
       assert(i->get_prior_instance());
       // this must have been a rewriten extent
       i->commit_state_to_prior(t);
+      i->commit_paddr_to_prior();
       if (is_lba_backref_node(i->get_type())) {
         i->commit_data_to_prior();
+        i->commit_crc_to_mutations();
+        i->commit_to_mutations();
+        switch (i->get_type()) {
+        case extent_types_t::LADDR_LEAF:
+          static_cast<lba::LBALeafNode&>(*i->get_prior_instance()
+            ).merge_content_to_pending_versions(t);
+          break;
+        case extent_types_t::LADDR_INTERNAL:
+          static_cast<lba::LBAInternalNode&>(*i->get_prior_instance()
+            ).merge_content_to_pending_versions(t);
+          break;
+        case extent_types_t::BACKREF_INTERNAL:
+          static_cast<backref::BackrefInternalNode&>(*i->get_prior_instance()
+            ).merge_content_to_pending_versions(t);
+          break;
+        default:
+          break;
+        }
       }
     }
   }
@@ -1883,14 +1969,16 @@ void Cache::complete_commit(
           // the extent must have been invalidated by
           // a mutation by another MUTATE transaction
           epm.mark_space_free(
-            extent->get_paddr(),
+            extent->get_prior_paddr(),
             extent->get_length());
         }
         continue;
       }
       INFOT("touch retired extents for rewrite transactions -- {}", t, *extent);
+      epm.mark_space_free(extent->get_prior_paddr(), extent->get_length());
+    } else {
+      epm.mark_space_free(extent->get_paddr(), extent->get_length());
     }
-    epm.mark_space_free(extent->get_paddr(), extent->get_length());
   }
 
   backref_entry_refs_t backref_entries;
@@ -2012,6 +2100,11 @@ void Cache::complete_commit(
       i->invalidate_hints();
       add_extent(i);
       touch_extent_fully(*i, &t_src, t.get_cache_hint());
+    }
+    if (is_rewrite_transaction(t.get_src()) &&
+        is_inline) {
+      i->get_prior_instance()->complete_io();
+      i->get_prior_instance()->reset_prior_paddr();
     }
     i->reset_prior_instance();
     epm.commit_space_used(i->get_paddr(), i->get_length());
@@ -2160,6 +2253,7 @@ void Cache::complete_commit(
         prior.invalidaters.clear();
       }
       i->prior_instance->clear_delta();
+      i->get_prior_instance()->reset_prior_paddr();
     }
     i->pending_for_transaction = TRANS_ID_NULL;
     assert(i->version > 0);

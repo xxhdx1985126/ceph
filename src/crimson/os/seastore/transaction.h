@@ -302,6 +302,7 @@ public:
   void add_mutated_extent(CachedExtentRef ref) {
     ceph_assert(!is_weak());
     assert(ref->get_paddr().is_absolute() ||
+           ref->get_paddr().is_record_relative() ||
            ref->get_paddr().is_root());
     assert(ref->is_exist_mutation_pending() ||
 	   read_set.count(ref->prior_instance->get_paddr(), extent_cmp_t{}));
@@ -323,8 +324,6 @@ public:
     extent_version_t version) {
     LOG_PREFIX(Transaction::sync_extent_state);
     SUBTRACET(seastore_t, "new_paddr {} -- {}", *this, new_paddr, *item.ref);
-    ceph_assert(new_paddr.is_absolute());
-    ceph_assert(item.ref->get_paddr().is_absolute());
 #ifndef NDEBUG
     auto [existed, it] = lookup_trans_from_read_extent(item.ref);
     assert(existed);
@@ -332,8 +331,10 @@ public:
     assert(item.t = it->t);
 #endif
 
+    if (!item.is_extent_attached_to_trans()) {
+      return;
+    }
     auto &extent = *item.ref;
-    assert(item.is_extent_attached_to_trans());
     read_set.erase(read_extent_set_t<Transaction>::s_iterator_to(item));
     auto where1 = retired_set.find(extent.get_paddr());
     bool retired = (where1 != retired_set.end());
@@ -341,13 +342,18 @@ public:
       retired_set.erase(where1);
     }
 
-    extent.set_paddr(new_paddr);
+    if (extent.get_paddr() != new_paddr) {
+      extent.set_paddr(new_paddr, extent.get_paddr().is_absolute());
+    }
 
     read_set.insert(item);
     if (retired) {
       retired_set.emplace(&extent, trans_id);
     }
 
+    if (!new_paddr.is_absolute()) {
+      return;
+    }
     auto where2 = write_set.find_offset(old_paddr);
     if (where2 != write_set.end()) {
       auto &mextent = *where2;

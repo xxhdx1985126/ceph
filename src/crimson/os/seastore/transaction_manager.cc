@@ -108,7 +108,7 @@ TransactionManager::mount()
   INFO("...");
   cache->init();
   return epm->mount(
-  ).safe_then([this] {
+  ).safe_then([this, FNAME] {
     return journal->replay(
       [this](
 	const auto &offsets,
@@ -127,7 +127,8 @@ TransactionManager::mount()
 	  alloc_tail,
 	  modify_time,
           trans_base_set);
-      }).safe_then([this](auto last_tid) {
+      }).safe_then([FNAME, this](auto last_tid) {
+        INFO("last transaction id: {}", last_tid);
         cache->set_next_trans_id(last_tid);
       });
   }).safe_then([this] {

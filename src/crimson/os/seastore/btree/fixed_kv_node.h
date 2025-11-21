@@ -222,7 +222,9 @@ struct FixedKVInternalNode
       auto &pending_version = static_cast<this_type_t&>(*copy_dest);
       auto it = pending_version.begin();
       while (it != pending_version.end() && iter != this->end()) {
-        if (is_valid_child_ptr(pending_version.children[it->get_offset()])) {
+        if (auto child = pending_version.children[it->get_offset()];
+            is_valid_child_ptr(child) &&
+            (child->_is_pending() || child->_is_pending_io())) {
           it++;
           continue;
         }
@@ -248,7 +250,9 @@ struct FixedKVInternalNode
         ceph_assert(pending_version.is_pending());
         auto it = pending_version.begin();
         while (it != pending_version.end() && iter != this->end()) {
-          if (is_valid_child_ptr(pending_version.children[it->get_offset()])) {
+          if (auto child = pending_version.children[it->get_offset()];
+              is_valid_child_ptr(child) &&
+              (child->_is_pending() || child->_is_pending_io())) {
             it++;
             continue;
           }
@@ -538,8 +542,6 @@ struct FixedKVInternalNode
       return;
     }
     delta_buffer.replay(*this);
-    auto crc = calc_crc32c();
-    this->update_in_extent_chksum_field(crc);
   }
 
   void apply_delta_and_adjust_crc(
@@ -877,8 +879,6 @@ struct FixedKVLeafNode
       return;
     }
     delta_buffer.replay(*this);
-    auto crc = calc_crc32c();
-    this->update_in_extent_chksum_field(crc);
   }
 
   void apply_delta_and_adjust_crc(
