@@ -48,8 +48,16 @@ auto with_object_data(
   ObjectDataHandler::context_t ctx,
   F &&f)
 {
+  auto onode_cache = ctx.t.get_onode_cache_info();
+  bool use_cache = false;
+  use_cache = onode_cache && !onode_cache->changed;
+
+  object_data_t obj_data = use_cache ? object_data_t(
+        onode_cache->object_data_laddr, onode_cache->extent_len)
+        : ctx.onode.get_layout().object_data.get();
+
   return seastar::do_with(
-    ctx.onode.get_layout().object_data.get(),
+    std::move(obj_data),
     std::forward<F>(f),
     [ctx](auto &object_data, auto &f) {
       return std::invoke(f, object_data
@@ -1175,6 +1183,7 @@ ObjectDataHandler::read_ret ObjectDataHandler::read(
       loffset_t aligned_length =
 	  l_end.get_roundup_laddr(ctx.tm.get_block_size()).get_byte_distance<
 	    loffset_t>(aligned_start);
+      // get_pins 是查找lba tree，从逻辑地址映射到物理地址
       return ctx.tm.get_pins(
         ctx.t,
 	aligned_start,

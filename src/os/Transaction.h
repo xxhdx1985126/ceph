@@ -218,7 +218,18 @@ public:
     }
   } __attribute__ ((packed)) ;
 
+  std::shared_ptr<onode_info_cache> get_onode_cache_info(){
+    return onode_cache;
+  }
+
+  void set_onode_cache_info(std::shared_ptr<onode_info_cache> onode_info){
+    onode_cache = onode_info;
+  }
+
 private:
+
+  std::shared_ptr<onode_info_cache> onode_cache;
+  
   TransactionData data;
 
   std::map<coll_t, uint32_t> coll_index;
@@ -270,6 +281,8 @@ public:
     on_applied(std::move(other.on_applied)),
     on_commit(std::move(other.on_commit)),
     on_applied_sync(std::move(other.on_applied_sync)) {
+    auto cache = other.get_onode_cache_info();
+    onode_cache = cache;
     other.coll_id = 0;
     other.object_id = 0;
   }
@@ -289,6 +302,8 @@ public:
     on_applied_sync = std::move(other.on_applied_sync);
     other.coll_id = 0;
     other.object_id = 0;
+    auto cache = other.get_onode_cache_info();
+    onode_cache = cache;
     return *this;
   }
 

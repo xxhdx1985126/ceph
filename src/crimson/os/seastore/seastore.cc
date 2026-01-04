@@ -1669,24 +1669,48 @@ SeaStore::Shard::_do_transaction_step(
       op->op == Transaction::OP_ZERO) {
     create = true;
   }
+  // 从 ceph::os::Transaction::iterator获取缓存信息
+  auto onode_cache = ctx.ext_transaction.get_onode_cache_info();
+  bool flag_get_onode = true;
+
   if (!onodes[op->oid]) {
     const ghobject_t& oid = i.get_oid(op->oid);
-    if (!create) {
-      DEBUGT("op {}, get oid={} ...",
-             *ctx.transaction, (uint32_t)op->op, oid);
-      fut = onode_manager->get_onode(*ctx.transaction, oid);
-    } else {
-      DEBUGT("op {}, get_or_create oid={} ...",
-             *ctx.transaction, (uint32_t)op->op, oid);
-      fut = onode_manager->get_or_create_onode(*ctx.transaction, oid);
+    if (onode_cache &&
+      oid.hobj == onode_cache->oid &&
+      !onode_cache->object_data_laddr.is_null()) {
+      flag_get_onode = false;
+    }
+    if(flag_get_onode){
+      if (!create) {
+        DEBUGT("op {}, get oid={} ...",
+              *ctx.transaction, (uint32_t)op->op, oid);
+        fut = onode_manager->get_onode(*ctx.transaction, oid);
+      } else {
+        DEBUGT("op {}, get_or_create oid={} ...",
+              *ctx.transaction, (uint32_t)op->op, oid);
+        fut = onode_manager->get_or_create_onode(*ctx.transaction, oid);
+      }
     }
   }
-  return fut.si_then([&, op, this, FNAME](auto get_onode) {
+  return fut.si_then([&, op, this, FNAME, onode_cache](auto get_onode) {
     OnodeRef& onode = onodes[op->oid];
     if (!onode) {
       assert(get_onode);
       onode = get_onode;
+      if(onode_cache && !onode_cache->object_data_laddr.is_null() && onode->get_hobj() == onode_cache->oid && onode){
+        onode_cache->object_data_laddr = onode->get_data_hint();
+        // no match for ‘operator=’ (operand types are ‘laddr_t’ {aka ‘crimson::os::seastore::laddr_t’} and ‘const crimson::os::seastore::omap_root_le_t’)
+        onode_cache->omap_root_laddr = onode->get_root(omap_type_t::OMAP).get_laddr();
+        // onode_cache->version = onode->get_version();
+        onode_cache->extent_len = onode->get_layout().size;
+        onode_cache->changed = true;
+      }
     }
+
+    // 把ceph::os::Transaction中存的缓存信息转存到ceph::os::seastore::Transaction
+    ctx.transaction->set_onode_cache_info(ctx.ext_transaction.get_onode_cache_info());
+
+
     OnodeRef& d_onode = onodes[op->dest_oid];
     if ((op->op == Transaction::OP_CLONE
 	  || op->op == Transaction::OP_COLL_MOVE_RENAME)

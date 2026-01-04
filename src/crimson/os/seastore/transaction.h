@@ -847,6 +847,19 @@ private:
   backref_entry_refs_t backref_entries;
 
   cache_hint_t cache_hint = CACHE_HINT_TOUCH;
+
+  std::shared_ptr<onode_info_cache> onode_cache;
+
+public:
+  std::shared_ptr<onode_info_cache> get_onode_cache_info(){
+    return onode_cache;
+  }
+
+  void set_onode_cache_info(std::shared_ptr<onode_info_cache> onode_info){
+    onode_cache = onode_info;
+  }
+  
+  
 };
 using TransactionRef = Transaction::Ref;
 

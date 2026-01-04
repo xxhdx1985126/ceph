@@ -443,6 +443,75 @@ public:
     });
   }
 
+  template <typename T>
+  alloc_extent_ret<T> alloc_non_data_extent_at(
+    Transaction &t,
+    extent_len_t len,
+    extent_len_t old_len,
+    laddr_t old_root_laddr,
+    paddr_t old_root_paddr,
+    placement_hint_t placement_hint = placement_hint_t::HOT) {
+    static_assert(is_logical_metadata_type(T::TYPE));
+    LOG_PREFIX(TransactionManager::alloc_non_data_extent_at);
+    SUBDEBUGT(seastore_tm, "{} laddr_root {}~0x{:x} phint={} ...",
+              t, T::TYPE, old_root_laddr, len, placement_hint);
+    auto nextent = cache->alloc_new_non_data_extent<T>(
+      t,
+      len,
+      placement_hint,
+      INIT_GENERATION);
+    nextent->set_laddr(old_root_laddr);
+    // user must initialize the logical extent themselves.
+    assert(is_user_transaction(t.get_src()));
+    nextent->set_seen_by_users();
+    // update_lba_mappings()
+    
+
+      // virtual get_mapping_ret get_mapping(
+      //   Transaction &t,
+      //   laddr_t offset,
+      //   bool search_containing = false) = 0;
+
+    return lba_manager->get_mapping(t, old_root_laddr
+    ).si_then([this, &t, nextent = std::move(nextent), old_len, old_root_paddr](auto mapping) mutable {
+
+      return lba_manager->update_mapping(
+        t,
+        std::move(mapping),
+        old_len,
+        old_root_paddr,
+        *nextent
+      ).si_then([nextent = std::move(nextent)](auto &&) mutable {
+        return alloc_extent_iertr::make_ready_future<TCachedExtentRef<T>>(std::move(nextent));
+      });
+    }).handle_error_interruptible(
+      rewrite_extent_iertr::pass_further{},
+      crimson::ct_error::assert_all{"unexpected enoent"}
+    );
+  }
+
+  rewrite_extent_ret update_new_omap_root(
+    Transaction &t,
+    extent_len_t old_len,
+    laddr_t old_root_laddr,
+    paddr_t old_root_paddr,
+    LogicalChildNodeRef new_root) {
+      new_root->set_laddr(old_root_laddr);
+      return lba_manager->get_mapping(t, old_root_laddr
+    ).si_then([this, &t, new_root = std::move(new_root), old_len, old_root_paddr](auto mapping) mutable {
+      return lba_manager->update_mapping(
+        t,
+        std::move(mapping),
+        old_len,
+        old_root_paddr,
+        *new_root
+      ).discard_result();
+    }).handle_error_interruptible(
+      rewrite_extent_iertr::pass_further{},
+      crimson::ct_error::assert_all{"unexpected enoent"}
+    );
+  }
+
   /**
    * alloc_data_extents
    *

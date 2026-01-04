@@ -16,6 +16,8 @@ namespace crimson::os::seastore {
 
 struct onode_layout_t {
   // The expected decode size of object_info_t without oid.
+  // 在测试的时候需要把这两个值调为1，这两个值是用来控制oi和ss是存在onode还是omap的
+  // 我们希望有缓存之后，不查onode，所以希望oi和ss都存在omap里面，方便后面的修改
   static constexpr int MAX_OI_LENGTH = 236;
   // We might want to move the ss field out of onode_layout_t.
   // The reason is that ss_attr may grow to relative large, as
@@ -109,6 +111,9 @@ public:
   const omap_root_le_t& get_root(omap_type_t type) const {
     return get_layout().get_root(type);
   }
+  const hobject_t get_hobj() const {
+    return hobj;
+  } 
   friend std::ostream& operator<<(std::ostream &out, const Onode &rhs);
 };
 

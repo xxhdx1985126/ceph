@@ -68,9 +68,10 @@ BtreeOMapManager::handle_root_split(
 {
   LOG_PREFIX(BtreeOMapManager::handle_root_split);
   DEBUGT("{}", oc.t, omap_root);
-  return oc.tm.alloc_non_data_extent<OMapInnerNode>(oc.t, omap_root.hint,
+  laddr_t old_root_addr = omap_root.get_location();
+  return oc.tm.alloc_non_data_extent<OMapInnerNode>(oc.t, old_root_addr,
                                            OMAP_INNER_BLOCK_SIZE)
-    .si_then([&omap_root, mresult, oc, FNAME]
+    .si_then([&omap_root, mresult, oc, FNAME, old_root_addr]
 	      (auto&& nroot) -> handle_root_split_ret {
     auto [left, right, pivot] = *(mresult.split_tuple);
     omap_node_meta_t meta{omap_root.depth + 1};
@@ -86,7 +87,7 @@ BtreeOMapManager::handle_root_split(
       dynamic_cast<BaseChildNode<OMapInnerNode, std::string>*>(right.get()));
     nroot->journal_inner_insert(nroot->iter_begin() + 1, right->get_laddr(),
                                 pivot, nroot->maybe_get_delta_buffer());
-    omap_root.update(nroot->get_laddr(), omap_root.get_depth() + 1, omap_root.hint,
+    omap_root.update(old_root_addr, omap_root.get_depth() + 1, omap_root.hint,
       omap_root.get_type());
     oc.t.get_omap_tree_stats().depth = omap_root.depth;
     ++(oc.t.get_omap_tree_stats().extents_num_delta);
@@ -107,24 +108,78 @@ BtreeOMapManager::handle_root_merge(
   LOG_PREFIX(BtreeOMapManager::handle_root_merge);
   DEBUGT("{}", oc.t, omap_root);
   auto old_root = *(mresult.need_merge);
-  auto iter = old_root->cast<OMapInnerNode>()->iter_begin();
-  omap_root.update(
-    iter->get_val(),
-    omap_root.depth -= 1,
-    omap_root.hint,
-    omap_root.get_type());
-  oc.t.get_omap_tree_stats().depth = omap_root.depth;
-  oc.t.get_omap_tree_stats().extents_num_delta--;
-  return oc.tm.remove(oc.t, old_root->get_laddr()
-  ).si_then([](auto &&ret) -> handle_root_merge_ret {
-    return seastar::now();
-  }).handle_error_interruptible(
-    handle_root_merge_iertr::pass_further{},
-    crimson::ct_error::assert_all{
-      "Invalid error in handle_root_merge"
-    }
+  auto inner_node = old_root->cast<OMapInnerNode>();
+  auto iter = inner_node->iter_begin();
+  
+  laddr_t child_laddr = iter->get_val();
+  depth_t child_depth = omap_root.depth - 1;
+  
+  std::string child_begin = inner_node->get_begin();
+  std::string child_end = inner_node->get_end();
+
+  auto handle_loaded_child = [oc, &omap_root, old_root, child_depth, mresult, child_laddr](auto child_node) mutable {
+    laddr_t reused_laddr = old_root->get_laddr();
+    if(child_node->is_btree_root()){
+       return oc.tm.update_new_omap_root(
+          oc.t,
+          mresult.old_root_len, mresult.old_root_laddr, mresult.old_root_paddr,
+          child_node
+        ).si_then([oc, &omap_root, reused_laddr, child_depth]() mutable {
+          omap_root.update(
+            reused_laddr, 
+            child_depth,
+            omap_root.hint,
+            omap_root.get_type()
+          );
+          
+          oc.t.get_omap_tree_stats().depth = child_depth;
+          oc.t.get_omap_tree_stats().extents_num_delta--;
+          return seastar::now();
+        });
+    } else {
+      omap_root.update(
+        child_laddr,
+        omap_root.depth -= 1,
+        omap_root.hint,
+        omap_root.get_type());
+      oc.t.get_omap_tree_stats().depth = omap_root.depth;
+      oc.t.get_omap_tree_stats().extents_num_delta--;
+      return oc.tm.remove(oc.t, old_root->get_laddr()
+      ).si_then([](auto &&ret) -> handle_root_merge_ret {
+        return seastar::now();
+      }).handle_error_interruptible(
+        handle_root_merge_iertr::pass_further{},
+        crimson::ct_error::assert_all{
+          "Invalid error in handle_root_merge"
+        }
   );
+    }
+   
+  };
+  
+  if (child_depth <= 1) {
+    // leaf node
+    return omap_load_extent<OMapLeafNode>(
+      oc, child_laddr, child_depth, 
+      std::move(child_begin), std::move(child_end)
+    ).si_then(handle_loaded_child
+    ).handle_error_interruptible(
+      handle_root_merge_iertr::pass_further{},
+      crimson::ct_error::assert_all{"Invalid error in handle_root_merge"}
+    );
+  } else {
+    // inner node
+    return omap_load_extent<OMapInnerNode>(
+      oc, child_laddr, child_depth, 
+      std::move(child_begin), std::move(child_end)
+    ).si_then(handle_loaded_child
+    ).handle_error_interruptible(
+      handle_root_merge_iertr::pass_further{},
+      crimson::ct_error::assert_all{"Invalid error in handle_root_merge"}
+    );
+  }
 }
+
 
 BtreeOMapManager::omap_get_value_ret
 BtreeOMapManager::omap_get_value(
@@ -180,15 +235,29 @@ BtreeOMapManager::omap_set_key(
     omap_root
   ).si_then([this, &t, &key, &value, &omap_root](auto root) {
     return root->insert(get_omap_context(
-      t, omap_root), key, value);
-  }).si_then([this, &omap_root, &t](auto mresult) -> omap_set_key_ret {
+      t, omap_root), key, value)
+      .si_then([root = std::move(root)](auto mresult) mutable {
+        return std::make_pair(std::move(root), std::move(mresult));
+      });
+  })
+  .si_then([this, &omap_root, &t](auto&& root_and_mresult) -> omap_set_key_ret {
+    auto& [root, mresult] = root_and_mresult;
+
     if (mresult.status == mutation_status_t::SUCCESS)
       return seastar::now();
-    else if (mresult.status == mutation_status_t::WAS_SPLIT)
+    else if (mresult.status == mutation_status_t::WAS_SPLIT) {
+      // mresult.old_root_laddr = root->get_layout().object_data;
+      mresult.old_root_laddr = root->get_laddr();
+      mresult.old_root_paddr = root->get_paddr();
+      mresult.old_root_len = root->get_length();
       return handle_root_split(
-	get_omap_context(t, omap_root), omap_root, mresult);
-    else
+          get_omap_context(t, omap_root),
+          omap_root,
+          mresult
+      );
+    } else {
       return seastar::now();
+    }
   });
 }
 
@@ -204,8 +273,15 @@ BtreeOMapManager::omap_rm_key(
     get_omap_context(t, omap_root),
     omap_root
   ).si_then([this, &t, &key, &omap_root](auto root) {
-    return root->rm_key(get_omap_context(t, omap_root), key);
-  }).si_then([this, &omap_root, &t](auto mresult) -> omap_rm_key_ret {
+    return root->rm_key(get_omap_context(t, omap_root), key)
+      .si_then([root = std::move(root)](auto mresult) mutable {
+        return std::make_pair(std::move(root), std::move(mresult));
+      });
+  }).si_then([this, &t, &omap_root](auto&& root_and_mresult) -> omap_rm_key_ret {
+    auto& [root, mresult] = root_and_mresult;
+    mresult.old_root_laddr = root->get_laddr();
+    mresult.old_root_paddr = root->get_paddr();
+    mresult.old_root_len = root->get_length();
     if (mresult.status == mutation_status_t::SUCCESS) {
       return seastar::now();
     } else if (mresult.status == mutation_status_t::WAS_SPLIT) {

@@ -19,9 +19,12 @@
 
 //TODO: calculate the max key and value sizes the current layout supports,
 //	and return errors during insert if the max is exceeded.
-#define OMAP_INNER_BLOCK_SIZE 8192
+#define OMAP_INNER_BLOCK_SIZE 65536
 #define OMAP_LEAF_BLOCK_SIZE 65536
-#define LOG_LEAF_BLOCK_SIZE 16384
+#define LOG_LEAF_BLOCK_SIZE 65536
+
+// #define OMAP_ROOT_BLOCK_SIZE 65536
+// #define LOG_ROOT_BLOCK_SIZE 16384
 
 template <>
 struct fmt::formatter<ObjectStore::omap_iter_seek_t> {

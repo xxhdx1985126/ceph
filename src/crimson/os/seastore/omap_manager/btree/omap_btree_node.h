@@ -48,6 +48,9 @@ struct OMapNode : LogicalChildNode {
     : status(s),
       split_tuple(tuple),
       need_merge(n_merge) {}
+    laddr_t old_root_laddr;
+    paddr_t old_root_paddr;
+    extent_len_t old_root_len;
   };
 
   explicit OMapNode(ceph::bufferptr &&ptr) : LogicalChildNode(std::move(ptr)) {}
