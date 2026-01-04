@@ -61,6 +61,7 @@
 #include "error_code.h"
 
 #include "neorados/RADOSImpl.h"
+#include "MetaCacher.h"
 
 using std::list;
 using std::make_pair;
@@ -1188,6 +1189,43 @@ void Objecter::_scan_requests(
   }
 }
 
+bool Objecter::_check_pg_acting_set_changes(const OSDMap& old_osdmap,
+                                            const OSDMap& new_osdmap,
+                                            const std::set<pg_t>& pgid_in_cache) {
+  ldout(cct, 7) << "check_pg_acting_set_changes, cache" << dendl;
+  // 获取所有pool的PG数量
+  // const auto &pools = new_osdmap.get_pools();
+  set<pg_t> pg_changed;
+  bool pg_has_changed;
+  for (auto pgid : pgid_in_cache) {
+    vector<int> old_up, old_acting;
+    int old_up_primary, old_acting_primary;
+    old_osdmap.pg_to_up_acting_osds(pgid, &old_up, &old_up_primary,
+                                    &old_acting, &old_acting_primary);
+
+    vector<int> new_up, new_acting;
+    int new_up_primary, new_acting_primary;
+    new_osdmap.pg_to_up_acting_osds(pgid, &new_up, &new_up_primary,
+                                    &new_acting, &new_acting_primary);
+
+    // 比较acting set是否变化
+    // if (old_acting != new_acting) {
+    //   pg_changed.insert(pgid);
+    // }
+    if (OSDMap::primary_changed_broken(old_acting_primary, old_acting, new_acting_primary, new_acting)) {
+      pg_has_changed = true;
+      ldout(cct, 7) << "pg has changed, " << pgid << dendl;
+    }
+    
+    // if (any_change && oldacting != newacting)
+    //   return true;
+    if (pg_has_changed) {
+      pg_changed.insert(pgid);
+    }
+  }
+  return metadata_cacher->pgs_remove(pg_changed) >= 0;
+}
+
 void Objecter::handle_osd_map(MOSDMap *m)
 {
   ceph::shunique_lock sul(rwlock, acquire_unique);
@@ -1201,6 +1239,10 @@ void Objecter::handle_osd_map(MOSDMap *m)
 		  << " != " << monc->get_fsid() << dendl;
     return;
   }
+    // 保存旧的 OSDMap 用于比较
+  OSDMap* old_osdmap = osdmap.get();
+  // 用于记录需要更新缓存的PG列表
+  const std::set<pg_t>& pgs_in_cache = metadata_cacher->get_pgids();
 
   bool was_pauserd = osdmap->test_flag(CEPH_OSDMAP_PAUSERD);
   bool cluster_full = _osdmap_full_flag();
@@ -1231,7 +1273,7 @@ void Objecter::handle_osd_map(MOSDMap *m)
       for (epoch_t e = osdmap->get_epoch() + 1;
 	   e <= m->get_last();
 	   e++) {
-
+  // 对osdmap的增量更新和全量更新
 	if (osdmap->get_epoch() == e-1 &&
 	    m->incremental_maps.count(e)) {
 	  ldout(cct, 3) << "handle_osd_map decoding incremental epoch " << e
@@ -1274,6 +1316,16 @@ void Objecter::handle_osd_map(MOSDMap *m)
 	cluster_full = cluster_full || _osdmap_full_flag();
 	update_pool_full_map(pool_full_map);
 
+  if (old_osdmap) {
+    
+    bool res = _check_pg_acting_set_changes(*old_osdmap, *osdmap,
+                                  pgs_in_cache);
+    ldout(cct, 3) << "_check_pg_acting_set_changes: " << res << dendl;
+    // if (res) {
+    //   cout << res;
+    // }
+  }
+
 	// check all outstanding requests on every epoch
 	for (auto& i : need_resend) {
 	  _prune_snapc(osdmap->get_new_removed_snaps(), i.second);
@@ -1293,6 +1345,7 @@ void Objecter::handle_osd_map(MOSDMap *m)
 	      (s->con &&
 	       s->con->get_peer_addrs() != osdmap->get_addrs(s->osd))) {
 	    close_session(s);
+      // osd变化了导致pg映射发生变化
 	  }
 	}
 
@@ -3360,6 +3413,41 @@ Objecter::MOSDOp *Objecter::_prepare_osd_op(Op *op)
 		      flags, op->features);
 
   m->set_snapid(op->snapid);
+  // op->snapid 是当前target的snapid
+  auto start_time = std::chrono::steady_clock::now();
+  auto meta_data = metadata_cacher->get_metadata_from_cache(op->target.pgid, hobj.oid);
+  auto end_time = std::chrono::steady_clock::now();
+  auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count();
+  ldout(cct, 7) << "get_metadata_from_cache time: " << duration << "us" << dendl;
+
+  ldout(cct, 7) << "_prepare_osd_op, cache " << dendl;
+  if (meta_data) {
+    ldout(cct, 7) << "from cache get the meta and prepare for the MOSDOp, cache" << dendl;
+    // std::optional<object_info_cache> type
+    auto head_cahced_data = meta_data->get_head_oi();
+    if (head_cahced_data) {
+      m->has_head_cache_data = true;
+      m->head_cached_data = head_cahced_data.value();
+      ldout(cct, 7) << "get head metadata" << dendl;
+    }
+
+    if (op->snapid == CEPH_NOSNAP) { // target == head
+      if (head_cahced_data) {
+        m->has_target_cache_data = true;
+        m->target_cached_data = head_cahced_data.value();
+        ldout(cct, 7) << "get target metadata where target == head: "  << dendl;
+      }
+      
+    } else { // target != head
+      auto target_cached_data = meta_data->get_clone_oi(op->snapid);
+      if (target_cached_data) {
+        m->has_target_cache_data = true;
+        m->target_cached_data = target_cached_data.value();
+        ldout(cct, 7) << "get target metadata where target != head : "  << dendl;
+      }
+    }
+  }
+  
   m->set_snap_seq(op->snapc.seq);
   m->set_snaps(op->snapc.snaps);
 
@@ -3647,11 +3735,28 @@ void Objecter::handle_osd_op_reply(MOSDOpReply *m)
 
   if (op->objver)
     *op->objver = m->get_user_version();
+    // 这里version没有缓存
   if (op->reply_epoch)
     *op->reply_epoch = m->get_map_epoch();
   if (op->data_offset)
     *op->data_offset = m->get_header().data_off;
 
+  // 更新MetaCacher的缓存值
+  // add_or_update_metadata(pg_t pgid, object_t oid, std::shared_ptr<MetaData> metadata);
+  ldout(cct, 7) << "handle osd op reply for cache" << dendl;
+  if(m->has_target_cache_data || m->has_head_cache_data) {
+    
+    std::shared_ptr<MetaData> meta_ptr = std::make_shared<MetaData>(
+      m->head_cached_data,   
+      m->ss,                
+      m->target_cached_data.snap, 
+      m->target_cached_data,  
+      op->target.get_hobj().oid  
+    );
+    int res = metadata_cacher->add_or_update_metadata(op->target.pgid, op->target.get_hobj().oid, meta_ptr);
+    ldout(cct, 7) << "update the cache: "  << res << dendl;
+  }
+  
   // got data?
   if (op->outbl) {
 #if 0
@@ -5253,6 +5358,7 @@ Objecter::Objecter(CephContext *cct,
     ldout(cct, 20) << __func__ << ": read policy: balance" << dendl;
     extra_read_flags = CEPH_OSD_FLAG_BALANCE_READS;
   }
+  metadata_cacher = std::make_unique<MetaCacher>();
 }
 
 Objecter::~Objecter()
@@ -5273,6 +5379,7 @@ Objecter::~Objecter()
 
   ceph_assert(!m_request_state_hook);
   ceph_assert(!logger);
+  metadata_cacher = std::make_unique<MetaCacher>();
 }
 
 /**

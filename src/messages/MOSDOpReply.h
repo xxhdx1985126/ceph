@@ -23,6 +23,8 @@
 
 #include "MOSDOp.h"
 #include "common/errno.h"
+#include "osdc/MetaCacher.h"
+
 
 /*
  * OSD op reply
@@ -52,6 +54,13 @@ private:
   request_redirect_t redirect;
 
 public:
+  //TODO:add cache info
+  bool has_target_cache_data = false;
+  bool has_head_cache_data = false;
+  object_info_cache target_cached_data;
+  object_info_cache head_cached_data;
+  SnapSet ss;
+  
   const object_t& get_oid() const { return oid; }
   const pg_t&     get_pg() const { return pgid; }
   int      get_flags() const { return flags; }
@@ -226,6 +235,13 @@ public:
         }
       }
       encode_trace(payload, features);
+      if (header.version == HEAD_VERSION) {
+        encode(has_target_cache_data, payload);
+        encode(has_head_cache_data, payload);
+        encode(target_cached_data, payload);
+        encode(head_cached_data, payload);
+        encode(ss, payload);
+      }
     }
   }
   void decode_payload() override {
@@ -259,6 +275,16 @@ public:
       if (do_redirect)
 	decode(redirect, p);
       decode_trace(p);
+
+      decode(has_target_cache_data, p);
+      decode(has_head_cache_data, p);
+      decode(target_cached_data, p);
+      decode(head_cached_data, p);
+      // target_cached_data.decode(p);
+      // head_cached_data.decode(p);
+      decode(ss, p);
+      
+
     } else if (header.version < 2) {
       ceph_osd_reply_head head;
       decode(head, p);
@@ -320,6 +346,12 @@ public:
       }
       if (header.version >= 8) {
         decode_trace(p);
+      }
+
+      if (header.version < HEAD_VERSION) {
+        has_target_cache_data = false;
+        has_head_cache_data = false;
+        // target_cached_data, head_cached_data, ss 会保持它们的默认构造值
       }
     }
   }

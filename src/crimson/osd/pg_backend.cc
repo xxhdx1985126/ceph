@@ -86,6 +86,8 @@ PGBackend::load_metadata_iertr::future
   <PGBackend::loaded_object_md_t::ref>
 PGBackend::load_metadata(const hobject_t& oid)
 {
+  // 从objector
+
   return interruptor::make_interruptible(store->get_attrs(
     coll,
     ghobject_t{oid, ghobject_t::NO_GEN, shard})).safe_then_interruptible(
@@ -112,6 +114,7 @@ PGBackend::load_metadata(const hobject_t& oid)
           // Returning object_corrupted when the object exsits and the
           // Snapset is either not found or empty.
           bool object_corrupted = true;
+          // 查找同一个对象的不同属性，attrs的key是string， value是bl
           if (auto ssiter = attrs.find(SS_ATTR); ssiter != attrs.end()) {
             object_corrupted = false;
             bufferlist bl = std::move(ssiter->second);
@@ -179,6 +182,7 @@ PGBackend::read(const ObjectState& os, OSDOp& osd_op,
   const ceph_osd_op& op = osd_op.op;
   const uint64_t offset = op.extent.offset;
   uint64_t length = op.extent.length;
+  // op操作的偏移和长度  
   logger().trace("read: {} {}~{}", oi.soid, offset, length);
 
   if (!os.exists || os.oi.is_whiteout()) {
@@ -206,6 +210,7 @@ PGBackend::read(const ObjectState& os, OSDOp& osd_op,
       return read_errorator::now();
     }
   }
+  // oi.soid是hobject_t类型的
   return _read(oi.soid, offset, length, op.flags).safe_then_interruptible_tuple(
     [&delta_stats, &oi, &osd_op](auto&& bl) -> read_errorator::future<> {
     if (!_read_verify_data(oi, bl)) {

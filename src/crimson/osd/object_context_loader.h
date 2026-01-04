@@ -25,7 +25,7 @@ public:
       backend{_backend},
       dpp{dpp}
     {}
-
+  // obc加载操作可能返回的错误类型集合
   using load_obc_ertr = crimson::errorator<
     crimson::ct_error::enoent,
     crimson::ct_error::object_corrupted>;
@@ -49,6 +49,7 @@ public:
       bool resolve_clone = true;
     } options;
 
+    // 状态和锁的管理
     struct state_t {
       RWState::State state = RWState::RWNONE;
       ObjectContextRef obc;
@@ -59,7 +60,7 @@ public:
 	ceph_assert(locked);
 	state = RWState::RWEXCL;
       }
-
+      // 从独占锁降级
       void demote_excl_to(RWState::State lock_type) {
 	assert(state == RWState::RWEXCL);
 	switch (lock_type) {
@@ -82,7 +83,7 @@ public:
 	  ceph_assert(0 == "impossible");
 	}
       }
-
+      // 中断安全的异步锁​
       auto lock_to(RWState::State lock_type) {
 	assert(state == RWState::RWNONE);
 	switch (lock_type) {
@@ -227,6 +228,7 @@ public:
    * access mechanism must be aware that ssc on a clone obc may be
    * null.
    */
+  //  根据推送的数据创建或更新缓存中的对象上下文
   ObjectContextRef create_cached_obc_from_push_data(
     const object_info_t &oi,
     SnapSetContextRef ssc) {
@@ -277,6 +279,9 @@ private:
   load_and_lock_fut load_and_lock_clone(Manager &, RWState::State, bool lock_head=true);
 public:
   load_and_lock_fut load_and_lock(Manager &, RWState::State);
+  load_and_lock_fut set_manager_target_obc(Manager &manager, RWState::State lock_type, ObjectContextRef obc_head, ObjectState obs_head, SnapSetContextRef ssc, ObjectContextRef obc_target, ObjectState obs_target);
+  load_and_lock_fut set_manager_head_obc(Manager &manager, RWState::State lock_type, ObjectContextRef obc, ObjectState obs, SnapSetContextRef ssc);
+
 
   using interruptor = ::crimson::interruptible::interruptor<
     ::crimson::osd::IOInterruptCondition>;

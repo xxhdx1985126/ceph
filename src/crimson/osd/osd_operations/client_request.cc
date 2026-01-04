@@ -393,26 +393,109 @@ ClientRequest::process_op(
 
   DEBUGDPP("{}.{}: past scrub blocker, getting obc",
 	   *pg, *this, this_instance_id);
+  
+  // load obc
+  hobject_t hobj_target = m->get_hobj();
+  // m->get_hobj()
+  if(hobj_target.is_head()) { // target == head
+    // DEBUGDPP("target == head", *this, "");
+    if(m->has_head_cache_data) {
+      DEBUGDPP("using cache head_cached_data when target == head, in client_request.cc", *this, "");
+      auto oi = object_info_t(hobj_target);
+      oi.size = m->head_cached_data.size;
+      ObjectState obs = ObjectState(oi, true);
 
-  int load_err = co_await pg->obc_loader.load_and_lock(
-    obc_manager, pg->get_lock_type(op_info)
-  ).si_then([]() -> int {
-    return 0;
-  }).handle_error_interruptible(
-    PG::load_obc_ertr::all_same_way(
-      [](const auto &code) -> int {
-	return -code.value();
-      })
-  );
-  if (load_err) {
-    DEBUGDPP("{}.{}: saw error code loading obc {}",
-	     *pg, *this, this_instance_id, load_err);
-    co_await reply_op_error(pg, load_err);
-    co_return;
+      SnapSetContextRef ssc = new SnapSetContext(m->get_hobj());
+      ssc->snapset = m->ss;
+      ssc->exists = true;
+
+      ObjectContextRef obc = new ObjectContext(m->get_hobj());
+
+      // pg->obc_loader.set_manager_head_obc(obc_manager, pg->get_lock_type(op_info), obc, obs, ssc);
+      int load_err = co_await pg->obc_loader.set_manager_head_obc(
+          obc_manager, pg->get_lock_type(op_info), obc, obs, ssc
+        ).si_then([]() -> int {
+          return 0;
+        }).handle_error_interruptible(
+          PG::load_obc_ertr::all_same_way(
+            [](const auto &code) -> int {
+              return -code.value();
+            })
+        );
+    }
+  } else {
+    // TODO
+    SnapSetContextRef ssc = new SnapSetContext(m->get_hobj());
+    ssc->snapset = m->ss;
+
+    ObjectContextRef obc_head = nullptr;
+    ObjectState obs_head;
+    ObjectContextRef obc_target = nullptr;
+    ObjectState obs_target;
+    if(m->has_head_cache_data) {
+      DEBUGDPP("using cache head_cached_data when target != head, in client_request.cc", *this, "");
+      hobject_t head_hobj = m->get_hobj();
+      head_hobj.snap = CEPH_NOSNAP;  // HEAD 对象的 snap 应该是 CEPH_NOSNAP
+      
+      auto head_oi = object_info_t(head_hobj);
+      head_oi.size = m->head_cached_data.size;
+      obs_head = ObjectState(std::move(head_oi), true);
+      
+      obc_head = new ObjectContext(head_hobj);
+    }
+    if(m->has_target_cache_data) {
+      DEBUGDPP("using cache target_data, in client_request.cc", *this, "");
+      auto target_oi = object_info_t(m->get_hobj());
+      target_oi.size = m->target_cached_data.size;
+      obs_target = ObjectState(std::move(target_oi), true);
+      
+      obc_target = new ObjectContext(m->get_hobj());
+    }
+
+    int load_err = co_await pg->obc_loader.set_manager_target_obc(
+      obc_manager, 
+      pg->get_lock_type(op_info),
+      obc_head,
+      obs_head,
+      ssc,
+      obc_target,
+      obs_target
+    ).si_then([]() -> int {
+        return 0;
+    }).handle_error_interruptible(
+      PG::load_obc_ertr::all_same_way(
+        [](const auto &code) -> int {
+          return -code.value();
+        })
+    );
   }
+  // ?if(!(m->has_target_cache_data && m->has_head_cache_data)
+    if((hobj_target.is_head() && !m->has_head_cache_data) || (!hobj_target.is_head() && (!m->has_target_cache_data || !m->has_head_cache_data))) {
+    // 正常的load obc的逻辑
+    
+    DEBUGDPP("using load_and_lock obc instead of using cache, in client_request.cc", *this, "");
+    int load_err = co_await pg->obc_loader.load_and_lock(
+      obc_manager, pg->get_lock_type(op_info)
+    ).si_then([]() -> int {
+      return 0;
+    }).handle_error_interruptible(
+      PG::load_obc_ertr::all_same_way(
+        [](const auto &code) -> int {
+    return -code.value();
+        })
+    );
+    if (load_err) {
+      DEBUGDPP("{}.{}: saw error code loading obc {}",
+        *pg, *this, this_instance_id, load_err);
+      co_await reply_op_error(pg, load_err);
+      co_return;
+    }
 
-  DEBUGDPP("{}.{}: obc {} loaded and locked, calling do_process",
-	   *pg, *this, this_instance_id, obc_manager.get_obc()->obs);
+    DEBUGDPP("{}.{}: obc {} loaded and locked, calling do_process",
+      *pg, *this, this_instance_id, obc_manager.get_obc()->obs);
+  }
+  
+  // 这里obc_manager只用到target
   co_await do_process(
     ihref, pg, obc_manager.get_obc(), this_instance_id
   );
@@ -485,13 +568,26 @@ ClientRequest::do_process(
     DEBUGDPP("{}.{}: ORDERSNAP flag set "
 	     "and snapc seq {} < snapset seq {} on {}",
 	     *pg, *this, this_instance_id,
-	     snapc.seq, obc->ssc->snapset.seq,
+	     snapc.seq, obc->ssc->snapset.seq, //TODO 这里如果target是clone，它的obc里面没有ssc啊？这个地方怎么判断的？
 	     obc->obs.oi.soid);
     co_await reply_op_error(pg, -EOLDSNAPC);
     co_return;
   }
 
   OpsExecuter ox(pg, obc, op_info, *m, get_remote_connection(), snapc);
+  // 在这里解析m里面的onode相关的数据，存到OpsExecuter里面
+  auto onode_info = std::make_shared<onode_info_cache>();
+  if(m->has_target_cache_data){
+    *onode_info = onode_info_cache(m->target_cached_data.object_data_laddr,
+                      m->target_cached_data.omap_root_laddr,
+                      m->target_cached_data.extent_len,
+                      0);
+  }
+  
+  onode_info->oid = m->get_hobj();
+  ox.onode_cache = onode_info;
+  ceph_assert(ox.onode_cache != nullptr);
+
   auto ret = co_await pg->run_executer(
     ox, obc, op_info, m->ops
   ).si_then([]() -> std::optional<std::error_code> {
@@ -601,6 +697,7 @@ ClientRequest::do_process(
 	      0 : m->ops.back().op.flags & CEPH_OSD_OP_FLAG_FAILOK)) {
       result = 0;
     }
+
     auto reply = crimson::make_message<MOSDOpReply>(
       m.get(),
       result,
@@ -608,6 +705,60 @@ ClientRequest::do_process(
       0,
       false);
     reply->add_flags(CEPH_OSD_FLAG_ACK | CEPH_OSD_FLAG_ONDISK);
+
+
+    
+    // 判断是否调用了load_and_lock()
+    
+    // TODO目前触发load_and_lock只是原来缓存没有对应的信息，无法判断obc版本是否是最新的
+    if(!(m->has_target_cache_data && m->has_head_cache_data) || ox.onode_cache->changed) {
+      // do_process里面传入的obc只有target
+      // message中缺失head或者target的信息，说明之前缓存内没有相关的数据
+      
+      // 调用loadobc之后，target的ss是从head中得到的
+      if(obc->ssc->snapset != m->ss) {
+        reply->ss = obc->ssc->snapset;
+      }
+      // 通过obc构造MetaData
+      // MetaData(const object_info_cache& h_oi, const SnapSet& _ss, snapid_t target_snap_id, const object_info_cache& t_oi, const object_t& object_id);
+      // auto target_obj_info = 
+      // hobject_t oid;
+      // SnapSet snapset;
+      auto cachedata_target = object_info_cache(obc->ssc->oid.snap, obc->obs.oi.size);
+      if(ox.onode_cache->changed) {
+        cachedata_target.object_data_laddr = ox.onode_cache->object_data_laddr;
+        cachedata_target.omap_root_laddr = ox.onode_cache->omap_root_laddr;
+        cachedata_target.extent_len = ox.onode_cache->extent_len;
+        cachedata_target.version = ox.onode_cache->version;
+      }
+
+      if (!m->has_target_cache_data) {
+        reply->has_target_cache_data = true;
+        reply->target_cached_data = cachedata_target;
+      }
+
+      if (!m->has_head_cache_data) {
+        // 得构造object_info_cache
+        if(obc->is_head()){
+          reply->has_head_cache_data = true;
+          reply->head_cached_data = object_info_cache(obc->ssc->oid.snap, obc->obs.oi.size);
+        } else{
+          auto obc_manager = pg->obc_loader.get_obc_manager(*(ihref.obc_orderer),
+                                                        m->get_hobj());
+          auto head_obc = obc_manager.get_head_obc();
+          reply->has_head_cache_data = true;
+          reply->head_cached_data = object_info_cache(head_obc->ssc->oid.snap, head_obc->obs.oi.size);
+        }
+
+        if(ox.onode_cache->changed) {
+          reply->head_cached_data.object_data_laddr = ox.onode_cache->object_data_laddr;
+          reply->head_cached_data.omap_root_laddr = ox.onode_cache->omap_root_laddr;
+          reply->head_cached_data.extent_len = ox.onode_cache->extent_len;
+          reply->head_cached_data.version = ox.onode_cache->version;
+        }
+      }
+    }
+  
     if (obc->obs.exists) {
       reply->set_reply_versions(pg->peering_state.get_info().last_update,
 				obc->obs.oi.user_version);

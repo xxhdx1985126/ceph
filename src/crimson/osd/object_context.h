@@ -45,6 +45,7 @@ struct SnapSetContext :
   hobject_t oid;
   SnapSet snapset;
   bool exists = false;
+  // 区分真实对象与缓存残留
   /**
    * exists
    *
@@ -175,6 +176,9 @@ private:
 
   /// true once set_*_state has been called, used for debugging
   bool fully_loaded = false;
+
+  // TODO 从cache中获取
+  // bool cache_loaded = false;
 
   /**
    * invalidated

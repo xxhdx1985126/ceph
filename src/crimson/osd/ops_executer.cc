@@ -867,6 +867,8 @@ OpsExecuter::flush_changes_and_submit(
     if (auto log_rit = log_entries.rbegin(); log_rit != log_entries.rend()) {
       ceph_assert(log_rit->version == osd_op_params->at_version);
     }
+    ceph_assert(this->onode_cache != nullptr);
+    txn.set_onode_cache_info(this->onode_cache);
     auto [_submitted, _all_completed] = co_await pg->submit_transaction(
       std::move(obc),
       cloning_ctx ? std::move(cloning_ctx->clone_obc) : nullptr,

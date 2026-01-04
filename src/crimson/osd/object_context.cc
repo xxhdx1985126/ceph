@@ -48,6 +48,9 @@ std::optional<hobject_t> resolve_oid(
 {
   logger().debug("{} oid.snap={},head snapset.seq={}",
                  __func__, oid.snap, ss.seq);
+  
+  // ​​快照系统中对象版本定位
+  // 请求的快照大于最新快照
   if (oid.snap > ss.seq) {
     // Because oid.snap > ss.seq, we are trying to read from a snapshot
     // taken after the most recent write to this object. Read from head.
@@ -55,6 +58,7 @@ std::optional<hobject_t> resolve_oid(
     return oid.get_head();
   } else {
     // which clone would it be?
+    // 在有序克隆列表(ss.clones)中二分查找
     auto clone = std::lower_bound(
       begin(ss.clones), end(ss.clones),
       oid.snap);
@@ -63,6 +67,14 @@ std::optional<hobject_t> resolve_oid(
       return std::nullopt;
     }
     auto citer = ss.clone_snaps.find(*clone);
+
+    // 克隆快照映射示例
+    // ss.clone_snaps = {
+    //   {10, {5, 8}},  // 克隆10包含快照5和8
+    //   {20, {15}}     // 克隆20包含快照15
+    // }
+    // key：数据和快照信息的集合，是clone（存储）
+    // value：用户创建的快照点，是快照（时间）
     // TODO: how do we want to handle this kind of logic error?
     ceph_assert(citer != ss.clone_snaps.end());
 

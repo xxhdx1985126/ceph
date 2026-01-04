@@ -19,6 +19,7 @@ ObjectContextLoader::load_and_lock_head(Manager &manager, RWState::State lock_ty
   ceph_assert(manager.target.is_head());
 
   if (manager.head_state.is_empty()) {
+    // osd缓存，obc_lru.get_or_create(hoid);
     auto [obc, _] = obc_registry.get_cached_obc(manager.target);
     manager.set_state_obc(manager.head_state, obc);
   }
@@ -82,6 +83,7 @@ ObjectContextLoader::load_and_lock_clone(
   }
 
   if (manager.target.is_head()) {
+    // 直接读取 HEAD 对象
     /* Yes, we assert at the top that manager.target is not head.  However, it's
      * possible that the requested snap (the resolve_clone path above) actually
      * maps to head (a read on an rbd snapshot more recent than the most recent
@@ -150,9 +152,12 @@ ObjectContextLoader::load_obc_iertr::future<>
 ObjectContextLoader::load_obc(ObjectContextRef obc)
 {
   LOG_PREFIX(ObjectContextLoader::load_obc);
+  
+  // find cache in objector
+  
   return backend.load_metadata(obc->get_oid())
     .safe_then_interruptible(
-      [FNAME, this, obc=std::move(obc)](auto md)
+      [FNAME, this, obc=std::move(obc)](auto md) // load_metadata()的返回结果
       -> load_obc_ertr::future<> {
 	const hobject_t& oid = md->os.oi.soid;
 	DEBUGDPP("loaded obs {} for {}", dpp, md->os.oi, oid);
@@ -172,6 +177,31 @@ ObjectContextLoader::load_obc(ObjectContextRef obc)
 	DEBUGDPP("loaded obc {} for {}", dpp, obc->obs.oi, obc->obs.oi.soid);
 	return seastar::now();
       });
+  // backend.load_metadata的返回值为md，md后续需要用到的就是os和ssc；
+  // md->os = ObjectState(object_info_t(bl, oid),true);第二个参数是exist的标识
+  // explicit object_info_t(const hobject_t& s)
+  //   : soid(s),
+  //     user_version(0), size(0), flags((flag_t)0),
+  //     truncate_seq(0), truncate_size(0),
+  //     data_digest(-1), omap_digest(-1),
+  //     expected_object_size(0), expected_write_size(0),
+  //     alloc_hint_flags(0)
+  // {}
+
+  // md->ssc = new crimson::osd::SnapSetContext(oid.get_snapdir());
+//   struct SnapSetContext {
+//   hobject_t oid;
+//   SnapSet snapset;
+//   int ref;
+//   bool registered : 1;
+//   bool exists : 1;
+
+//   explicit SnapSetContext(const hobject_t& o) :
+//     oid(o), ref(0), registered(false), exists(true) { }
+// };
+
+  //load_obc函数使用：客户端request->load_and_lock()->load_and_lock_head/clone()->load_obc()
+  
 }
 
 void ObjectContextLoader::notify_on_change(bool is_primary)
@@ -183,4 +213,94 @@ void ObjectContextLoader::notify_on_change(bool is_primary)
     obc.interrupt(::crimson::common::actingset_changed(is_primary));
   }
 }
+
+
+// The function flow is the same as load_and_lock_head.
+ObjectContextLoader::load_and_lock_fut ObjectContextLoader::set_manager_head_obc(Manager &manager, RWState::State lock_type, ObjectContextRef obc, ObjectState obs, SnapSetContextRef ssc) {
+  auto releaser = manager.get_releaser();
+  ceph_assert(manager.target.is_head());
+
+  if (manager.head_state.is_empty()) {
+    manager.set_state_obc(manager.head_state, obc);
+  }
+  if (manager.target_state.is_empty()) { // set target the head obc
+    manager.set_state_obc(manager.target_state, manager.head_state.obc);
+  }
+  
+  if (manager.target_state.obc->loading_started) {
+    co_await manager.target_state.lock_to(lock_type);
+  } else {
+    // 首次设置，获取独占锁
+    manager.target_state.lock_excl_sync();
+    manager.target_state.obc->loading_started = true;
+    
+    manager.target_state.obc->set_head_state(std::move(obs), std::move(ssc));
+    manager.target_state.demote_excl_to(lock_type);
+  }
+  releaser.cancel();
+  co_return;
 }
+
+ObjectContextLoader::load_and_lock_fut 
+ObjectContextLoader::set_manager_target_obc(Manager &manager, RWState::State lock_type, 
+                     ObjectContextRef obc_head, ObjectState obs_head, SnapSetContextRef ssc, ObjectContextRef obc_target, ObjectState obs_target) {
+  auto releaser = manager.get_releaser();
+
+  if (manager.head_state.is_empty()) {
+    manager.set_state_obc(manager.head_state, obc_head);
+  }
+  
+  if (!manager.head_state.obc->loading_started) {
+    manager.head_state.lock_excl_sync();
+    manager.head_state.obc->loading_started = true;
+
+    manager.target_state.obc->set_head_state(std::move(obs_head), std::move(ssc));
+
+    manager.head_state.demote_excl_to(RWState::RWREAD);
+  } else {
+    co_await manager.head_state.lock_to(RWState::RWREAD);
+  }
+    
+  if (manager.target.is_head()) {
+    manager.set_state_obc(manager.target_state, manager.head_state.obc);
+    if (lock_type != manager.head_state.state) {
+      // This case isn't actually possible at the moment for the above reason.
+      manager.head_state.release_lock();
+      co_await manager.target_state.lock_to(lock_type);
+    } else {
+      manager.target_state.state = manager.head_state.state;
+      manager.head_state.state = RWState::RWNONE;
+    }
+  } else {
+    // caller may have already populated this if !resolve_clone
+    if (manager.target_state.is_empty()) {
+      manager.set_state_obc(manager.target_state, obc_target);
+    }
+
+    if (manager.target_state.obc->loading_started) {
+      co_await manager.target_state.lock_to(RWState::RWREAD);
+      if (!manager.target_state.obc->ssc) {
+        // A cached clone obc may have a null ssc if created via
+        // create_cached_obc_from_push_data.  This interface
+        // is responsible for fixing that if found.
+        manager.target_state.obc->ssc = manager.head_state.obc->ssc;
+      }
+    } else {
+      manager.target_state.lock_excl_sync();
+      manager.target_state.obc->loading_started = true;
+      manager.target_state.obc->set_clone_state(std::move(obs_target));
+      manager.target_state.obc->set_clone_ssc(manager.head_state.obc->ssc);
+      manager.target_state.demote_excl_to(RWState::RWREAD);
+    }
+  }
+
+  ceph_assert(manager.target_state.obc->ssc);
+  ceph_assert(manager.head_state.obc->ssc);
+
+  releaser.cancel();
+  co_return;
+}
+
+
+}
+

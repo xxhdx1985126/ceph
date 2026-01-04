@@ -35,6 +35,7 @@ namespace {
   }
 }
 
+// 读取 ​​PG 的 epoch 值，集群拓扑变化时变更 epoch_t是u32
 seastar::future<epoch_t> PGMeta::get_epoch()
 {
   return store.open_collection(coll_t{pgid}).then([this](auto ch) {
@@ -63,6 +64,7 @@ seastar::future<epoch_t> PGMeta::get_epoch()
   });
 }
 
+// 从持久化存储中读取pg状态
 seastar::future<std::tuple<pg_info_t, PastIntervals>> PGMeta::load()
 {
   return store.open_collection(coll_t{pgid}).then([this](auto ch) {
@@ -82,6 +84,7 @@ seastar::future<std::tuple<pg_info_t, PastIntervals>> PGMeta::load()
       }
     }
     pg_info_t info;
+    // ceph/src/osd/osd_types.h
     {
       auto found = find_value<pg_info_t>(values, info_key);
       assert(found);

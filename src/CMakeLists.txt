@@ -526,6 +526,7 @@ set(libcommon_files
   osd/osd_op_util.cc
   osdc/Striper.cc
   osdc/Objecter.cc
+  osdc/MetaCacher.cc
   osdc/error_code.cc
   librbd/Features.cc
   librbd/io/IoOperations.cc

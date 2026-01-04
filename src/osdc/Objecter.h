@@ -35,6 +35,7 @@
 #include <boost/asio/io_context_strand.hpp>
 #include <boost/asio/post.hpp>
 
+#include "MetaCacher.h"
 #include "include/buffer.h"
 #include "include/ceph_assert.h"
 #include "include/ceph_fs.h"
@@ -1696,6 +1697,7 @@ public:
                           const std::set <std::string> &changed) override;
 
 public:
+  std::unique_ptr<MetaCacher> metadata_cacher;
   Messenger *messenger;
   MonClient *monc;
   boost::asio::io_context& service;
@@ -1976,6 +1978,8 @@ public:
   }
 
   struct Op : public RefCountedObject {
+    // std::shared_ptr<MetaData> cached_metadata = nullptr;
+
     OSDSession *session = nullptr;
     int incarnation = 0;
 
@@ -2721,6 +2725,11 @@ private:
     std::list<LingerOp*>& need_resend_linger,
     std::map<ceph_tid_t, CommandOp*>& need_resend_command,
     ceph::shunique_lock<ceph::shared_mutex>& sul);
+  
+  bool _check_pg_acting_set_changes(
+    const OSDMap& old_osdmap,
+    const OSDMap& new_osdmap,
+    const std::set<pg_t>& pgid_in_cache);
 
   int64_t get_object_hash_position(int64_t pool, const std::string& key,
 				   const std::string& ns);
