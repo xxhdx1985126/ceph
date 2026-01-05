@@ -327,6 +327,10 @@ public:
   using clone_ret = clone_iertr::future<>;
   clone_ret clone(context_t ctx);
 
+  uint32_t get_max_object_size() const {
+    return max_object_size;
+  }
+
 private:
   /// Updates region [_offset, _offset + bl.length) to bl
   write_ret overwrite(

@@ -481,9 +481,9 @@ seastar::future<> OSDSingletonState::store_maps(
       boost::make_counting_iterator(m->get_last() + 1),
       [&t, FNAME, m, this, &added_maps](epoch_t e) {
       if (auto p = m->maps.find(e); p != m->maps.end()) {
+	INFO("storing osdmap.{}", e);
 	auto o = std::make_unique<OSDMap>();
 	o->decode(p->second);
-	INFO("storing osdmap.{}", e);
 	store_map_bl(t, e, std::move(std::move(p->second)));
 	added_maps.emplace(e, osdmaps.insert(e, std::move(o)));
 	return seastar::now();

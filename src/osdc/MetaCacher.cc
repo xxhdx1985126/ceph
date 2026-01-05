@@ -1,3 +1,5 @@
+
+#ifdef WITH_CRIMSON
 #include "MetaCacher.h"
 
 #include "osd/OSDMap.h"
@@ -215,3 +217,4 @@ int MetaCacher::pgs_remove(const std::set<pg_t>& pgids) {
   }
   return count;
 }
+#endif

@@ -42,6 +42,7 @@ struct object_info_cache {
   // onode
   laddr_t object_data_laddr;
   laddr_t omap_root_laddr;
+  laddr_t xattr_root_laddr;
   uint32_t extent_len;
   uint64_t version;
 
@@ -63,6 +64,7 @@ struct object_info_cache {
     ceph::encode(size, bl);
     ceph::encode(object_data_laddr, bl);
     ceph::encode(omap_root_laddr, bl);
+    ceph::encode(xattr_root_laddr, bl);
     ceph::encode(extent_len, bl);
     ceph::encode(version, bl);
     ENCODE_FINISH(bl);
@@ -73,6 +75,7 @@ struct object_info_cache {
     ceph::decode(size, bl);
     ceph::decode(object_data_laddr, bl);
     ceph::decode(omap_root_laddr, bl);
+    ceph::decode(xattr_root_laddr, bl);
     ceph::decode(extent_len, bl);
     ceph::decode(version, bl);
     DECODE_FINISH(bl);

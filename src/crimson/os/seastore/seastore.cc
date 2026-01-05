@@ -1092,13 +1092,13 @@ SeaStore::Shard::list_collections()
 base_iertr::future<ceph::bufferlist>
 SeaStore::Shard::_read(
   Transaction& t,
-  Onode& onode,
+  Onode &onode,
   uint64_t offset,
   std::size_t len,
   uint32_t op_flags)
 {
   LOG_PREFIX(SeaStoreS::_read);
-  size_t size = onode.get_layout().size;
+  size_t size = onode.get_size();
   if (offset >= size) {
     DEBUGT("0x{:x}~0x{:x} onode-size=0x{:x} flags=0x{:x}, got none",
            t, offset, len, size, op_flags);
@@ -1328,8 +1328,7 @@ seastar::future<struct stat> SeaStore::Shard::_stat(
 {
   LOG_PREFIX(SeaStoreS::_stat);
   struct stat st;
-  auto &olayout = onode.get_layout();
-  st.st_size = olayout.size;
+  st.st_size = onode.get_size();
   st.st_blksize = device->get_block_size();
   st.st_blocks = (st.st_size + st.st_blksize - 1) / st.st_blksize;
   st.st_nlink = 1;
@@ -1454,7 +1453,7 @@ SeaStore::Shard::_fiemap(
   uint64_t len) const
 {
   LOG_PREFIX(SeaStoreS::_fiemap);
-  size_t size = onode.get_layout().size;
+  size_t size = onode.get_size();
   if (off >= size) {
     DEBUGT("0x{:x}~0x{:x} onode-size=0x{:x}, got none",
            t, off, len, size);
@@ -1612,6 +1611,20 @@ seastar::future<> SeaStore::Shard::flush(CollectionRef ch)
   });
 }
 
+bool SeaStore::Shard::can_skip_onode_search(
+  const internal_context_t &ctx,
+  const hobject_t &hobj,
+  const onode_info_cache_ref &onode_cache,
+  const ceph::os::Transaction::Op &op) const {
+  if (op.op != ceph::os::Transaction::OP_REMOVE &&
+      onode_cache &&
+      hobj == onode_cache->oid &&
+      !onode_cache->object_data_laddr.is_null()) {
+    return true;
+  }
+  return false;
+}
+
 SeaStore::Shard::tm_ret
 SeaStore::Shard::_do_transaction_step(
   internal_context_t &ctx,
@@ -1669,18 +1682,17 @@ SeaStore::Shard::_do_transaction_step(
       op->op == Transaction::OP_ZERO) {
     create = true;
   }
-  // 从 ceph::os::Transaction::iterator获取缓存信息
-  auto onode_cache = ctx.ext_transaction.get_onode_cache_info();
-  bool flag_get_onode = true;
 
   if (!onodes[op->oid]) {
+    // 从 ceph::os::Transaction::iterator获取缓存信息
+    auto onode_cache = ctx.ext_transaction.get_onode_cache_info();
     const ghobject_t& oid = i.get_oid(op->oid);
-    if (onode_cache &&
-      oid.hobj == onode_cache->oid &&
-      !onode_cache->object_data_laddr.is_null()) {
-      flag_get_onode = false;
-    }
-    if(flag_get_onode){
+    if (can_skip_onode_search(ctx, oid.hobj, onode_cache, *op)) {
+      CachedOnode cached_onode;
+      cached_onode.set_onode_info(*onode_cache);
+      fut = OnodeManager::get_or_create_onode_iertr::make_ready_future<
+	OnodeRef>(new CachedOnode((std::move(cached_onode))));
+    } else {
       if (!create) {
         DEBUGT("op {}, get oid={} ...",
               *ctx.transaction, (uint32_t)op->op, oid);
@@ -1692,24 +1704,12 @@ SeaStore::Shard::_do_transaction_step(
       }
     }
   }
-  return fut.si_then([&, op, this, FNAME, onode_cache](auto get_onode) {
+  return fut.si_then([&, op, this, FNAME](auto get_onode) {
     OnodeRef& onode = onodes[op->oid];
     if (!onode) {
       assert(get_onode);
       onode = get_onode;
-      if(onode_cache && !onode_cache->object_data_laddr.is_null() && onode->get_hobj() == onode_cache->oid && onode){
-        onode_cache->object_data_laddr = onode->get_data_hint();
-        // no match for ‘operator=’ (operand types are ‘laddr_t’ {aka ‘crimson::os::seastore::laddr_t’} and ‘const crimson::os::seastore::omap_root_le_t’)
-        onode_cache->omap_root_laddr = onode->get_root(omap_type_t::OMAP).get_laddr();
-        // onode_cache->version = onode->get_version();
-        onode_cache->extent_len = onode->get_layout().size;
-        onode_cache->changed = true;
-      }
     }
-
-    // 把ceph::os::Transaction中存的缓存信息转存到ceph::os::seastore::Transaction
-    ctx.transaction->set_onode_cache_info(ctx.ext_transaction.get_onode_cache_info());
-
 
     OnodeRef& d_onode = onodes[op->dest_oid];
     if ((op->op == Transaction::OP_CLONE
@@ -1906,6 +1906,16 @@ SeaStore::Shard::_do_transaction_step(
       ERROR("got exception {}", e);
       return crimson::ct_error::input_output_error::make();
     }
+  }).si_then([&ctx, op, &onodes] {
+    if (op->op != Transaction::OP_REMOVE) {
+      OnodeRef& onode = onodes[op->oid];
+      assert(onode);
+      // 把ceph::os::Transaction中存的缓存信息
+      // 转存到ceph::os::seastore::Transaction
+      ctx.ext_transaction.set_onode_cache_info(
+	onode_info_cache_ref(
+	  new onode_info_cache(onode->get_onode_info_cache())));
+    }
   }).handle_error_interruptible(
     tm_iertr::pass_further{},
     crimson::ct_error::enoent::handle([op] {
@@ -2020,7 +2030,7 @@ SeaStore::Shard::_write(
   ceph::bufferlist &&_bl,
   uint32_t fadvise_flags)
 {
-  const auto &object_size = onode.get_layout().size;
+  const auto &object_size = onode.get_size();
   if (offset + len > object_size) {
     onode.update_onode_size(
       *ctx.transaction,
@@ -2051,7 +2061,7 @@ SeaStore::Shard::_clone(
     ObjectDataHandler(max_object_size),
     [this, &ctx, &onode, &d_onode](auto &objHandler)
   {
-    auto &object_size = onode.get_layout().size;
+    auto object_size = onode.get_size();
     d_onode.update_onode_size(*ctx.transaction, object_size);
     return objHandler.clone(
       ObjectDataHandler::context_t{
@@ -2084,7 +2094,7 @@ SeaStore::Shard::_zero(
            *ctx.transaction, offset, len, max_object_size);
     return crimson::ct_error::input_output_error::make();
   }
-  const auto &object_size = onode.get_layout().size;
+  const auto &object_size = onode.get_size();
   onode.update_onode_size(
     *ctx.transaction,
     std::max<uint64_t>(offset + len, object_size));

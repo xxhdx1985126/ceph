@@ -218,17 +218,24 @@ public:
     }
   } __attribute__ ((packed)) ;
 
-  std::shared_ptr<onode_info_cache> get_onode_cache_info(){
+#ifdef WITH_CRIMSON
+  onode_info_cache_ref get_onode_cache_info(){
     return onode_cache;
   }
 
-  void set_onode_cache_info(std::shared_ptr<onode_info_cache> onode_info){
-    onode_cache = onode_info;
+  void set_onode_cache_info(onode_info_cache_ref onode_info){
+    if (!onode_cache ||
+	onode_cache->oid == onode_info->oid) {
+      onode_cache = onode_info;
+    }
   }
+#endif
 
 private:
 
-  std::shared_ptr<onode_info_cache> onode_cache;
+#ifdef WITH_CRIMSON
+  onode_info_cache_ref onode_cache;
+#endif
   
   TransactionData data;
 
@@ -281,8 +288,10 @@ public:
     on_applied(std::move(other.on_applied)),
     on_commit(std::move(other.on_commit)),
     on_applied_sync(std::move(other.on_applied_sync)) {
+#ifdef WITH_CRIMSON
     auto cache = other.get_onode_cache_info();
     onode_cache = cache;
+#endif
     other.coll_id = 0;
     other.object_id = 0;
   }
@@ -302,8 +311,10 @@ public:
     on_applied_sync = std::move(other.on_applied_sync);
     other.coll_id = 0;
     other.object_id = 0;
+#ifdef WITH_CRIMSON
     auto cache = other.get_onode_cache_info();
     onode_cache = cache;
+#endif
     return *this;
   }
 

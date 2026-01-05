@@ -100,7 +100,7 @@ public:
   // ExecutableMessage -- an interface class to allow using OpsExecuter
   // with other message types than just the `MOSDOp`. The type erasure
   // happens in the ctor of `OpsExecuter`.
-  std::shared_ptr<onode_info_cache> onode_cache;
+  onode_info_cache_ref onode_cache;
   struct ExecutableMessage {
     virtual osd_reqid_t get_reqid() const = 0;
     virtual utime_t get_mtime() const = 0;

@@ -31,6 +31,8 @@
 
 #ifdef WITH_CRIMSON
 #include <boost/smart_ptr/local_shared_ptr.hpp>
+#include <boost/intrusive_ptr.hpp>
+#include <boost/smart_ptr/intrusive_ref_counter.hpp>
 #endif
 
 #include "include/mempool.h"
@@ -154,7 +156,7 @@ WRITE_CLASS_DENC(shard_id_set)
 
 
 
-// #ifdef WITH_CRIMSON
+#ifdef WITH_CRIMSON
 
 
 
@@ -415,32 +417,35 @@ WRITE_CLASS_DENC_BOUNDED(crimson::os::seastore::laddr_t);
 
 using laddr_t = crimson::os::seastore::laddr_t;
 
-struct onode_info_cache {
+struct onode_info_cache : public boost::intrusive_ref_counter<
+  onode_info_cache,
+  boost::thread_unsafe_counter>
+{
   hobject_t oid;
   laddr_t object_data_laddr;
   laddr_t omap_root_laddr;
-  uint32_t extent_len;
+  laddr_t xattr_root_laddr;
+  uint32_t size;
   uint64_t version;
   bool changed = false;
   
-  onode_info_cache() 
-    : object_data_laddr(laddr_t{}),
-      omap_root_laddr(laddr_t{}),
-      extent_len(0),
-      version(0) {
-  }
+  onode_info_cache()
+    : size(0),
+      version(0) {}
   
-  onode_info_cache(laddr_t data_laddr, laddr_t omap_laddr, 
+  onode_info_cache(laddr_t data_laddr,
+		   laddr_t omap_laddr,
+		   laddr_t xattr_laddr,
                    uint32_t len, uint64_t ver)
     : object_data_laddr(data_laddr),
       omap_root_laddr(omap_laddr),
-      extent_len(len),
-      version(ver) {
-  }
+      xattr_root_laddr(xattr_laddr),
+      size(len),
+      version(ver) {}
 };
+using onode_info_cache_ref = boost::intrusive_ptr<onode_info_cache>;
 
-
-// #endif
+#endif
 
 /**
  * osd request identifier

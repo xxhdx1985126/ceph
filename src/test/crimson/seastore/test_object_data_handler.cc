@@ -33,9 +33,6 @@ public:
   void with_mutable_layout(Transaction &t, Func&& f) {
     f(layout);
   }
-  bool is_alive() const final {
-    return true;
-  }
   laddr_t get_hint() const final {return L_ADDR_MIN; }
   ~TestOnode() final = default;
 

@@ -244,6 +244,12 @@ public:
     TransactionManager::read_extent_iertr::future<std::optional<unsigned>>
     get_coll_bits(CollectionRef ch, Transaction &t) const;
 
+    bool can_skip_onode_search(
+      const internal_context_t &ctx,
+      const hobject_t &hobj,
+      const onode_info_cache_ref &onode_cache,
+      const ceph::os::Transaction::Op &op) const;
+
     static void on_error(ceph::os::Transaction &t);
 
     template <typename F>

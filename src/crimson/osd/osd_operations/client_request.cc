@@ -397,6 +397,7 @@ ClientRequest::process_op(
   // load obc
   hobject_t hobj_target = m->get_hobj();
   // m->get_hobj()
+  int load_err = 0;
   if(hobj_target.is_head()) { // target == head
     // DEBUGDPP("target == head", *this, "");
     if(m->has_head_cache_data) {
@@ -412,7 +413,7 @@ ClientRequest::process_op(
       ObjectContextRef obc = new ObjectContext(m->get_hobj());
 
       // pg->obc_loader.set_manager_head_obc(obc_manager, pg->get_lock_type(op_info), obc, obs, ssc);
-      int load_err = co_await pg->obc_loader.set_manager_head_obc(
+      load_err = co_await pg->obc_loader.set_manager_head_obc(
           obc_manager, pg->get_lock_type(op_info), obc, obs, ssc
         ).si_then([]() -> int {
           return 0;
@@ -452,7 +453,7 @@ ClientRequest::process_op(
       obc_target = new ObjectContext(m->get_hobj());
     }
 
-    int load_err = co_await pg->obc_loader.set_manager_target_obc(
+    load_err = co_await pg->obc_loader.set_manager_target_obc(
       obc_manager, 
       pg->get_lock_type(op_info),
       obc_head,
@@ -470,18 +471,20 @@ ClientRequest::process_op(
     );
   }
   // ?if(!(m->has_target_cache_data && m->has_head_cache_data)
-    if((hobj_target.is_head() && !m->has_head_cache_data) || (!hobj_target.is_head() && (!m->has_target_cache_data || !m->has_head_cache_data))) {
+  if((hobj_target.is_head() && !m->has_head_cache_data) ||
+      (!hobj_target.is_head() &&
+       (!m->has_target_cache_data || !m->has_head_cache_data))) {
     // 正常的load obc的逻辑
     
     DEBUGDPP("using load_and_lock obc instead of using cache, in client_request.cc", *this, "");
-    int load_err = co_await pg->obc_loader.load_and_lock(
+    load_err = co_await pg->obc_loader.load_and_lock(
       obc_manager, pg->get_lock_type(op_info)
     ).si_then([]() -> int {
       return 0;
     }).handle_error_interruptible(
       PG::load_obc_ertr::all_same_way(
         [](const auto &code) -> int {
-    return -code.value();
+          return -code.value();
         })
     );
     if (load_err) {
@@ -576,12 +579,14 @@ ClientRequest::do_process(
 
   OpsExecuter ox(pg, obc, op_info, *m, get_remote_connection(), snapc);
   // 在这里解析m里面的onode相关的数据，存到OpsExecuter里面
-  auto onode_info = std::make_shared<onode_info_cache>();
+  onode_info_cache_ref onode_info;
   if(m->has_target_cache_data){
-    *onode_info = onode_info_cache(m->target_cached_data.object_data_laddr,
-                      m->target_cached_data.omap_root_laddr,
-                      m->target_cached_data.extent_len,
-                      0);
+    onode_info = new onode_info_cache(
+      m->target_cached_data.object_data_laddr,
+      m->target_cached_data.omap_root_laddr,
+      m->target_cached_data.xattr_root_laddr,
+      m->target_cached_data.extent_len,
+      0);
   }
   
   onode_info->oid = m->get_hobj();
@@ -710,8 +715,10 @@ ClientRequest::do_process(
     
     // 判断是否调用了load_and_lock()
     
-    // TODO目前触发load_and_lock只是原来缓存没有对应的信息，无法判断obc版本是否是最新的
-    if(!(m->has_target_cache_data && m->has_head_cache_data) || ox.onode_cache->changed) {
+    // TODO目前触发load_and_lock只是原来缓存没有对应的信息，
+    // 无法判断obc版本是否是最新的
+    if (!(m->has_target_cache_data && m->has_head_cache_data) ||
+        ox.onode_cache->changed) {
       // do_process里面传入的obc只有target
       // message中缺失head或者target的信息，说明之前缓存内没有相关的数据
       
@@ -728,7 +735,7 @@ ClientRequest::do_process(
       if(ox.onode_cache->changed) {
         cachedata_target.object_data_laddr = ox.onode_cache->object_data_laddr;
         cachedata_target.omap_root_laddr = ox.onode_cache->omap_root_laddr;
-        cachedata_target.extent_len = ox.onode_cache->extent_len;
+        cachedata_target.size = ox.onode_cache->size;
         cachedata_target.version = ox.onode_cache->version;
       }
 
@@ -753,7 +760,7 @@ ClientRequest::do_process(
         if(ox.onode_cache->changed) {
           reply->head_cached_data.object_data_laddr = ox.onode_cache->object_data_laddr;
           reply->head_cached_data.omap_root_laddr = ox.onode_cache->omap_root_laddr;
-          reply->head_cached_data.extent_len = ox.onode_cache->extent_len;
+          reply->head_cached_data.size = ox.onode_cache->size;
           reply->head_cached_data.version = ox.onode_cache->version;
         }
       }

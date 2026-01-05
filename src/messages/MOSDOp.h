@@ -24,7 +24,9 @@
 #include "include/ceph_features.h"
 #include "include/ceph_fs.h" // for CEPH_MSG_OSD_OP
 #include "common/hobject.h"
+#ifdef WITH_CRIMSON
 #include "osdc/MetaCacher.h"
+#endif
 /*
  * OSD op
  *
@@ -59,11 +61,13 @@ private:
   std::atomic<bool> final_decode_needed;
   //
 public:
+#ifdef WITH_CRIMSON
   bool has_target_cache_data = false;
   bool has_head_cache_data = false;
   object_info_cache target_cached_data;
   object_info_cache head_cached_data;
   SnapSet ss;
+#endif
   
   V ops;
 private:
@@ -434,12 +438,14 @@ struct ceph_osd_request_head {
       encode(retry_attempt, payload);
       encode(features, payload);
 
+#ifdef WITH_CRIMSON
       // 添加新字段的编码
       encode(has_target_cache_data, payload);
       encode(has_head_cache_data, payload);
       encode(target_cached_data, payload);
       encode(head_cached_data, payload);
       encode(ss, payload);
+#endif
     }
   }
 
@@ -619,6 +625,7 @@ struct ceph_osd_request_head {
 
     decode(features, p);
 
+#ifdef WITH_CRIMSON
     if (header.version == HEAD_VERSION) {
       decode(has_target_cache_data, p);
       decode(has_head_cache_data, p);
@@ -627,11 +634,14 @@ struct ceph_osd_request_head {
       // target_cached_data.decode(p);
       // head_cached_data.decode(p);
       decode(ss, p);
-    } else {
+    }
+/*
+    else {
       // 对于旧版本，设置默认值
       has_target_cache_data = false;
       has_head_cache_data = false;
-    }
+    }*/
+#endif
 
     hobj.pool = pgid.pgid.pool();
     hobj.set_key(oloc.key);

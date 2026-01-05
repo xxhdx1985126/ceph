@@ -45,17 +45,12 @@ namespace crimson::os::seastore {
 
 template <typename F>
 auto with_object_data(
+  ObjectDataHandler &handler,
   ObjectDataHandler::context_t ctx,
   F &&f)
 {
-  auto onode_cache = ctx.t.get_onode_cache_info();
-  bool use_cache = false;
-  use_cache = onode_cache && !onode_cache->changed;
-
-  object_data_t obj_data = use_cache ? object_data_t(
-        onode_cache->object_data_laddr, onode_cache->extent_len)
-        : ctx.onode.get_layout().object_data.get();
-
+  auto base = ctx.onode.get_object_data_base();
+  object_data_t obj_data(base, handler.get_max_object_size());
   return seastar::do_with(
     std::move(obj_data),
     std::forward<F>(f),
@@ -1048,6 +1043,7 @@ ObjectDataHandler::zero_ret ObjectDataHandler::zero(
   extent_len_t len)
 {
   return with_object_data(
+    *this,
     ctx,
     [this, ctx, offset, len](auto &object_data) {
       LOG_PREFIX(ObjectDataHandler::zero);
@@ -1090,6 +1086,7 @@ ObjectDataHandler::write_ret ObjectDataHandler::write(
   const bufferlist &bl)
 {
   return with_object_data(
+    *this,
     ctx,
     [this, ctx, offset, &bl](auto &object_data) {
       LOG_PREFIX(ObjectDataHandler::write);
@@ -1161,8 +1158,9 @@ ObjectDataHandler::read_ret ObjectDataHandler::read(
 {
   return seastar::do_with(
     bufferlist(),
-    [ctx, obj_offset, len](auto &ret) {
+    [this, ctx, obj_offset, len](auto &ret) {
     return with_object_data(
+      *this,
       ctx,
       [ctx, obj_offset, len, &ret](const auto &object_data) {
       LOG_PREFIX(ObjectDataHandler::read);
@@ -1294,8 +1292,9 @@ ObjectDataHandler::fiemap_ret ObjectDataHandler::fiemap(
 {
   return seastar::do_with(
     std::map<uint64_t, uint64_t>(),
-    [ctx, obj_offset, len](auto &ret) {
+    [this, ctx, obj_offset, len](auto &ret) {
     return with_object_data(
+      *this,
       ctx,
       [ctx, obj_offset, len, &ret](const auto &object_data) {
       LOG_PREFIX(ObjectDataHandler::fiemap);
@@ -1353,6 +1352,7 @@ ObjectDataHandler::truncate_ret ObjectDataHandler::truncate(
   objaddr_t offset)
 {
   return with_object_data(
+    *this,
     ctx,
     [this, ctx, offset](auto &object_data) {
       LOG_PREFIX(ObjectDataHandler::truncate);
@@ -1378,6 +1378,7 @@ ObjectDataHandler::clear_ret ObjectDataHandler::clear(
   context_t ctx)
 {
   return with_object_data(
+    *this,
     ctx,
     [this, ctx](auto &object_data) {
       LOG_PREFIX(ObjectDataHandler::clear);

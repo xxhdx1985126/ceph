@@ -216,7 +216,14 @@ void ObjectContextLoader::notify_on_change(bool is_primary)
 
 
 // The function flow is the same as load_and_lock_head.
-ObjectContextLoader::load_and_lock_fut ObjectContextLoader::set_manager_head_obc(Manager &manager, RWState::State lock_type, ObjectContextRef obc, ObjectState obs, SnapSetContextRef ssc) {
+ObjectContextLoader::load_and_lock_fut
+ObjectContextLoader::set_manager_head_obc(
+  Manager &manager,
+  RWState::State lock_type,
+  ObjectContextRef obc,
+  ObjectState obs,
+  SnapSetContextRef ssc)
+{
   auto releaser = manager.get_releaser();
   ceph_assert(manager.target.is_head());
 

@@ -851,11 +851,13 @@ private:
   std::shared_ptr<onode_info_cache> onode_cache;
 
 public:
-  std::shared_ptr<onode_info_cache> get_onode_cache_info(){
+  std::shared_ptr<onode_info_cache> get_onode_cache_info() {
     return onode_cache;
   }
 
-  void set_onode_cache_info(std::shared_ptr<onode_info_cache> onode_info){
+  void set_onode_cache_info(
+    std::shared_ptr<onode_info_cache> onode_info)
+  {
     onode_cache = onode_info;
   }
   

@@ -23,7 +23,9 @@
 
 #include "MOSDOp.h"
 #include "common/errno.h"
+#ifdef WITH_CRIMSON
 #include "osdc/MetaCacher.h"
+#endif
 
 
 /*
@@ -54,12 +56,14 @@ private:
   request_redirect_t redirect;
 
 public:
+#ifdef WITH_CRIMSON
   //TODO:add cache info
   bool has_target_cache_data = false;
   bool has_head_cache_data = false;
   object_info_cache target_cached_data;
   object_info_cache head_cached_data;
   SnapSet ss;
+#endif
   
   const object_t& get_oid() const { return oid; }
   const pg_t&     get_pg() const { return pgid; }
@@ -235,6 +239,7 @@ public:
         }
       }
       encode_trace(payload, features);
+#ifdef WITH_CRIMSON
       if (header.version == HEAD_VERSION) {
         encode(has_target_cache_data, payload);
         encode(has_head_cache_data, payload);
@@ -242,6 +247,7 @@ public:
         encode(head_cached_data, payload);
         encode(ss, payload);
       }
+#endif
     }
   }
   void decode_payload() override {
@@ -276,6 +282,7 @@ public:
 	decode(redirect, p);
       decode_trace(p);
 
+#ifdef WITH_CRIMSON
       decode(has_target_cache_data, p);
       decode(has_head_cache_data, p);
       decode(target_cached_data, p);
@@ -283,6 +290,7 @@ public:
       // target_cached_data.decode(p);
       // head_cached_data.decode(p);
       decode(ss, p);
+#endif
       
 
     } else if (header.version < 2) {
@@ -348,11 +356,13 @@ public:
         decode_trace(p);
       }
 
+#ifdef WITH_CRIMSON
       if (header.version < HEAD_VERSION) {
         has_target_cache_data = false;
         has_head_cache_data = false;
         // target_cached_data, head_cached_data, ss 会保持它们的默认构造值
       }
+#endif
     }
   }
 

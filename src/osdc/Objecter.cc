@@ -61,7 +61,9 @@
 #include "error_code.h"
 
 #include "neorados/RADOSImpl.h"
+#ifdef WITH_CRIMSON
 #include "MetaCacher.h"
+#endif
 
 using std::list;
 using std::make_pair;
@@ -1189,6 +1191,7 @@ void Objecter::_scan_requests(
   }
 }
 
+#ifdef WTIH_CRIMSON
 bool Objecter::_check_pg_acting_set_changes(const OSDMap& old_osdmap,
                                             const OSDMap& new_osdmap,
                                             const std::set<pg_t>& pgid_in_cache) {
@@ -1225,6 +1228,7 @@ bool Objecter::_check_pg_acting_set_changes(const OSDMap& old_osdmap,
   }
   return metadata_cacher->pgs_remove(pg_changed) >= 0;
 }
+#endif
 
 void Objecter::handle_osd_map(MOSDMap *m)
 {
@@ -1239,10 +1243,12 @@ void Objecter::handle_osd_map(MOSDMap *m)
 		  << " != " << monc->get_fsid() << dendl;
     return;
   }
+#ifdef WITH_CRIMSON
     // 保存旧的 OSDMap 用于比较
   OSDMap* old_osdmap = osdmap.get();
   // 用于记录需要更新缓存的PG列表
   const std::set<pg_t>& pgs_in_cache = metadata_cacher->get_pgids();
+#endif
 
   bool was_pauserd = osdmap->test_flag(CEPH_OSDMAP_PAUSERD);
   bool cluster_full = _osdmap_full_flag();
@@ -1315,17 +1321,17 @@ void Objecter::handle_osd_map(MOSDMap *m)
         prune_pg_mapping(osdmap->get_pools());
 	cluster_full = cluster_full || _osdmap_full_flag();
 	update_pool_full_map(pool_full_map);
-
-  if (old_osdmap) {
-    
-    bool res = _check_pg_acting_set_changes(*old_osdmap, *osdmap,
-                                  pgs_in_cache);
-    ldout(cct, 3) << "_check_pg_acting_set_changes: " << res << dendl;
-    // if (res) {
-    //   cout << res;
-    // }
-  }
-
+#ifdef WITH_CRIMSON
+	if (old_osdmap) {
+	  bool res = _check_pg_acting_set_changes(
+	    *old_osdmap, *osdmap,
+	    pgs_in_cache);
+	  ldout(cct, 3) << "_check_pg_acting_set_changes: " << res << dendl;
+	  // if (res) {
+	  //   cout << res;
+	  // }
+	}
+#endif
 	// check all outstanding requests on every epoch
 	for (auto& i : need_resend) {
 	  _prune_snapc(osdmap->get_new_removed_snaps(), i.second);
@@ -3413,6 +3419,7 @@ Objecter::MOSDOp *Objecter::_prepare_osd_op(Op *op)
 		      flags, op->features);
 
   m->set_snapid(op->snapid);
+#ifdef WITH_CRIMSON
   // op->snapid 是当前target的snapid
   auto start_time = std::chrono::steady_clock::now();
   auto meta_data = metadata_cacher->get_metadata_from_cache(op->target.pgid, hobj.oid);
@@ -3447,7 +3454,7 @@ Objecter::MOSDOp *Objecter::_prepare_osd_op(Op *op)
       }
     }
   }
-  
+#endif
   m->set_snap_seq(op->snapc.seq);
   m->set_snaps(op->snapc.snaps);
 
@@ -3740,7 +3747,7 @@ void Objecter::handle_osd_op_reply(MOSDOpReply *m)
     *op->reply_epoch = m->get_map_epoch();
   if (op->data_offset)
     *op->data_offset = m->get_header().data_off;
-
+#ifdef WITH_CRIMSON
   // 更新MetaCacher的缓存值
   // add_or_update_metadata(pg_t pgid, object_t oid, std::shared_ptr<MetaData> metadata);
   ldout(cct, 7) << "handle osd op reply for cache" << dendl;
@@ -3756,6 +3763,7 @@ void Objecter::handle_osd_op_reply(MOSDOpReply *m)
     int res = metadata_cacher->add_or_update_metadata(op->target.pgid, op->target.get_hobj().oid, meta_ptr);
     ldout(cct, 7) << "update the cache: "  << res << dendl;
   }
+#endif
   
   // got data?
   if (op->outbl) {
@@ -5358,7 +5366,9 @@ Objecter::Objecter(CephContext *cct,
     ldout(cct, 20) << __func__ << ": read policy: balance" << dendl;
     extra_read_flags = CEPH_OSD_FLAG_BALANCE_READS;
   }
+#ifdef WITH_CRIMSON
   metadata_cacher = std::make_unique<MetaCacher>();
+#endif
 }
 
 Objecter::~Objecter()
@@ -5379,7 +5389,9 @@ Objecter::~Objecter()
 
   ceph_assert(!m_request_state_hook);
   ceph_assert(!logger);
+#ifdef WITH_CRIMSON
   metadata_cacher = std::make_unique<MetaCacher>();
+#endif
 }
 
 /**
