@@ -29,11 +29,9 @@
 #include <string_view>
 #include <variant>
 
-#ifdef WITH_CRIMSON
 #include <boost/smart_ptr/local_shared_ptr.hpp>
 #include <boost/intrusive_ptr.hpp>
 #include <boost/smart_ptr/intrusive_ref_counter.hpp>
-#endif
 
 #include "include/mempool.h"
 #include "common/fmt_common.h"
@@ -156,7 +154,6 @@ WRITE_CLASS_DENC(shard_id_set)
 
 
 
-#ifdef WITH_CRIMSON
 
 
 
@@ -445,7 +442,6 @@ struct onode_info_cache : public boost::intrusive_ref_counter<
 };
 using onode_info_cache_ref = boost::intrusive_ptr<onode_info_cache>;
 
-#endif
 
 /**
  * osd request identifier

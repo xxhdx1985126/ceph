@@ -242,6 +242,7 @@ seastar::future<> ClientRequest::with_pg_process(
   LOG_PREFIX(ClientRequest::with_pg_process);
 
   epoch_t same_interval_since = pgref->get_interval_start_epoch();
+  DEBUGDPP("", *pgref);
   DEBUGDPP("{}: same_interval_since: {}", *pgref, *this, same_interval_since);
   const auto this_instance_id = instance_id++;
   OperationRef opref{this};
@@ -579,15 +580,12 @@ ClientRequest::do_process(
 
   OpsExecuter ox(pg, obc, op_info, *m, get_remote_connection(), snapc);
   // 在这里解析m里面的onode相关的数据，存到OpsExecuter里面
-  onode_info_cache_ref onode_info;
-  if(m->has_target_cache_data){
-    onode_info = new onode_info_cache(
-      m->target_cached_data.object_data_laddr,
-      m->target_cached_data.omap_root_laddr,
-      m->target_cached_data.xattr_root_laddr,
-      m->target_cached_data.extent_len,
-      0);
-  }
+  onode_info_cache_ref onode_info = new onode_info_cache(
+    m->target_cached_data.object_data_laddr,
+    m->target_cached_data.omap_root_laddr,
+    m->target_cached_data.xattr_root_laddr,
+    m->target_cached_data.extent_len,
+    0);
   
   onode_info->oid = m->get_hobj();
   ox.onode_cache = onode_info;

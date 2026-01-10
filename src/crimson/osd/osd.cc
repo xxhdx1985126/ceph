@@ -890,17 +890,22 @@ void OSD::print(std::ostream& out) const
 std::optional<seastar::future<>>
 OSD::ms_dispatch(crimson::net::ConnectionRef conn, MessageRef m)
 {
+  LOG_PREFIX(OSD::ms_dispatch);
   if (pg_shard_manager.is_stopping()) {
     return seastar::now();
   }
-  auto maybe_ret = do_ms_dispatch(conn, std::move(m));
+  auto maybe_ret = do_ms_dispatch(conn, m);
   if (!maybe_ret.has_value()) {
     return std::nullopt;
   }
 
   gate.dispatch_in_background(
-      __func__, *this, [ret=std::move(maybe_ret.value())]() mutable {
-    return std::move(ret);
+      __func__, *this, [FNAME, ret=std::move(maybe_ret.value()), m]() mutable {
+    return std::move(ret
+    ).handle_exception([m, FNAME](auto e) {
+      ERROR("{}: error", *m);
+      return seastar::make_exception_future<>(e);
+    });
   });
   return seastar::now();
 }

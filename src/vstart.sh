@@ -1028,6 +1028,14 @@ $DAEMONOPTS
         bluestore block create = true
         bluestore allocator = bitmap
         bluestore alloc favor spatial locality = false
+        #debug_osd = 25
+        #debug_seastore = 25
+        #debug_seastore_t = 25
+        #debug_seastore_tm = 25
+        #debug_seastore_cache = 25
+        #debug_seastore_lba = 25
+        #debug_seastore_odata = 25
+        #debug_ms = 25
         
 $BLUESTORE_OPTS
 
