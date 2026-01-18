@@ -430,11 +430,13 @@ struct onode_info_cache : public boost::intrusive_ref_counter<
     : size(0),
       version(0) {}
   
-  onode_info_cache(laddr_t data_laddr,
+  onode_info_cache(const hobject_t &oid,
+		   laddr_t data_laddr,
 		   laddr_t omap_laddr,
 		   laddr_t xattr_laddr,
                    uint32_t len, uint64_t ver)
-    : object_data_laddr(data_laddr),
+    : oid(oid),
+      object_data_laddr(data_laddr),
       omap_root_laddr(omap_laddr),
       xattr_root_laddr(xattr_laddr),
       size(len),

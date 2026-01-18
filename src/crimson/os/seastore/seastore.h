@@ -232,12 +232,21 @@ public:
 
       TransactionRef transaction;
 
+      onode_info_cache_ref onode_cache;
       ceph::os::Transaction::iterator iter;
       std::chrono::steady_clock::time_point begin_timestamp = std::chrono::steady_clock::now();
 
       void reset_preserve_handle(TransactionManager &tm) {
         tm.reset_transaction_preserve_handle(*transaction);
         iter = ext_transaction.begin();
+	onode_cache.reset();
+      }
+
+      void set_onode_cache_info(onode_info_cache_ref onode_info) {
+	if (!onode_cache ||
+	    onode_cache->oid == onode_info->oid) {
+	  onode_cache = onode_info;
+	}
       }
     };
 
@@ -298,6 +307,7 @@ public:
 	    })
 	  );
 	}).then([this, op_type, &ctx] {
+	  ctx.ext_transaction.set_onode_cache_info(std::move(ctx.onode_cache));
 	  add_latency_sample(op_type,
 	      std::chrono::steady_clock::now() - ctx.begin_timestamp);
 	}).finally([this] {

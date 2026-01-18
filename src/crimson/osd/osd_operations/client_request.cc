@@ -580,16 +580,13 @@ ClientRequest::do_process(
 
   OpsExecuter ox(pg, obc, op_info, *m, get_remote_connection(), snapc);
   // 在这里解析m里面的onode相关的数据，存到OpsExecuter里面
-  onode_info_cache_ref onode_info = new onode_info_cache(
+  ox.onode_cache = new onode_info_cache(
+    m->get_hobj(),
     m->target_cached_data.object_data_laddr,
     m->target_cached_data.omap_root_laddr,
     m->target_cached_data.xattr_root_laddr,
     m->target_cached_data.extent_len,
     0);
-  
-  onode_info->oid = m->get_hobj();
-  ox.onode_cache = onode_info;
-  ceph_assert(ox.onode_cache != nullptr);
 
   auto ret = co_await pg->run_executer(
     ox, obc, op_info, m->ops

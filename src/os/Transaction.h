@@ -219,11 +219,11 @@ public:
   } __attribute__ ((packed)) ;
 
 #ifdef WITH_CRIMSON
-  onode_info_cache_ref get_onode_cache_info(){
+  onode_info_cache_ref get_onode_cache_info() {
     return onode_cache;
   }
 
-  void set_onode_cache_info(onode_info_cache_ref onode_info){
+  void set_onode_cache_info(onode_info_cache_ref onode_info) {
     if (!onode_cache ||
 	onode_cache->oid == onode_info->oid) {
       onode_cache = onode_info;

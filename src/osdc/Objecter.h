@@ -35,9 +35,7 @@
 #include <boost/asio/io_context_strand.hpp>
 #include <boost/asio/post.hpp>
 
-#ifdef WITH_CRIMSON
 #include "MetaCacher.h"
-#endif
 #include "include/buffer.h"
 #include "include/ceph_assert.h"
 #include "include/ceph_fs.h"
@@ -1699,9 +1697,7 @@ public:
                           const std::set <std::string> &changed) override;
 
 public:
-#ifdef WITH_CRIMSON
   std::unique_ptr<MetaCacher> metadata_cacher;
-#endif
   Messenger *messenger;
   MonClient *monc;
   boost::asio::io_context& service;
@@ -2730,12 +2726,10 @@ private:
     std::map<ceph_tid_t, CommandOp*>& need_resend_command,
     ceph::shunique_lock<ceph::shared_mutex>& sul);
   
-#ifdef WITH_CRIMSON
   bool _check_pg_acting_set_changes(
     const OSDMap& old_osdmap,
     const OSDMap& new_osdmap,
     const std::set<pg_t>& pgid_in_cache);
-#endif
 
   int64_t get_object_hash_position(int64_t pool, const std::string& key,
 				   const std::string& ns);

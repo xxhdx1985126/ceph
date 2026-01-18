@@ -1220,20 +1220,6 @@ SeaStore::Shard::_get_attr(
   Onode& onode,
   std::string_view name) const
 {
-  LOG_PREFIX(SeaStoreS::_get_attr);
-  auto& layout = onode.get_layout();
-  if (name == OI_ATTR && layout.oi_size) {
-    ceph::bufferlist bl;
-    bl.append(ceph::bufferptr(&layout.oi[0], layout.oi_size));
-    DEBUGT("got OI_ATTR, value length=0x{:x}", t, bl.length());
-    return seastar::make_ready_future<ceph::bufferlist>(std::move(bl));
-  }
-  if (name == SS_ATTR && layout.ss_size) {
-    ceph::bufferlist bl;
-    bl.append(ceph::bufferptr(&layout.ss[0], layout.ss_size));
-    DEBUGT("got SS_ATTR, value length=0x{:x}", t, bl.length());
-    return seastar::make_ready_future<ceph::bufferlist>(std::move(bl));
-  }
   return omaptree_get_value(t, get_omap_root(omap_type_t::XATTR, onode), name);
 }
 
@@ -1271,24 +1257,10 @@ SeaStore::Shard::_get_attrs(
   Transaction& t,
   Onode& onode)
 {
-  auto& layout = onode.get_layout();
   return omaptree_get_values(
     t, get_omap_root(omap_type_t::XATTR, onode), std::nullopt
-  ).si_then([&layout, &t](auto p) {
-    LOG_PREFIX(SeaStoreS::_get_attrs);
+  ).si_then([](auto p) {
     auto& attrs = std::get<1>(p);
-    DEBUGT("got OI length=0x{:x}, SS length=0x{:x}",
-           t, (uint32_t)layout.oi_size, (uint32_t)layout.ss_size);
-    ceph::bufferlist bl;
-    if (layout.oi_size) {
-      bl.append(ceph::bufferptr(&layout.oi[0], layout.oi_size));
-      attrs.emplace(OI_ATTR, std::move(bl));
-    }
-    if (layout.ss_size) {
-      bl.clear();
-      bl.append(ceph::bufferptr(&layout.ss[0], layout.ss_size));
-      attrs.emplace(SS_ATTR, std::move(bl));
-    }
     return seastar::make_ready_future<attrs_t>(std::move(attrs));
   });
 }
@@ -1618,9 +1590,34 @@ bool SeaStore::Shard::can_skip_onode_search(
   const ceph::os::Transaction::Op &op) const {
   if (op.op != ceph::os::Transaction::OP_REMOVE &&
       onode_cache &&
-      hobj == onode_cache->oid &&
-      !onode_cache->object_data_laddr.is_null()) {
-    return true;
+      hobj == onode_cache->oid) {
+    switch (op.op) {
+    case ceph::os::Transaction::OP_CREATE:
+      ceph_assert(onode_cache->object_data_laddr.is_null());
+    case ceph::os::Transaction::OP_REMOVE:
+    case ceph::os::Transaction::OP_TRUNCATE:
+    case ceph::os::Transaction::OP_OMAP_CLEAR:
+    case ceph::os::Transaction::OP_CLONE:
+    case ceph::os::Transaction::OP_RMATTR:
+    case ceph::os::Transaction::OP_RMATTRS:
+    case ceph::os::Transaction::OP_OMAP_RMKEYS:
+    case ceph::os::Transaction::OP_OMAP_RMKEYRANGE:
+    case ceph::os::Transaction::OP_COLL_MOVE_RENAME:
+    case ceph::os::Transaction::OP_SETALLOCHINT:
+      return false;
+    case ceph::os::Transaction::OP_WRITE:
+    case ceph::os::Transaction::OP_TOUCH:
+    case ceph::os::Transaction::OP_ZERO:
+      return !onode_cache->object_data_laddr.is_null();
+    case ceph::os::Transaction::OP_SETATTR:
+    case ceph::os::Transaction::OP_SETATTRS:
+      return !onode_cache->xattr_root_laddr.is_null();
+    case ceph::os::Transaction::OP_OMAP_SETKEYS:
+    case ceph::os::Transaction::OP_OMAP_SETHEADER:
+      return !onode_cache->omap_root_laddr.is_null();
+    default:
+      ceph_abort("impossible");
+    }
   }
   return false;
 }
@@ -1687,7 +1684,14 @@ SeaStore::Shard::_do_transaction_step(
     // 从 ceph::os::Transaction::iterator获取缓存信息
     auto onode_cache = ctx.ext_transaction.get_onode_cache_info();
     const ghobject_t& oid = i.get_oid(op->oid);
+    if (onode_cache) {
+      TRACET("op {}, onode_cache oid: {}, onode_cache object_data_laddr: {}",
+	*ctx.transaction, (uint32_t)op->op, onode_cache->oid,
+	onode_cache->object_data_laddr);
+    }
     if (can_skip_onode_search(ctx, oid.hobj, onode_cache, *op)) {
+      DEBUGT("op {}, got client side cache, oid={} ...",
+	*ctx.transaction, (uint32_t)op->op, oid);
       CachedOnode cached_onode;
       cached_onode.set_onode_info(*onode_cache);
       fut = OnodeManager::get_or_create_onode_iertr::make_ready_future<
@@ -1906,15 +1910,22 @@ SeaStore::Shard::_do_transaction_step(
       ERROR("got exception {}", e);
       return crimson::ct_error::input_output_error::make();
     }
-  }).si_then([&ctx, op, &onodes] {
+  }).si_then([&ctx, op, &onodes, FNAME] {
     if (op->op != Transaction::OP_REMOVE) {
       OnodeRef& onode = onodes[op->oid];
       assert(onode);
       // 把ceph::os::Transaction中存的缓存信息
       // 转存到ceph::os::seastore::Transaction
-      ctx.ext_transaction.set_onode_cache_info(
-	onode_info_cache_ref(
-	  new onode_info_cache(onode->get_onode_info_cache())));
+      onode_info_cache_ref onode_cache(
+	new onode_info_cache(onode->get_onode_info_cache()));
+      TRACET("op {}, oid {}, laddr {}",
+	*ctx.transaction, (uint32_t)op->op, onode_cache->oid, onode_cache->object_data_laddr);
+      ctx.set_onode_cache_info(onode_cache);
+      TRACET("op {}, oid {}, laddr {}, onode_cache oid: {}, onode_cache laddr: {}",
+	*ctx.transaction, (uint32_t)op->op, onode_cache->oid,
+	onode_cache->object_data_laddr,
+	ctx.onode_cache->oid,
+	ctx.onode_cache->object_data_laddr);
     }
   }).handle_error_interruptible(
     tm_iertr::pass_further{},
@@ -2174,64 +2185,12 @@ SeaStore::Shard::_setattrs(
   std::map<std::string, bufferlist>&& aset)
 {
   LOG_PREFIX(SeaStoreS::_setattrs);
-  auto fut = tm_iertr::now();
-  auto& layout = onode.get_layout();
-  if (auto it = aset.find(OI_ATTR); it != aset.end()) {
-    auto& val = it->second;
-    if (likely(val.length() <= onode_layout_t::MAX_OI_LENGTH)) {
-
-      if (!layout.oi_size) {
-	// if oi was not in the layout, it probably exists in the omap,
-	// need to remove it first
-	fut = omaptree_rm_key(
-          *ctx.transaction,
-          get_omap_root(omap_type_t::XATTR, onode),
-          onode,
-          OI_ATTR);
-      }
-      onode.update_object_info(*ctx.transaction, val);
-      aset.erase(it);
-      DEBUGT("set oi in onode layout", *ctx.transaction);
-    } else {
-      onode.clear_object_info(*ctx.transaction);
-    }
-  }
-
-  if (auto it = aset.find(SS_ATTR); it != aset.end()) {
-    auto& val = it->second;
-    if (likely(val.length() <= onode_layout_t::MAX_SS_LENGTH)) {
-
-      if (!layout.ss_size) {
-        fut = std::move(fut).si_then([this, &ctx, &onode] {
-          return omaptree_rm_key(
-            *ctx.transaction,
-            get_omap_root(omap_type_t::XATTR, onode),
-            onode,
-            SS_ATTR);
-        });
-      }
-      onode.update_snapset(*ctx.transaction, val);
-      aset.erase(it);
-      DEBUGT("set ss in onode layout", *ctx.transaction);
-    } else {
-      onode.clear_snapset(*ctx.transaction);
-    }
-  }
-
-  if (aset.empty()) {
-    DEBUGT("all attrs set in onode layout", *ctx.transaction);
-    return fut;
-  }
-
   DEBUGT("set {} attrs in omap ...", *ctx.transaction, aset.size());
-  return std::move(fut
-  ).si_then([this, &onode, &ctx, aset=std::move(aset)]() mutable {
-    return omaptree_set_keys(
-      *ctx.transaction,
-      get_omap_root(omap_type_t::XATTR, onode),
-      onode,
-      std::move(aset));
-  });
+  return omaptree_set_keys(
+    *ctx.transaction,
+    get_omap_root(omap_type_t::XATTR, onode),
+    onode,
+    std::move(aset));
 }
 
 SeaStore::Shard::tm_ret

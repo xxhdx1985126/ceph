@@ -128,6 +128,7 @@ public:
   }
   virtual onode_info_cache get_onode_info_cache() const {
     return onode_info_cache(
+      get_hobj(),
       get_object_data_base(),
       get_omap_root_base(),
       get_xattr_root_base(),
