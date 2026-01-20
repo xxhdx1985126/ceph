@@ -475,6 +475,9 @@ void PG::prepare_write(pg_info_t &info,
   if (!key_to_remove.empty()) {
     t.omap_rmkey(coll_ref->get_cid(), pgmeta_oid, key_to_remove);
   }
+  if (pgmeta_onode) {
+    t.set_onode_cache_info(pgmeta_onode);
+  }
 }
 
 std::pair<ghobject_t, bool>
@@ -1197,7 +1200,7 @@ PG::run_executer_fut PG::run_executer(
 }
 
 PG::submit_executer_fut PG::submit_executer(
-  OpsExecuter &&ox,
+  OpsExecuter &ox,
   const std::vector<OSDOp>& ops) {
   LOG_PREFIX(PG::submit_executer);
   DEBUGDPP("", *this);
@@ -1209,16 +1212,17 @@ PG::submit_executer_fut PG::submit_executer(
     submit_lock.unlock();
   });
 
-  auto [submitted, completed] = co_await std::move(
-    ox
-  ).flush_changes_and_submit(
+  auto [submitted, completed] = co_await ox.flush_changes_and_submit(
     ops,
     snap_mapper,
     osdriver
   );
   co_return std::make_tuple(
     std::move(submitted).then_interruptible([unlocker=std::move(unlocker)] {}),
-    std::move(completed));
+    std::move(completed
+    ).then_interruptible([&ox, this] {
+      pgmeta_onode = ox.get_txn().get_onode_cache_info(pgmeta_oid.hobj);
+    }));
 }
 
 PG::interruptible_future<MURef<MOSDOpReply>> PG::do_pg_ops(Ref<MOSDOp> m)

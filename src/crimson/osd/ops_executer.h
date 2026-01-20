@@ -174,6 +174,9 @@ public:
   size_t get_bytes_written() {
     return txn.get_num_bytes();
   }
+  ceph::os::Transaction& get_txn() {
+    return txn;
+  }
 private:
   // with_effect can be used to schedule operations to be performed
   // at commit time.  effects will be discarded if the operation does

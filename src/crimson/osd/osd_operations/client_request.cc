@@ -632,7 +632,7 @@ ClientRequest::do_process(
       auto submitted = interruptor::now();
       inb = ox.get_bytes_written();
       std::tie(submitted, all_completed) = co_await pg->submit_executer(
-	std::move(ox), m->ops);
+	ox, m->ops);
       co_await std::move(submitted);
     }
     co_await ihref.enter_stage<interruptor>(

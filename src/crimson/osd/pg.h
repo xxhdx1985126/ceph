@@ -89,6 +89,7 @@ class PG : public boost::intrusive_ref_counter<
   pg_shard_t pg_whoami;
   crimson::os::CollectionRef coll_ref;
   ghobject_t pgmeta_oid;
+  onode_info_cache_ref pgmeta_onode;
 
   seastar::timer<seastar::lowres_clock> check_readable_timer;
   seastar::timer<seastar::lowres_clock> renew_lease_timer;
@@ -738,7 +739,7 @@ private:
   using submit_executer_fut = interruptible_future<
     submit_executer_ret>;
   submit_executer_fut submit_executer(
-    OpsExecuter &&ox,
+    OpsExecuter &ox,
     const std::vector<OSDOp>& ops);
 
   struct do_osd_ops_params_t;

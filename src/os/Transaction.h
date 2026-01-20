@@ -219,22 +219,20 @@ public:
   } __attribute__ ((packed)) ;
 
 #ifdef WITH_CRIMSON
-  onode_info_cache_ref get_onode_cache_info() {
-    return onode_cache;
+  onode_info_cache_ref get_onode_cache_info(const hobject_t &hobj) {
+    return onode_cache[hobj];
   }
 
   void set_onode_cache_info(onode_info_cache_ref onode_info) {
-    if (!onode_cache ||
-	onode_cache->oid == onode_info->oid) {
-      onode_cache = onode_info;
-    }
+    assert(onode_info);
+    onode_cache.emplace(onode_info->oid, onode_info);
   }
 #endif
 
 private:
 
 #ifdef WITH_CRIMSON
-  onode_info_cache_ref onode_cache;
+  std::map<hobject_t, onode_info_cache_ref> onode_cache;
 #endif
   
   TransactionData data;
@@ -289,8 +287,7 @@ public:
     on_commit(std::move(other.on_commit)),
     on_applied_sync(std::move(other.on_applied_sync)) {
 #ifdef WITH_CRIMSON
-    auto cache = other.get_onode_cache_info();
-    onode_cache = cache;
+    onode_cache = std::move(other.onode_cache);
 #endif
     other.coll_id = 0;
     other.object_id = 0;
@@ -312,8 +309,7 @@ public:
     other.coll_id = 0;
     other.object_id = 0;
 #ifdef WITH_CRIMSON
-    auto cache = other.get_onode_cache_info();
-    onode_cache = cache;
+    onode_cache = std::move(other.onode_cache);
 #endif
     return *this;
   }

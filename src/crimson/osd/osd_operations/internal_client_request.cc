@@ -101,8 +101,7 @@ InternalClientRequest::with_interruption()
       fmt::format("{} {} {}: got unexpected error {}", *pg, FNAME, *this, get_target_oid()).c_str())
   );
 
-  auto [submitted, completed] = co_await pg->submit_executer(
-    std::move(ox), osd_ops);
+  auto [submitted, completed] = co_await pg->submit_executer(ox, osd_ops);
 
   co_await std::move(submitted);
 

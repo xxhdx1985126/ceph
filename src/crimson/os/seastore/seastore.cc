@@ -1681,9 +1681,9 @@ SeaStore::Shard::_do_transaction_step(
   }
 
   if (!onodes[op->oid]) {
-    // 从 ceph::os::Transaction::iterator获取缓存信息
-    auto onode_cache = ctx.ext_transaction.get_onode_cache_info();
     const ghobject_t& oid = i.get_oid(op->oid);
+    // 从 ceph::os::Transaction::iterator获取缓存信息
+    auto onode_cache = ctx.ext_transaction.get_onode_cache_info(oid.hobj);
     if (onode_cache) {
       TRACET("op {}, onode_cache oid: {}, onode_cache object_data_laddr: {}",
 	*ctx.transaction, (uint32_t)op->op, onode_cache->oid,
