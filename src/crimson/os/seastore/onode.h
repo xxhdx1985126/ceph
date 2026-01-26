@@ -87,6 +87,7 @@ public:
   virtual const onode_layout_t &get_layout() const = 0;
   virtual ~Onode() = default;
 
+  virtual bool need_new_cache() const = 0;
   virtual void update_onode_size(Transaction&, uint32_t) = 0;
   virtual void update_omap_root(Transaction&, omap_root_t&) = 0;
   virtual void update_log_root(Transaction&, omap_root_t&) = 0;
@@ -108,7 +109,7 @@ public:
   laddr_t get_data_hint() const {
     return get_hint();
   }
-  const omap_root_le_t& get_root(omap_type_t type) const {
+  virtual const omap_root_le_t& get_root(omap_type_t type) const {
     return get_layout().get_root(type);
   }
   virtual const hobject_t &get_hobj() const {
@@ -133,7 +134,8 @@ public:
       get_omap_root_base(),
       get_xattr_root_base(),
       get_size(),
-      0);
+      0,
+      need_new_cache());
   }
   friend std::ostream& operator<<(std::ostream &out, const Onode &rhs);
 };
@@ -141,6 +143,12 @@ public:
 class CachedOnode : public Onode {
 public:
   CachedOnode() = default;
+  const omap_root_le_t& get_root(omap_type_t &type) const final {
+  }
+  bool need_new_cache() const final {
+    ceph_abort("impossible");
+    return false;
+  }
   const onode_layout_t &get_layout() const final {
     ceph_abort("impossible");
   }

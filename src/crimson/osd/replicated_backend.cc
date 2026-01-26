@@ -178,7 +178,19 @@ ReplicatedBackend::submit_transaction(
   auto all_completed = interruptor::make_interruptible(
       shard_services.get_store().do_transaction(coll, std::move(txn))
    ).then_interruptible([FNAME, this,
-			peers=pending_txn->second.weak_from_this()] {
+			pending_txn, _new_clone, &hoid,
+			to_push_delete=std::move(to_push_delete),
+			to_push_clone=std::move(to_push_clone),
+			peers=pending_txn->second.weak_from_this()](auto ret) mutable {
+    auto it = ret.find(hoid);
+    if (it != ret.end()) {
+      auto &onode_info = *it->second;
+      DEBUGDPP("object {}, data {}, xattr {}, omap {}, changed {} {}",
+	dpp, hoid, onode_info.object_data_laddr,
+	onode_info.xattr_root_laddr, onode_info.omap_root_laddr,
+	onode_info.changed,
+	(void*)it->second.get());
+    }
     if (!peers) {
       // for now, only actingset_changed can cause peers
       // to be nullptr
@@ -190,26 +202,33 @@ ReplicatedBackend::submit_transaction(
       pg.complete_write(peers->at_version, peers->last_complete);
       peers->all_committed.set_value();
       peers->all_committed = {};
-      return seastar::now();
+      return interruptor::make_ready_future<
+	crimson::os::FuturizedStore::Shard::do_transaction_bare_ret>(
+	  std::move(ret));
     }
     // wait for all peers to ack (ReplicatedBackend::got_rep_op_reply)
-    return peers->all_committed.get_shared_future();
-  }).then_interruptible([pending_txn, this, _new_clone, &hoid,
-			to_push_delete=std::move(to_push_delete),
-			to_push_clone=std::move(to_push_clone)] {
-    auto acked_peers = std::move(pending_txn->second.acked_peers);
-    pending_trans.erase(pending_txn);
-    if (_new_clone && !to_push_clone.empty()) {
-      pg.enqueue_push_for_backfill(
-	_new_clone->obs.oi.soid,
-	_new_clone->obs.oi.version,
-	to_push_clone);
-    }
-    if (!to_push_delete.empty()) {
-      pg.enqueue_delete_for_backfill(hoid, {}, to_push_delete);
-    }
-    maybe_kick_pct_update();
-    return seastar::now();
+    return interruptor::make_interruptible(
+      peers->all_committed.get_shared_future()
+    ).then_interruptible([pending_txn, this, _new_clone, &hoid,
+			  to_push_delete=std::move(to_push_delete),
+			  to_push_clone=std::move(to_push_clone),
+			  ret=std::move(ret)]() mutable {
+      auto acked_peers = std::move(pending_txn->second.acked_peers);
+      pending_trans.erase(pending_txn);
+      if (_new_clone && !to_push_clone.empty()) {
+	pg.enqueue_push_for_backfill(
+	  _new_clone->obs.oi.soid,
+	  _new_clone->obs.oi.version,
+	  to_push_clone);
+      }
+      if (!to_push_delete.empty()) {
+	pg.enqueue_delete_for_backfill(hoid, {}, to_push_delete);
+      }
+      maybe_kick_pct_update();
+      return seastar::make_ready_future<
+	crimson::os::FuturizedStore::Shard::do_transaction_bare_ret>(
+	  std::move(ret));
+    });
   });
 
   auto sends_complete = seastar::when_all_succeed(

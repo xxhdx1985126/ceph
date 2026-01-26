@@ -138,23 +138,26 @@ public:
     virtual seastar::future<> set_collection_opts(CollectionRef c,
                                         const pool_opts_t& opts) = 0;
 
+    using do_transaction_bare_ret =
+      std::map<hobject_t, onode_info_cache_ref>;
   protected:
-    virtual seastar::future<> do_transaction_no_callbacks(
+    virtual seastar::future<do_transaction_bare_ret>
+    do_transaction_no_callbacks(
       CollectionRef ch,
       ceph::os::Transaction&& txn) = 0;
 
   public:
-    seastar::future<> do_transaction(
+    seastar::future<do_transaction_bare_ret> do_transaction(
       CollectionRef ch,
       ceph::os::Transaction&& txn) {
       std::unique_ptr<Context> on_commit(
 	ceph::os::Transaction::collect_all_contexts(txn));
       return do_transaction_no_callbacks(
 	std::move(ch), std::move(txn)
-      ).then([on_commit=std::move(on_commit)]() mutable {
+      ).then([on_commit=std::move(on_commit)](auto ret) mutable {
 	auto c = on_commit.release();
 	if (c) c->complete(0);
-	return seastar::now();
+	return seastar::make_ready_future<do_transaction_bare_ret>(ret);
       });
     }
 
@@ -168,7 +171,9 @@ public:
      * @param ch [in] collection on which to flush
      */
     virtual seastar::future<> flush(CollectionRef ch) {
-      return do_transaction(ch, ceph::os::Transaction{});
+      return do_transaction(
+	ch, ceph::os::Transaction{}
+      ).discard_result();
     }
 
     // error injection

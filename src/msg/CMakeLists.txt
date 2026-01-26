@@ -4,7 +4,8 @@ set(msg_srcs
   Messenger.cc
   Connection.cc
   msg_types.cc
-  compressor_registry.cc)
+  compressor_registry.cc
+  ../messages/MOSDOpReply.cc)
 
 list(APPEND msg_srcs
   async/AsyncConnection.cc

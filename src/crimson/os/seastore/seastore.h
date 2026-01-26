@@ -163,7 +163,7 @@ public:
     seastar::future<> set_collection_opts(CollectionRef c,
                                         const pool_opts_t& opts) final;
 
-    seastar::future<> do_transaction_no_callbacks(
+    seastar::future<do_transaction_bare_ret> do_transaction_no_callbacks(
       CollectionRef ch,
       ceph::os::Transaction&& txn) final;
 
@@ -232,21 +232,18 @@ public:
 
       TransactionRef transaction;
 
-      onode_info_cache_ref onode_cache;
+      std::map<hobject_t, onode_info_cache_ref> onode_cache;
       ceph::os::Transaction::iterator iter;
       std::chrono::steady_clock::time_point begin_timestamp = std::chrono::steady_clock::now();
 
       void reset_preserve_handle(TransactionManager &tm) {
         tm.reset_transaction_preserve_handle(*transaction);
         iter = ext_transaction.begin();
-	onode_cache.reset();
+	onode_cache.clear();
       }
 
       void set_onode_cache_info(onode_info_cache_ref onode_info) {
-	if (!onode_cache ||
-	    onode_cache->oid == onode_info->oid) {
-	  onode_cache = onode_info;
-	}
+	onode_cache[onode_info->oid] = onode_info;
       }
     };
 
@@ -307,9 +304,9 @@ public:
 	    })
 	  );
 	}).then([this, op_type, &ctx] {
-	  ctx.ext_transaction.set_onode_cache_info(std::move(ctx.onode_cache));
 	  add_latency_sample(op_type,
 	      std::chrono::steady_clock::now() - ctx.begin_timestamp);
+	  return std::move(ctx.onode_cache);
 	}).finally([this] {
 	  throttler.put();
 	});

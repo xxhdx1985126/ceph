@@ -843,7 +843,8 @@ OpsExecuter::flush_changes_and_submit(
   assert(obc);
 
   auto submitted = interruptor::now();
-  auto all_completed = interruptor::now();
+  auto all_completed = interruptor::make_ready_future<
+    std::map<hobject_t, onode_info_cache_ref>>();
 
   if (cloning_ctx) {
     ceph_assert(want_mutate);
@@ -885,13 +886,17 @@ OpsExecuter::flush_changes_and_submit(
     // need extra ref pg due to apply_stats() which can be executed after
     // informing snap mapper
     all_completed =
-      std::move(all_completed).then_interruptible([this, pg=this->pg] {
-      // let's do the cleaning of `op_effects` in destructor
-      return interruptor::do_for_each(op_effects,
-        [pg=std::move(pg)](auto& op_effect) {
-        return op_effect->execute(pg);
+      std::move(all_completed
+      ).then_interruptible([this, pg=this->pg](auto ret) {
+	// let's do the cleaning of `op_effects` in destructor
+	return interruptor::do_for_each(op_effects,
+	  [pg=std::move(pg)](auto& op_effect) {
+	  return op_effect->execute(pg);
+	}).then_interruptible([ret=std::move(ret)]() mutable {
+	  return interruptor::make_ready_future<
+	    std::map<hobject_t, onode_info_cache_ref>>(std::move(ret));
+	});
       });
-    });
   }
 
   co_return std::make_tuple(

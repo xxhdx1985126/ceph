@@ -433,7 +433,8 @@ auto CyanStore::Shard::omap_get_header(
     o->omap_header);
 }
 
-seastar::future<> CyanStore::Shard::do_transaction_no_callbacks(
+seastar::future<CyanStore::Shard::do_transaction_bare_ret>
+CyanStore::Shard::do_transaction_no_callbacks(
   CollectionRef ch,
   ceph::os::Transaction&& t)
 {
@@ -628,7 +629,7 @@ seastar::future<> CyanStore::Shard::do_transaction_no_callbacks(
     logger().error("{}", str.str());
     ceph_assert(r == 0);
   }
-  return seastar::now();
+  return seastar::make_ready_future<do_transaction_bare_ret>();
 }
 
 int CyanStore::Shard::_remove(const coll_t& cid, const ghobject_t& oid)

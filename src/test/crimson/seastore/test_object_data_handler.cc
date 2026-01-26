@@ -29,6 +29,9 @@ public:
   const onode_layout_t &get_layout() const final {
     return layout;
   }
+  bool need_new_cache() const final {
+    return false;
+  }
   template <typename Func>
   void with_mutable_layout(Transaction &t, Func&& f) {
     f(layout);

@@ -592,6 +592,11 @@ public:
   my_type finally(Func&& func) {
     return core_type::finally(std::forward<Func>(func));
   }
+
+  auto discard_result() noexcept {
+    return then_interruptible([](auto &&) {});
+  }
+
 private:
   template <typename Func>
   [[gnu::always_inline]]

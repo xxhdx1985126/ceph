@@ -1492,7 +1492,8 @@ void SeaStore::Shard::on_error(ceph::os::Transaction &t) {
   abort();
 }
 
-seastar::future<> SeaStore::Shard::do_transaction_no_callbacks(
+seastar::future<SeaStore::Shard::do_transaction_bare_ret>
+SeaStore::Shard::do_transaction_no_callbacks(
   CollectionRef _ch,
   ceph::os::Transaction&& _t)
 {
@@ -1685,9 +1686,12 @@ SeaStore::Shard::_do_transaction_step(
     // 从 ceph::os::Transaction::iterator获取缓存信息
     auto onode_cache = ctx.ext_transaction.get_onode_cache_info(oid.hobj);
     if (onode_cache) {
-      TRACET("op {}, onode_cache oid: {}, onode_cache object_data_laddr: {}",
+      TRACET("op {}, onode_cache oid: {}, onode_cache object_data_laddr: {},"
+	"xattr_data_laddr: {}, omap_addr_laddr: {}",
 	*ctx.transaction, (uint32_t)op->op, onode_cache->oid,
-	onode_cache->object_data_laddr);
+	onode_cache->object_data_laddr,
+	onode_cache->xattr_root_laddr,
+	onode_cache->omap_root_laddr);
     }
     if (can_skip_onode_search(ctx, oid.hobj, onode_cache, *op)) {
       DEBUGT("op {}, got client side cache, oid={} ...",
@@ -1918,14 +1922,12 @@ SeaStore::Shard::_do_transaction_step(
       // 转存到ceph::os::seastore::Transaction
       onode_info_cache_ref onode_cache(
 	new onode_info_cache(onode->get_onode_info_cache()));
-      TRACET("op {}, oid {}, laddr {}",
-	*ctx.transaction, (uint32_t)op->op, onode_cache->oid, onode_cache->object_data_laddr);
+      TRACET("op {}, oid {}, laddr {}, xattr {}, omap {}, changed {} {}",
+	*ctx.transaction, (uint32_t)op->op,
+	onode_cache->oid, onode_cache->object_data_laddr,
+	onode_cache->xattr_root_laddr, onode_cache->omap_root_laddr,
+	onode_cache->changed, (void*)onode_cache.get());
       ctx.set_onode_cache_info(onode_cache);
-      TRACET("op {}, oid {}, laddr {}, onode_cache oid: {}, onode_cache laddr: {}",
-	*ctx.transaction, (uint32_t)op->op, onode_cache->oid,
-	onode_cache->object_data_laddr,
-	ctx.onode_cache->oid,
-	ctx.onode_cache->object_data_laddr);
     }
   }).handle_error_interruptible(
     tm_iertr::pass_further{},

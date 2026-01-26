@@ -403,7 +403,8 @@ public:
   execute_op(OSDOp& osd_op);
 
   using rep_op_fut_tuple =
-    std::tuple<interruptible_future<>, interruptible_future<>>;
+    std::tuple<interruptible_future<>, interruptible_future<
+      std::map<hobject_t, onode_info_cache_ref>>>;
   using rep_op_fut_t =
     interruptible_future<rep_op_fut_tuple>;
   rep_op_fut_t flush_changes_and_submit(

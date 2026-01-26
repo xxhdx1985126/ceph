@@ -7671,3 +7671,11 @@ std::optional<op_queue_type_t> get_op_queue_type_by_name(
     return std::nullopt;
   }
 }
+
+namespace crimson::os::seastore {
+
+std::ostream &operator<<(std::ostream &out, const laddr_t &laddr) {
+  return out << "L0x" << std::hex << laddr.value << std::dec;
+}
+
+} // namespace crimson::os::seastore

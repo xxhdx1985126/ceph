@@ -73,7 +73,7 @@ struct seastore_test_t :
       t.create_collection(coll_name, 0);
       return sharded_seastore->do_transaction(
 	coll,
-	std::move(t));
+	std::move(t)).discard_result();
     });
   }
 

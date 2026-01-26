@@ -35,7 +35,9 @@ ECBackend::submit_transaction(const std::set<pg_shard_t> &pg_shards,
 			      std::vector<pg_log_entry_t>&& log_entries)
 {
   // todo
-  return make_ready_future<rep_op_ret_t>(seastar::now(), seastar::now());
+  return make_ready_future<rep_op_ret_t>(
+    seastar::now(),
+    seastar::make_ready_future<transaction_complete_bare_ret>());
 }
 
 }

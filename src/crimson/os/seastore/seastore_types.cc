@@ -94,10 +94,6 @@ std::ostream& operator<<(std::ostream& out, segment_seq_printer_t seq)
   }
 }
 
-std::ostream &operator<<(std::ostream &out, const laddr_t &laddr) {
-  return out << "L0x" << std::hex << laddr.value << std::dec;
-}
-
 std::ostream &operator<<(std::ostream &out, const laddr_offset_t &laddr_offset) {
   return out << laddr_offset.get_laddr()
 	     << "+0x" << std::hex << laddr_offset.get_offset() << std::dec;

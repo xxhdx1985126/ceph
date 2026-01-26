@@ -59,9 +59,11 @@ public:
   using interruptible_future =
     ::crimson::interruptible::interruptible_future<
       ::crimson::osd::IOInterruptCondition, T>;
+  using transaction_complete_bare_ret =
+    std::map<hobject_t, onode_info_cache_ref>;
   using rep_op_ret_t = 
     std::tuple<interruptible_future<>,
-	       interruptible_future<>>;
+	       interruptible_future<transaction_complete_bare_ret>>;
   using rep_op_fut_t = interruptible_future<rep_op_ret_t>;
   PGBackend(shard_id_t shard, CollectionRef coll,
             crimson::osd::ShardServices &shard_services,

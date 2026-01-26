@@ -434,13 +434,16 @@ struct onode_info_cache : public boost::intrusive_ref_counter<
 		   laddr_t data_laddr,
 		   laddr_t omap_laddr,
 		   laddr_t xattr_laddr,
-                   uint32_t len, uint64_t ver)
+                   uint32_t len, uint64_t ver,
+		   bool changed)
     : oid(oid),
       object_data_laddr(data_laddr),
       omap_root_laddr(omap_laddr),
       xattr_root_laddr(xattr_laddr),
       size(len),
-      version(ver) {}
+      version(ver),
+      changed(changed)
+  {}
 };
 using onode_info_cache_ref = boost::intrusive_ptr<onode_info_cache>;
 
@@ -7390,5 +7393,7 @@ enum class op_queue_type_t : uint8_t {
 std::string_view get_op_queue_type_name(const op_queue_type_t &q);
 std::optional<op_queue_type_t> get_op_queue_type_by_name(
   const std::string_view &s);
+
+template <> struct fmt::formatter<crimson::os::seastore::laddr_t> : fmt::ostream_formatter {};
 
 #endif

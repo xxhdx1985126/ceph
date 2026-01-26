@@ -362,7 +362,7 @@ seastar::future<> OSD::_write_superblock(
 	  DEBUG("OSD::_write_superblock: do_transaction...");
 	  return store.get_sharded_store().do_transaction(
 	    meta_coll.collection(),
-	    std::move(t));
+	    std::move(t)).discard_result();
 	}),
 	crimson::ct_error::assert_all("_write_superbock error")
       );
@@ -1609,10 +1609,10 @@ seastar::future<double> OSD::run_bench(int64_t count, int64_t bsize, int64_t osi
                         shard_id_t::NO_SHARD);
         t.write(coll_t::meta(), oid, 0, data.size(), bl);
         futures.push_back(store.get_sharded_store().do_transaction(
-          collection_ref, std::move(t)));
+          collection_ref, std::move(t)).discard_result());
         cleanup_t.remove(coll_t::meta(), oid);
         cleanup_futures.push_back(store.get_sharded_store().do_transaction(
-          collection_ref, std::move(cleanup_t)));
+          collection_ref, std::move(cleanup_t)).discard_result());
       }
     }
 
@@ -1646,12 +1646,12 @@ seastar::future<double> OSD::run_bench(int64_t count, int64_t bsize, int64_t osi
       t.write(coll_t::meta(), oid, offset, bsize, bl);
 
       futures_bench.push_back(store.get_sharded_store().do_transaction(
-        collection_ref, std::move(t)));
+        collection_ref, std::move(t)).discard_result());
 
       if (!onum || !osize) {
         cleanup_t.remove(coll_t::meta(), oid);
         cleanup_futures.push_back(store.get_sharded_store().do_transaction(
-          collection_ref, std::move(cleanup_t)));
+          collection_ref, std::move(cleanup_t)).discard_result());
       }
     }
     co_await seastar::when_all_succeed(futures_bench.begin(), futures_bench.end());

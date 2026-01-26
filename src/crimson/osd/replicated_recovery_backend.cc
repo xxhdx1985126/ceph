@@ -239,7 +239,7 @@ ReplicatedRecoveryBackend::on_local_recover_persist(
       DEBUGDPP("submitting transaction", pg);
       return shard_services.get_store().do_transaction(coll, std::move(t));
     }).then_interruptible(
-      [this, epoch_frozen, last_complete = pg.get_info().last_complete] {
+      [this, epoch_frozen, last_complete = pg.get_info().last_complete](auto) {
       pg.get_recovery_handler()->_committed_pushed_object(epoch_frozen, last_complete);
       return seastar::make_ready_future<>();
     });
@@ -264,8 +264,8 @@ ReplicatedRecoveryBackend::local_recover_delete(
         }).then_interruptible(
 	  [FNAME, this, &txn]() mutable {
 	  DEBUGDPP("submitting transaction", pg);
-	  return shard_services.get_store().do_transaction(coll,
-							   std::move(txn));
+	  return shard_services.get_store().do_transaction(
+            coll, std::move(txn)).discard_result();
 	});
       });
     }

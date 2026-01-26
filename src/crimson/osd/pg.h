@@ -631,7 +631,7 @@ public:
       target);
     init_pg_ondisk(t, child, pool);
     return shard_services.get_store().do_transaction(
-      coll_ref, std::move(t));
+      coll_ref, std::move(t)).discard_result();
   }
 
   void split_into(pg_t child_pgid, Ref<PG> child, unsigned split_bits) {
@@ -735,7 +735,8 @@ private:
   seastar::shared_mutex submit_lock;
   using submit_executer_ret = std::tuple<
     interruptible_future<>,
-    interruptible_future<>>;
+    interruptible_future<
+      std::map<hobject_t, onode_info_cache_ref>>>;
   using submit_executer_fut = interruptible_future<
     submit_executer_ret>;
   submit_executer_fut submit_executer(
@@ -747,8 +748,9 @@ private:
   interruptible_future<MURef<MOSDOpReply>> do_pg_ops(Ref<MOSDOp> m);
 
 public:
-  using rep_op_fut_t = std::tuple<interruptible_future<>,
-                                  interruptible_future<>>;
+  using rep_op_fut_t = std::tuple<
+    interruptible_future<>,
+    interruptible_future<std::map<hobject_t, onode_info_cache_ref>>>;
   interruptible_future<rep_op_fut_t>
   submit_transaction(
     ObjectContextRef&& obc,

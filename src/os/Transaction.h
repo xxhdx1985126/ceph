@@ -225,7 +225,12 @@ public:
 
   void set_onode_cache_info(onode_info_cache_ref onode_info) {
     assert(onode_info);
-    onode_cache.emplace(onode_info->oid, onode_info);
+    onode_cache[onode_info->oid] = onode_info;
+  }
+
+  void set_onode_cache_infos(
+    std::map<hobject_t, onode_info_cache_ref> &&onodes) {
+    onode_cache = std::move(onodes);
   }
 #endif
 

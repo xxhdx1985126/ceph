@@ -498,7 +498,7 @@ PG::do_delete_work(ceph::os::Transaction &t, ghobject_t _next)
     t.remove(coll_ref->get_cid(), pgmeta_oid);
     t.remove_collection(coll_ref->get_cid());
     (void) shard_services.get_store().do_transaction(
-      coll_ref, t.claim_and_reset()).then([this] {
+      coll_ref, t.claim_and_reset()).then([this](auto) {
       return shard_services.remove_pg(pgid);
     });
     return {next, false};
@@ -547,7 +547,7 @@ seastar::future<> PG::clear_temp_objects()
     if (objs.empty()) {
       if (!t.empty()) {
         co_await shard_services.get_store().do_transaction(
-          coll_ref, std::move(t));
+          coll_ref, std::move(t)).discard_result();
       }
       break;
     }
@@ -559,7 +559,7 @@ seastar::future<> PG::clear_temp_objects()
     _next = next;
     if (t.get_num_ops() >= max_size) {
       co_await shard_services.get_store().do_transaction(
-        coll_ref, t.claim_and_reset());
+        coll_ref, t.claim_and_reset()).discard_result();
     }
   }
 }
@@ -969,7 +969,7 @@ PG::submit_transaction(
     co_return std::make_tuple(
         interruptor::make_interruptible(seastar::make_exception_future<>(
           crimson::common::system_shutdown_exception())),
-        interruptor::now());
+        interruptor::make_ready_future<std::map<hobject_t, onode_info_cache_ref>>());
   }
 
   epoch_t map_epoch = get_osdmap_epoch();
@@ -1144,7 +1144,7 @@ PG::interruptible_future<eversion_t> PG::submit_error_log(
   co_await interruptor::make_interruptible(
     shard_services.get_store().do_transaction(
       get_collection_ref(), std::move(t)
-    ));
+    )).discard_result();
 
   peering_state.update_trim_to();
   co_return projected_last_update;
@@ -1220,8 +1220,9 @@ PG::submit_executer_fut PG::submit_executer(
   co_return std::make_tuple(
     std::move(submitted).then_interruptible([unlocker=std::move(unlocker)] {}),
     std::move(completed
-    ).then_interruptible([&ox, this] {
-      pgmeta_onode = ox.get_txn().get_onode_cache_info(pgmeta_oid.hobj);
+    ).then_interruptible([this](auto ret) {
+      pgmeta_onode = ret[pgmeta_oid.hobj];
+      return ret;
     }));
 }
 
@@ -1326,7 +1327,7 @@ PG::handle_rep_op_fut PG::handle_rep_op(Ref<MOSDRepOp> req)
 
   auto commit_fut = interruptor::make_interruptible(
     shard_services.get_store().do_transaction(coll_ref, std::move(txn))
-  );
+  ).discard_result();
 
   const auto &lcod = peering_state.get_info().last_complete;
   peering_state.update_last_complete_ondisk(lcod);
@@ -1443,7 +1444,7 @@ PG::interruptible_future<> PG::do_update_log_missing(
 
   return interruptor::make_interruptible(shard_services.get_store().do_transaction(
     coll_ref, std::move(t))).then_interruptible(
-    [m, conn, lcod=peering_state.get_info().last_complete, this] {
+    [m, conn, lcod=peering_state.get_info().last_complete, this](auto) {
     if (!peering_state.pg_has_reset_since(m->get_epoch())) {
       peering_state.update_last_complete_ondisk(lcod);
       auto reply =

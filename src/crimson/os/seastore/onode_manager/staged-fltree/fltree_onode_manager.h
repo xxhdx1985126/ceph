@@ -28,6 +28,7 @@ struct FLTreeOnode final : Onode, Value {
     ALIVE,
     DELETED
   } status = status_t::ALIVE;
+  bool changed = false;
 
   FLTreeOnode(FLTreeOnode&&) = default;
   FLTreeOnode& operator=(FLTreeOnode&&) = delete;
@@ -71,6 +72,10 @@ struct FLTreeOnode final : Onode, Value {
 
     void encode_update(NodeExtentMutable &payload_mut, delta_op_t op);
   };
+
+  bool need_new_cache() const final {
+    return changed;
+  }
 
   bool is_alive() const {
     return status != status_t::DELETED;
@@ -132,6 +137,7 @@ struct FLTreeOnode final : Onode, Value {
 	    payload_mut, Recorder::delta_op_t::UPDATE_OMAP_ROOT);
 	}
     });
+    changed = true;
   }
 
   void update_log_root(Transaction &t, omap_root_t &lroot) final {
@@ -147,6 +153,7 @@ struct FLTreeOnode final : Onode, Value {
 	    payload_mut, Recorder::delta_op_t::UPDATE_LOG_ROOT);
 	}
     });
+    changed = true;
   }
 
   void update_xattr_root(Transaction &t, omap_root_t &xroot) final {
@@ -162,6 +169,7 @@ struct FLTreeOnode final : Onode, Value {
 	    payload_mut, Recorder::delta_op_t::UPDATE_XATTR_ROOT);
 	}
     });
+    changed = true;
   }
 
   void update_object_data(Transaction &t, object_data_t &odata) final {
@@ -176,6 +184,7 @@ struct FLTreeOnode final : Onode, Value {
 	    payload_mut, Recorder::delta_op_t::UPDATE_OBJECT_DATA);
 	}
     });
+    changed = true;
   }
 
   void update_object_info(Transaction &t, ceph::bufferlist &oi_bl) final {

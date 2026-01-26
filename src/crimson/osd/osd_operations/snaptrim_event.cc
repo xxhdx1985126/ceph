@@ -418,7 +418,7 @@ SnapTrimObjSubEvent::start()
 
   logger().debug("{}: got obc={}", *this, obc_manager.get_obc()->get_oid());
 
-  auto all_completed = interruptor::now();
+  auto all_completed = interruptor::make_ready_future<std::map<hobject_t, onode_info_cache_ref>>();
   {
     // as with PG::submit_executer, we need to build the pg log entries
     // and submit the transaction atomically

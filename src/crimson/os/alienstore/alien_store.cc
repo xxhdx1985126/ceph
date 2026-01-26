@@ -453,7 +453,8 @@ AlienStore::omap_iterate(CollectionRef ch,
   });
 }
 
-seastar::future<> AlienStore::do_transaction_no_callbacks(
+seastar::future<AlienStore::Shard::do_transaction_bare_ret>
+AlienStore::do_transaction_no_callbacks(
   CollectionRef ch,
   ceph::os::Transaction&& txn)
 {
@@ -478,6 +479,8 @@ seastar::future<> AlienStore::do_transaction_no_callbacks(
 	  assert(r == 0);
 	  return done.get_future();
 	});
+    }).then([] {
+      return do_transaction_bare_ret{};
     });
 }
 

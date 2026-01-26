@@ -101,7 +101,8 @@ public:
       CollectionRef c,
       const pool_opts_t& opts) final;
 
-    seastar::future<> do_transaction_no_callbacks(
+    seastar::future<do_transaction_bare_ret>
+    do_transaction_no_callbacks(
       CollectionRef ch,
       ceph::os::Transaction&& txn) final;
 

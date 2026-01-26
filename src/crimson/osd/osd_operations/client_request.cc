@@ -586,7 +586,13 @@ ClientRequest::do_process(
     m->target_cached_data.omap_root_laddr,
     m->target_cached_data.xattr_root_laddr,
     m->target_cached_data.extent_len,
-    0);
+    0,
+    false);
+  DEBUGDPP("object_data: {}, xattr_root: {}, omap_root {}",
+    *pg, *this,
+    m->target_cached_data.object_data_laddr,
+    m->target_cached_data.omap_root_laddr,
+    m->target_cached_data.xattr_root_laddr);
 
   auto ret = co_await pg->run_executer(
     ox, obc, op_info, m->ops
@@ -615,9 +621,10 @@ ClientRequest::do_process(
   }
 
   size_t inb = 0, outb = 0;
+  std::map<hobject_t, onode_info_cache_ref> onode_cache;
   {
-    auto all_completed = interruptor::now();
     if (ret) {
+      auto all_completed = interruptor::now();
       assert(should_log_error(*ret));
       if (op_info.may_write()) {
 	auto rep_tid = pg->shard_services.get_tid();
@@ -627,18 +634,21 @@ ClientRequest::do_process(
 	all_completed = pg->complete_error_log(
 	  rep_tid, version);
       }
+      co_await ihref.enter_stage<interruptor>(
+        ihref.obc_orderer->obc_pp().wait_repop, *this);
+
+      co_await std::move(all_completed);
       // simply return the error below, leaving all_completed alone
     } else {
-      auto submitted = interruptor::now();
       inb = ox.get_bytes_written();
-      std::tie(submitted, all_completed) = co_await pg->submit_executer(
+      auto [submitted, all_completed] = co_await pg->submit_executer(
 	ox, m->ops);
       co_await std::move(submitted);
-    }
-    co_await ihref.enter_stage<interruptor>(
-      ihref.obc_orderer->obc_pp().wait_repop, *this);
+      co_await ihref.enter_stage<interruptor>(
+        ihref.obc_orderer->obc_pp().wait_repop, *this);
 
-    co_await std::move(all_completed);
+      onode_cache = co_await std::move(all_completed);
+    }
   }
 
   co_await ihref.enter_stage<interruptor>(
@@ -712,26 +722,60 @@ ClientRequest::do_process(
     
     // TODO目前触发load_and_lock只是原来缓存没有对应的信息，
     // 无法判断obc版本是否是最新的
-    if (!(m->has_target_cache_data && m->has_head_cache_data) ||
-        ox.onode_cache->changed) {
+    auto cachedata_target = object_info_cache(obc->ssc->oid.snap, obc->obs.oi.size);
+    auto it = onode_cache.find(m->get_hobj());
+    DEBUGDPP("{}: onode cache exist: {}", *pg, *this, it != onode_cache.end());
+    if (it != onode_cache.end() && it->second->changed) {
+      auto &onode_info = *it->second;
+      DEBUGDPP("{}: has onode cache, object_data {}, omap_root {}, xattr_root {}",
+        *pg, *this,
+        onode_info.object_data_laddr,
+        onode_info.omap_root_laddr,
+        onode_info.xattr_root_laddr);
+      cachedata_target.object_data_laddr = onode_info.object_data_laddr;
+      cachedata_target.omap_root_laddr = onode_info.omap_root_laddr;
+      cachedata_target.xattr_root_laddr = onode_info.xattr_root_laddr;
+    }
+    if (!m->has_target_cache_data) {
+      reply->has_target_cache_data = true;
+      reply->target_cached_data = cachedata_target;
+    }
+
+    if(obc->ssc->snapset != m->ss) {
+      reply->ss = obc->ssc->snapset;
+    }
+
+    if (!m->has_head_cache_data) {
+      // 得构造object_info_cache
+      if(obc->is_head()){
+        reply->has_head_cache_data = true;
+        reply->head_cached_data = cachedata_target;
+      } else{
+        auto obc_manager = pg->obc_loader.get_obc_manager(*(ihref.obc_orderer),
+                                                      m->get_hobj());
+        auto head_obc = obc_manager.get_head_obc();
+        reply->has_head_cache_data = true;
+        reply->head_cached_data = object_info_cache(head_obc->ssc->oid.snap, head_obc->obs.oi.size);
+      }
+    }
+
+/*    if (!(m->has_target_cache_data && m->has_head_cache_data) ||
+        onode_info->changed) {
       // do_process里面传入的obc只有target
       // message中缺失head或者target的信息，说明之前缓存内没有相关的数据
       
       // 调用loadobc之后，target的ss是从head中得到的
-      if(obc->ssc->snapset != m->ss) {
-        reply->ss = obc->ssc->snapset;
-      }
       // 通过obc构造MetaData
       // MetaData(const object_info_cache& h_oi, const SnapSet& _ss, snapid_t target_snap_id, const object_info_cache& t_oi, const object_t& object_id);
       // auto target_obj_info = 
       // hobject_t oid;
       // SnapSet snapset;
       auto cachedata_target = object_info_cache(obc->ssc->oid.snap, obc->obs.oi.size);
-      if(ox.onode_cache->changed) {
-        cachedata_target.object_data_laddr = ox.onode_cache->object_data_laddr;
-        cachedata_target.omap_root_laddr = ox.onode_cache->omap_root_laddr;
-        cachedata_target.size = ox.onode_cache->size;
-        cachedata_target.version = ox.onode_cache->version;
+      if (onode_info->changed) {
+        cachedata_target.object_data_laddr = onode_info->object_data_laddr;
+        cachedata_target.omap_root_laddr = onode_info->omap_root_laddr;
+        cachedata_target.size = onode_info->size;
+        cachedata_target.version = onode_info->version;
       }
 
       if (!m->has_target_cache_data) {
@@ -752,14 +796,14 @@ ClientRequest::do_process(
           reply->head_cached_data = object_info_cache(head_obc->ssc->oid.snap, head_obc->obs.oi.size);
         }
 
-        if(ox.onode_cache->changed) {
-          reply->head_cached_data.object_data_laddr = ox.onode_cache->object_data_laddr;
-          reply->head_cached_data.omap_root_laddr = ox.onode_cache->omap_root_laddr;
-          reply->head_cached_data.size = ox.onode_cache->size;
-          reply->head_cached_data.version = ox.onode_cache->version;
+        if (onode_info->changed) {
+          reply->head_cached_data.object_data_laddr = onode_info->object_data_laddr;
+          reply->head_cached_data.omap_root_laddr = onode_info->omap_root_laddr;
+          reply->head_cached_data.size = onode_info->size;
+          reply->head_cached_data.version = onode_info->version;
         }
       }
-    }
+    }*/
   
     if (obc->obs.exists) {
       reply->set_reply_versions(pg->peering_state.get_info().last_update,
