@@ -3435,8 +3435,8 @@ Objecter::MOSDOp *Objecter::_prepare_osd_op(Op *op)
         m->target_cached_data = head_cahced_data.value();
         ldout(cct, 7) << "get target metadata where target == head: "
 	  << "object_data: {}" << m->target_cached_data.object_data_laddr
-	  << "xattr_root: {}" << m->target_cached_data.xattr_root_laddr
-	  << "omap_root: {}" << m->target_cached_data.omap_root_laddr << dendl;
+	  << "xattr_root: {}" << m->target_cached_data.xattr_root
+	  << "omap_root: {}" << m->target_cached_data.omap_root << dendl;
       }
       
     } else { // target != head
@@ -3747,8 +3747,8 @@ void Objecter::handle_osd_op_reply(MOSDOpReply *m)
     
     ldout(cct, 7) << __func__ << " oid: " << m->get_oid()
       << ", object_data: " << m->target_cached_data.object_data_laddr
-      << ", xattr_root: " << m->target_cached_data.xattr_root_laddr
-      << ", omap_root: " << m->target_cached_data.omap_root_laddr
+      << ", xattr_root: " << m->target_cached_data.xattr_root
+      << ", omap_root: " << m->target_cached_data.omap_root
       << dendl;
     std::shared_ptr<MetaData> meta_ptr = std::make_shared<MetaData>(
       m->head_cached_data,   

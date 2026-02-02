@@ -72,7 +72,6 @@ constexpr transaction_id_t TRANS_ID_NULL = 0;
  * Note: NULL value is usually the default and max value.
  */
 
-using depth_t = uint32_t;
 using depth_le_t = ceph_le32;
 
 inline depth_le_t init_depth_le(uint32_t i) {
@@ -1091,10 +1090,6 @@ inline extent_len_le_t init_extent_len_le(extent_len_t len) {
 
 using laddr_offset_t = laddr_t::laddr_offset_t;
 
-constexpr laddr_t L_ADDR_MAX = laddr_t::from_raw_uint(laddr_t::RAW_VALUE_MAX);
-constexpr laddr_t L_ADDR_MIN = laddr_t::from_raw_uint(0);
-constexpr laddr_t L_ADDR_NULL = L_ADDR_MAX;
-
 struct __attribute__((packed)) laddr_le_t {
   ceph_le64 laddr;
 
@@ -1621,67 +1616,6 @@ struct __attribute__((packed)) object_data_le_t {
       reserved_data_len);
   }
 };
-
-enum class omap_type_t : uint8_t {
-  XATTR = 0,
-  OMAP,
-  LOG,
-  NONE
-};
-std::ostream &operator<<(std::ostream &out, const omap_type_t &type);
-
-struct omap_root_t {
-  laddr_t addr = L_ADDR_NULL;
-  depth_t depth = 0;
-  laddr_t hint = L_ADDR_MIN;
-  bool mutated = false;
-  omap_type_t type = omap_type_t::NONE;
-
-  omap_root_t() = default;
-  omap_root_t(laddr_t addr, depth_t depth, laddr_t addr_min, omap_type_t type)
-    : addr(addr),
-      depth(depth),
-      hint(addr_min),
-      type(type) {}
-
-  omap_root_t(const omap_root_t &o) = default;
-  omap_root_t(omap_root_t &&o) = default;
-  omap_root_t &operator=(const omap_root_t &o) = default;
-  omap_root_t &operator=(omap_root_t &&o) = default;
-
-  bool is_null() const {
-    return addr == L_ADDR_NULL;
-  }
-
-  bool must_update() const {
-    return mutated;
-  }
-  
-  void update(laddr_t _addr, depth_t _depth, laddr_t _hint, omap_type_t _type) {
-    mutated = true;
-    addr = _addr;
-    depth = _depth;
-    hint = _hint;
-    type = _type;
-  }
-  
-  laddr_t get_location() const {
-    return addr;
-  }
-
-  depth_t get_depth() const {
-    return depth;
-  }
-
-  laddr_t get_hint() const {
-    return hint;
-  }
-
-  omap_type_t get_type() const {
-    return type;
-  }
-};
-std::ostream &operator<<(std::ostream &out, const omap_root_t &root);
 
 class __attribute__((packed)) omap_root_le_t {
   laddr_le_t addr = laddr_le_t(L_ADDR_NULL);
@@ -2920,7 +2854,6 @@ template <> struct fmt::formatter<crimson::os::seastore::journal_seq_t> : fmt::o
 template <> struct fmt::formatter<crimson::os::seastore::journal_tail_delta_t> : fmt::ostream_formatter {};
 template <> struct fmt::formatter<crimson::os::seastore::laddr_offset_t> : fmt::ostream_formatter {};
 template <> struct fmt::formatter<crimson::os::seastore::laddr_list_t> : fmt::ostream_formatter {};
-template <> struct fmt::formatter<crimson::os::seastore::omap_root_t> : fmt::ostream_formatter {};
 template <> struct fmt::formatter<crimson::os::seastore::paddr_list_t> : fmt::ostream_formatter {};
 template <> struct fmt::formatter<crimson::os::seastore::paddr_t> : fmt::ostream_formatter {};
 template <> struct fmt::formatter<crimson::os::seastore::pladdr_t> : fmt::ostream_formatter {};
@@ -2942,7 +2875,6 @@ template <> struct fmt::formatter<crimson::os::seastore::segment_tail_t> : fmt::
 template <> struct fmt::formatter<crimson::os::seastore::segment_type_t> : fmt::ostream_formatter {};
 template <> struct fmt::formatter<crimson::os::seastore::transaction_type_t> : fmt::ostream_formatter {};
 template <> struct fmt::formatter<crimson::os::seastore::write_result_t> : fmt::ostream_formatter {};
-template <> struct fmt::formatter<crimson::os::seastore::omap_type_t> : fmt::ostream_formatter {};
 template <> struct fmt::formatter<ceph::buffer::list> : fmt::ostream_formatter {};
 #endif
 

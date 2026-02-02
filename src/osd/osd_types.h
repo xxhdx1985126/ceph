@@ -408,11 +408,85 @@ private:
 //   ::ceph::decode(a.value, p);
 // }
 
+
+constexpr laddr_t L_ADDR_MAX = laddr_t::from_raw_uint(laddr_t::RAW_VALUE_MAX);
+constexpr laddr_t L_ADDR_MIN = laddr_t::from_raw_uint(0);
+constexpr laddr_t L_ADDR_NULL = L_ADDR_MAX;
+
+enum class omap_type_t : uint8_t {
+  XATTR = 0,
+  OMAP,
+  LOG,
+  NONE
+};
+std::ostream &operator<<(std::ostream &out, const omap_type_t &type);
+
+using depth_t = uint32_t;
+struct omap_root_t {
+  laddr_t addr = L_ADDR_NULL;
+  depth_t depth = 0;
+  laddr_t hint = L_ADDR_MIN;
+  bool mutated = false;
+  omap_type_t type = omap_type_t::NONE;
+
+  omap_root_t() = default;
+  omap_root_t(laddr_t addr, depth_t depth, laddr_t addr_min, omap_type_t type)
+    : addr(addr),
+      depth(depth),
+      hint(addr_min),
+      type(type) {}
+
+  omap_root_t(const omap_root_t &o) = default;
+  omap_root_t(omap_root_t &&o) = default;
+  omap_root_t &operator=(const omap_root_t &o) = default;
+  omap_root_t &operator=(omap_root_t &&o) = default;
+
+  void encode(ceph::buffer::list& bl) const;
+  void decode(ceph::buffer::list::const_iterator& bl);
+
+  bool is_null() const {
+    return addr == L_ADDR_NULL;
+  }
+
+  bool must_update() const {
+    return mutated;
+  }
+  
+  void update(laddr_t _addr, depth_t _depth, laddr_t _hint, omap_type_t _type) {
+    mutated = true;
+    addr = _addr;
+    depth = _depth;
+    hint = _hint;
+    type = _type;
+  }
+  
+  laddr_t get_location() const {
+    return addr;
+  }
+
+  depth_t get_depth() const {
+    return depth;
+  }
+
+  laddr_t get_hint() const {
+    return hint;
+  }
+
+  omap_type_t get_type() const {
+    return type;
+  }
+};
+std::ostream &operator<<(std::ostream &out, const omap_root_t &root);
+
 }// namespace crimson::os::seastore
 
 WRITE_CLASS_DENC_BOUNDED(crimson::os::seastore::laddr_t);
+namespace ceph {
+WRITE_CLASS_ENCODER(crimson::os::seastore::omap_root_t);
+} // namespace ceph
 
 using laddr_t = crimson::os::seastore::laddr_t;
+using omap_root_t = crimson::os::seastore::omap_root_t;
 
 struct onode_info_cache : public boost::intrusive_ref_counter<
   onode_info_cache,
@@ -420,8 +494,9 @@ struct onode_info_cache : public boost::intrusive_ref_counter<
 {
   hobject_t oid;
   laddr_t object_data_laddr;
-  laddr_t omap_root_laddr;
-  laddr_t xattr_root_laddr;
+  omap_root_t omap_root;
+  omap_root_t xattr_root;
+  omap_root_t log_root;
   uint32_t size;
   uint64_t version;
   bool changed = false;
@@ -432,21 +507,23 @@ struct onode_info_cache : public boost::intrusive_ref_counter<
   
   onode_info_cache(const hobject_t &oid,
 		   laddr_t data_laddr,
-		   laddr_t omap_laddr,
-		   laddr_t xattr_laddr,
+		   omap_root_t omap_root,
+		   omap_root_t xattr_root,
+		   omap_root_t log_root,
                    uint32_t len, uint64_t ver,
 		   bool changed)
     : oid(oid),
       object_data_laddr(data_laddr),
-      omap_root_laddr(omap_laddr),
-      xattr_root_laddr(xattr_laddr),
+      omap_root(omap_root),
+      xattr_root(xattr_root),
+      log_root(log_root),
       size(len),
       version(ver),
       changed(changed)
   {}
 };
 using onode_info_cache_ref = boost::intrusive_ptr<onode_info_cache>;
-
+std::ostream &operator<<(std::ostream &out, const onode_info_cache &onode_cache);
 
 /**
  * osd request identifier
@@ -7395,5 +7472,8 @@ std::optional<op_queue_type_t> get_op_queue_type_by_name(
   const std::string_view &s);
 
 template <> struct fmt::formatter<crimson::os::seastore::laddr_t> : fmt::ostream_formatter {};
+template <> struct fmt::formatter<crimson::os::seastore::omap_root_t> : fmt::ostream_formatter {};
+template <> struct fmt::formatter<crimson::os::seastore::omap_type_t> : fmt::ostream_formatter {};
+template <> struct fmt::formatter<onode_info_cache> : fmt::ostream_formatter {};
 
 #endif

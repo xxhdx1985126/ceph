@@ -41,8 +41,8 @@ struct object_info_cache {
   uint64_t size;
   // onode
   laddr_t object_data_laddr;
-  laddr_t omap_root_laddr;
-  laddr_t xattr_root_laddr;
+  crimson::os::seastore::omap_root_t omap_root;
+  omap_root_t xattr_root;
   uint32_t extent_len;
   uint64_t version;
 
@@ -63,8 +63,8 @@ struct object_info_cache {
     ceph::encode(snap, bl);
     ceph::encode(size, bl);
     ceph::encode(object_data_laddr, bl);
-    ceph::encode(omap_root_laddr, bl);
-    ceph::encode(xattr_root_laddr, bl);
+    ceph::encode(omap_root, bl);
+    ceph::encode(xattr_root, bl);
     ceph::encode(extent_len, bl);
     ceph::encode(version, bl);
     ENCODE_FINISH(bl);
@@ -74,8 +74,8 @@ struct object_info_cache {
     ceph::decode(snap, bl);
     ceph::decode(size, bl);
     ceph::decode(object_data_laddr, bl);
-    ceph::decode(omap_root_laddr, bl);
-    ceph::decode(xattr_root_laddr, bl);
+    ceph::decode(omap_root, bl);
+    ceph::decode(xattr_root, bl);
     ceph::decode(extent_len, bl);
     ceph::decode(version, bl);
     DECODE_FINISH(bl);

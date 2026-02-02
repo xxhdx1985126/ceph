@@ -583,16 +583,17 @@ ClientRequest::do_process(
   ox.onode_cache = new onode_info_cache(
     m->get_hobj(),
     m->target_cached_data.object_data_laddr,
-    m->target_cached_data.omap_root_laddr,
-    m->target_cached_data.xattr_root_laddr,
+    m->target_cached_data.omap_root,
+    m->target_cached_data.xattr_root,
+    omap_root_t{},
     m->target_cached_data.extent_len,
     0,
     false);
-  DEBUGDPP("object_data: {}, xattr_root: {}, omap_root {}",
+  DEBUGDPP("{} object_data: {}, xattr_root: {}, omap_root {}",
     *pg, *this,
     m->target_cached_data.object_data_laddr,
-    m->target_cached_data.omap_root_laddr,
-    m->target_cached_data.xattr_root_laddr);
+    m->target_cached_data.omap_root,
+    m->target_cached_data.xattr_root);
 
   auto ret = co_await pg->run_executer(
     ox, obc, op_info, m->ops
@@ -725,18 +726,17 @@ ClientRequest::do_process(
     auto cachedata_target = object_info_cache(obc->ssc->oid.snap, obc->obs.oi.size);
     auto it = onode_cache.find(m->get_hobj());
     DEBUGDPP("{}: onode cache exist: {}", *pg, *this, it != onode_cache.end());
-    if (it != onode_cache.end() && it->second->changed) {
+    if (it != onode_cache.end() &&
+        (it->second->changed || !m->has_target_cache_data)) {
       auto &onode_info = *it->second;
-      DEBUGDPP("{}: has onode cache, object_data {}, omap_root {}, xattr_root {}",
-        *pg, *this,
-        onode_info.object_data_laddr,
-        onode_info.omap_root_laddr,
-        onode_info.xattr_root_laddr);
+      DEBUGDPP("{}: has onode cache: {}",
+        *pg, *this, onode_info);
       cachedata_target.object_data_laddr = onode_info.object_data_laddr;
-      cachedata_target.omap_root_laddr = onode_info.omap_root_laddr;
-      cachedata_target.xattr_root_laddr = onode_info.xattr_root_laddr;
-    }
-    if (!m->has_target_cache_data) {
+      cachedata_target.omap_root = onode_info.omap_root;
+      cachedata_target.xattr_root = onode_info.xattr_root;
+      reply->has_target_cache_data = true;
+      reply->target_cached_data = cachedata_target;
+    } else if (!m->has_target_cache_data) {
       reply->has_target_cache_data = true;
       reply->target_cached_data = cachedata_target;
     }
@@ -745,18 +745,16 @@ ClientRequest::do_process(
       reply->ss = obc->ssc->snapset;
     }
 
-    if (!m->has_head_cache_data) {
-      // 得构造object_info_cache
-      if(obc->is_head()){
-        reply->has_head_cache_data = true;
-        reply->head_cached_data = cachedata_target;
-      } else{
-        auto obc_manager = pg->obc_loader.get_obc_manager(*(ihref.obc_orderer),
-                                                      m->get_hobj());
-        auto head_obc = obc_manager.get_head_obc();
-        reply->has_head_cache_data = true;
-        reply->head_cached_data = object_info_cache(head_obc->ssc->oid.snap, head_obc->obs.oi.size);
-      }
+    if (obc->is_head() &&
+        (!m->has_head_cache_data || reply->has_target_cache_data)) {
+      reply->has_head_cache_data = true;
+      reply->head_cached_data = cachedata_target;
+    } else if (!m->has_head_cache_data) {
+      auto obc_manager = pg->obc_loader.get_obc_manager(
+        *(ihref.obc_orderer), m->get_hobj());
+      auto head_obc = obc_manager.get_head_obc();
+      reply->has_head_cache_data = true;
+      reply->head_cached_data = object_info_cache(head_obc->ssc->oid.snap, head_obc->obs.oi.size);
     }
 
 /*    if (!(m->has_target_cache_data && m->has_head_cache_data) ||

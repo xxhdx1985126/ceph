@@ -109,8 +109,14 @@ public:
   laddr_t get_data_hint() const {
     return get_hint();
   }
-  virtual const omap_root_le_t& get_root(omap_type_t type) const {
-    return get_layout().get_root(type);
+  virtual bool need_to_retrieve_onode() const {
+    return false;
+  }
+  virtual omap_root_t get_root(omap_type_t type, laddr_t hint) const {
+    return get_layout().get_root(type).get(hint);
+  }
+  virtual omap_root_t get_root(omap_type_t type, uint64_t block_size) const {
+    return get_layout().get_root(type).get(get_metadata_hint(block_size));
   }
   virtual const hobject_t &get_hobj() const {
     return hobj;
@@ -118,11 +124,14 @@ public:
   virtual laddr_t get_object_data_base() const {
     return get_layout().object_data.get().get_reserved_data_base();
   }
-  virtual laddr_t get_omap_root_base() const {
-    return get_root(omap_type_t::OMAP).get_laddr();
+  virtual omap_root_t get_omap_root() const {
+    return get_root(omap_type_t::OMAP, 4096);
   }
-  virtual laddr_t get_xattr_root_base() const {
-    return get_root(omap_type_t::XATTR).get_laddr();
+  virtual omap_root_t get_xattr_root() const {
+    return get_root(omap_type_t::XATTR, 4096);
+  }
+  virtual omap_root_t get_log_root() const {
+    return get_root(omap_type_t::LOG, 4096);
   }
   virtual uint32_t get_size() const {
     return get_layout().size;
@@ -131,8 +140,9 @@ public:
     return onode_info_cache(
       get_hobj(),
       get_object_data_base(),
-      get_omap_root_base(),
-      get_xattr_root_base(),
+      get_omap_root(),
+      get_xattr_root(),
+      get_log_root(),
       get_size(),
       0,
       need_new_cache());
@@ -143,7 +153,20 @@ public:
 class CachedOnode : public Onode {
 public:
   CachedOnode() = default;
-  const omap_root_le_t& get_root(omap_type_t &type) const final {
+  omap_root_t get_root(omap_type_t type, uint64_t block_size) const {
+    if (type == omap_type_t::XATTR) {
+      return cached_onode_info->xattr_root;
+    } else if (type == omap_type_t::OMAP) {
+      return cached_onode_info->omap_root;
+    } else {
+      assert(type == omap_type_t::LOG);
+      return cached_onode_info->log_root;
+    }
+  }
+  bool need_to_retrieve_onode() const final {
+    return cached_onode_info->log_root.must_update()
+      || cached_onode_info->xattr_root.must_update()
+      || cached_onode_info->omap_root.must_update();
   }
   bool need_new_cache() const final {
     ceph_abort("impossible");
@@ -155,14 +178,17 @@ public:
   void update_onode_size(Transaction&, uint32_t) final {
     ceph_abort("impossible");
   }
-  void update_omap_root(Transaction&, omap_root_t&) final {
-    ceph_abort("impossible");
+  void update_omap_root(Transaction&, omap_root_t &root) final {
+    assert(root.type == omap_type_t::OMAP);
+    cached_onode_info->log_root = root;
   }
-  void update_log_root(Transaction&, omap_root_t&) final {
-    ceph_abort("impossible");
+  void update_log_root(Transaction&, omap_root_t &root) final {
+    assert(root.type == omap_type_t::LOG);
+    cached_onode_info->log_root = root;
   }
-  void update_xattr_root(Transaction&, omap_root_t&) final {
-    ceph_abort("impossible");
+  void update_xattr_root(Transaction&, omap_root_t &root) final {
+    assert(root.type == omap_type_t::XATTR);
+    cached_onode_info->log_root = root;
   }
   void update_object_data(Transaction&, object_data_t&) final {
     ceph_abort("impossible");
@@ -192,11 +218,14 @@ public:
   laddr_t get_object_data_base() const final {
     return cached_onode_info->object_data_laddr;
   }
-  laddr_t get_omap_root_base() const final {
-    return cached_onode_info->omap_root_laddr;
+  omap_root_t get_omap_root() const final {
+    return cached_onode_info->omap_root;
   }
-  laddr_t get_xattr_root_base() const final {
-    return cached_onode_info->xattr_root_laddr;
+  omap_root_t get_xattr_root() const final {
+    return cached_onode_info->xattr_root;
+  }
+  omap_root_t get_log_root() const final {
+    return cached_onode_info->log_root;
   }
   uint32_t get_size() const final {
     return cached_onode_info->size;

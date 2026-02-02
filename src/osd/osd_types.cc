@@ -7678,4 +7678,56 @@ std::ostream &operator<<(std::ostream &out, const laddr_t &laddr) {
   return out << "L0x" << std::hex << laddr.value << std::dec;
 }
 
+std::ostream& operator<<(std::ostream &out, const omap_root_t &root)
+{
+  return out << "omap_root{addr=" << root.addr
+	      << ", depth=" << root.depth
+	      << ", hint=" << root.hint
+	      << ", mutated=" << root.mutated
+	      << "}";
+}
+
+std::ostream& operator<<(std::ostream& out, const omap_type_t& t)
+{
+  switch(t) {
+  case omap_type_t::XATTR:
+    return out << "XATTR";
+  case omap_type_t::OMAP:
+    return out << "OMAP";
+  case omap_type_t::LOG:
+    return out << "LOG";
+  default:
+    return out << "INVALID_OMAP_TYPE!";
+  }
+}
+
+void omap_root_t::encode(ceph::buffer::list& bl) const {
+  ENCODE_START(1, 1, bl);
+  ceph::encode(addr, bl);
+  ceph::encode(depth, bl);
+  ceph::encode(type, bl);
+  ceph::encode(hint, bl);
+  ENCODE_FINISH(bl);
+}
+
+void omap_root_t::decode(ceph::buffer::list::const_iterator& bl) {
+  DECODE_START(1, bl);
+  ceph::decode(addr, bl);
+  ceph::decode(depth, bl);
+  ceph::decode(type, bl);
+  ceph::decode(hint, bl);
+  DECODE_FINISH(bl);
+}
+
 } // namespace crimson::os::seastore
+
+std::ostream &operator<<(std::ostream &out, const onode_info_cache &onode_cache)
+{
+  return out << "onode_info_cache("
+	     << "oid: " << onode_cache.oid
+	     << ",object_data_base: " << onode_cache.object_data_laddr
+	     << ", omap_root: " << onode_cache.omap_root
+	     << ", xattr_root: " << onode_cache.xattr_root
+	     << ", log_root: " << onode_cache.log_root
+	     << ")";
+}

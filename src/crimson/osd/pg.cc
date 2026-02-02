@@ -1220,8 +1220,12 @@ PG::submit_executer_fut PG::submit_executer(
   co_return std::make_tuple(
     std::move(submitted).then_interruptible([unlocker=std::move(unlocker)] {}),
     std::move(completed
-    ).then_interruptible([this](auto ret) {
-      pgmeta_onode = ret[pgmeta_oid.hobj];
+    ).then_interruptible([this, FNAME](auto ret) {
+      auto it = ret.find(pgmeta_oid.hobj);
+      if (it != ret.end()) {
+        pgmeta_onode = it->second;
+        DEBUGDPP("{}", *this, *pgmeta_onode);
+      }
       return ret;
     }));
 }

@@ -55,6 +55,7 @@ set(crimson_seastore_srcs
   journal/circular_bounded_journal.cc
   ../../../test/crimson/seastore/test_block.cc
   ${PROJECT_SOURCE_DIR}/src/os/Transaction.cc
+  ${PROJECT_SOURCE_DIR}/src/osd/osd_types.cc
 	)
 
 CMAKE_DEPENDENT_OPTION(WITH_ZNS "enable Linux ZNS support" OFF

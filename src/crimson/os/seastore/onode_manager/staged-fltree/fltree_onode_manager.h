@@ -122,6 +122,7 @@ struct FLTreeOnode final : Onode, Value {
 	    payload_mut, Recorder::delta_op_t::UPDATE_ONODE_SIZE);
 	}
     });
+    changed = true;
   }
 
   void update_omap_root(Transaction &t, omap_root_t &oroot) final {

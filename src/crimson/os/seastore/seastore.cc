@@ -1609,13 +1609,16 @@ bool SeaStore::Shard::can_skip_onode_search(
     case ceph::os::Transaction::OP_WRITE:
     case ceph::os::Transaction::OP_TOUCH:
     case ceph::os::Transaction::OP_ZERO:
-      return !onode_cache->object_data_laddr.is_null();
+      return !onode_cache->object_data_laddr.is_null()
+	&& (op.off + op.len <= onode_cache->size);
     case ceph::os::Transaction::OP_SETATTR:
     case ceph::os::Transaction::OP_SETATTRS:
-      return !onode_cache->xattr_root_laddr.is_null();
+      return !onode_cache->xattr_root.addr.is_null();
     case ceph::os::Transaction::OP_OMAP_SETKEYS:
+      return !onode_cache->log_root.addr.is_null() ||
+	!onode_cache->omap_root.addr.is_null();
     case ceph::os::Transaction::OP_OMAP_SETHEADER:
-      return !onode_cache->omap_root_laddr.is_null();
+      return !onode_cache->omap_root.addr.is_null();
     default:
       ceph_abort("impossible");
     }
@@ -1686,12 +1689,8 @@ SeaStore::Shard::_do_transaction_step(
     // 从 ceph::os::Transaction::iterator获取缓存信息
     auto onode_cache = ctx.ext_transaction.get_onode_cache_info(oid.hobj);
     if (onode_cache) {
-      TRACET("op {}, onode_cache oid: {}, onode_cache object_data_laddr: {},"
-	"xattr_data_laddr: {}, omap_addr_laddr: {}",
-	*ctx.transaction, (uint32_t)op->op, onode_cache->oid,
-	onode_cache->object_data_laddr,
-	onode_cache->xattr_root_laddr,
-	onode_cache->omap_root_laddr);
+      TRACET("op {}, onode_cache {}",
+	*ctx.transaction, (uint32_t)op->op, *onode_cache);
     }
     if (can_skip_onode_search(ctx, oid.hobj, onode_cache, *op)) {
       DEBUGT("op {}, got client side cache, oid={} ...",
@@ -1914,21 +1913,28 @@ SeaStore::Shard::_do_transaction_step(
       ERROR("got exception {}", e);
       return crimson::ct_error::input_output_error::make();
     }
-  }).si_then([&ctx, op, &onodes, FNAME] {
+  }).si_then([&ctx, op, &onodes, FNAME, this, &i] {
     if (op->op != Transaction::OP_REMOVE) {
       OnodeRef& onode = onodes[op->oid];
-      assert(onode);
-      // 把ceph::os::Transaction中存的缓存信息
-      // 转存到ceph::os::seastore::Transaction
-      onode_info_cache_ref onode_cache(
-	new onode_info_cache(onode->get_onode_info_cache()));
-      TRACET("op {}, oid {}, laddr {}, xattr {}, omap {}, changed {} {}",
-	*ctx.transaction, (uint32_t)op->op,
-	onode_cache->oid, onode_cache->object_data_laddr,
-	onode_cache->xattr_root_laddr, onode_cache->omap_root_laddr,
-	onode_cache->changed, (void*)onode_cache.get());
-      ctx.set_onode_cache_info(onode_cache);
+      auto fut = onode_iertr::make_ready_future<OnodeRef>(onode);
+      if (onode->need_to_retrieve_onode()) {
+	const ghobject_t& oid = i.get_oid(op->oid);
+        fut = onode_manager->get_onode(*ctx.transaction, oid);
+      }
+      return fut.si_then([&ctx, op, &onodes, FNAME](auto onode) {
+	assert(onode);
+	onodes[op->oid] = onode;
+	// 把ceph::os::Transaction中存的缓存信息
+	// 转存到ceph::os::seastore::Transaction
+	onode_info_cache_ref onode_cache(
+	  new onode_info_cache(onode->get_onode_info_cache()));
+	TRACET("op {}, {}, {}",
+	  *ctx.transaction, (uint32_t)op->op,
+	  *onode_cache, (void*)onode_cache.get());
+	ctx.set_onode_cache_info(onode_cache);
+      });
     }
+    return onode_iertr::now();
   }).handle_error_interruptible(
     tm_iertr::pass_further{},
     crimson::ct_error::enoent::handle([op] {

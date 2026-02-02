@@ -182,12 +182,14 @@ ReplicatedBackend::submit_transaction(
 			to_push_delete=std::move(to_push_delete),
 			to_push_clone=std::move(to_push_clone),
 			peers=pending_txn->second.weak_from_this()](auto ret) mutable {
+    assert(!ret.empty());
+    DEBUGDPP("{}", dpp, *ret.begin()->second);
     auto it = ret.find(hoid);
     if (it != ret.end()) {
       auto &onode_info = *it->second;
       DEBUGDPP("object {}, data {}, xattr {}, omap {}, changed {} {}",
 	dpp, hoid, onode_info.object_data_laddr,
-	onode_info.xattr_root_laddr, onode_info.omap_root_laddr,
+	onode_info.xattr_root, onode_info.omap_root,
 	onode_info.changed,
 	(void*)it->second.get());
     }
