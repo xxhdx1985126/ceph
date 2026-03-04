@@ -36,21 +36,28 @@ public:
     explicit Shard(const Shard& o) = delete;
     const Shard& operator=(const Shard& o) = delete;
 
+    using onode_infos_t = std::map<hobject_t, onode_info_cache_ref>;
     using CollectionRef = boost::intrusive_ptr<FuturizedCollection>;
     using base_errorator = crimson::errorator<crimson::ct_error::input_output_error>;
     using read_errorator = crimson::errorator<crimson::ct_error::enoent,
 					      crimson::ct_error::input_output_error>;
-    virtual read_errorator::future<ceph::bufferlist> read(
+    virtual read_errorator::future<
+      std::pair<ceph::bufferlist, onode_info_cache_ref>>
+    read(
       CollectionRef c,
       const ghobject_t& oid,
       uint64_t offset,
       size_t len,
+      onode_info_cache_ref cached_onode,
       uint32_t op_flags = 0) = 0;
 
-    virtual read_errorator::future<ceph::bufferlist> readv(
+    virtual read_errorator::future<
+      std::pair<ceph::bufferlist, onode_info_cache_ref>>
+    readv(
       CollectionRef c,
       const ghobject_t& oid,
       interval_set<uint64_t>& m,
+      onode_info_cache_ref cached_onode,
       uint32_t op_flags = 0) = 0;
 
     virtual base_errorator::future<bool> exists(
@@ -61,7 +68,9 @@ public:
     using get_attr_errorator = crimson::errorator<
       crimson::ct_error::enoent,
       crimson::ct_error::enodata>;
-    virtual get_attr_errorator::future<ceph::bufferlist> get_attr(
+    virtual get_attr_errorator::future<
+      std::pair<ceph::bufferlist, onode_info_cache_ref>>
+    get_attr(
       CollectionRef c,
       const ghobject_t& oid,
       std::string_view name,
@@ -70,19 +79,25 @@ public:
     using get_attrs_ertr = crimson::errorator<
       crimson::ct_error::enoent>;
     using attrs_t = std::map<std::string, ceph::bufferlist, std::less<>>;
-    virtual get_attrs_ertr::future<attrs_t> get_attrs(
+    virtual get_attrs_ertr::future<
+      std::pair<attrs_t, onode_info_cache_ref>>
+    get_attrs(
       CollectionRef c,
       const ghobject_t& oid,
       uint32_t op_flags = 0) = 0;
 
-    virtual seastar::future<struct stat> stat(
+    virtual seastar::future<
+      std::pair<struct stat, onode_info_cache_ref>>
+    stat(
       CollectionRef c,
       const ghobject_t& oid,
       uint32_t op_flags = 0) = 0;
 
     using omap_values_t = attrs_t;
     using omap_keys_t = std::set<std::string>;
-    virtual read_errorator::future<omap_values_t> omap_get_values(
+    virtual read_errorator::future<
+      std::pair<omap_values_t, onode_info_cache_ref>>
+    omap_get_values(
       CollectionRef c,
       const ghobject_t& oid,
       const omap_keys_t& keys,
@@ -109,7 +124,9 @@ public:
      *         omap_iter_ret_t::NEXT means omap_iterate() reaches the end of omap tree
      */
     using omap_iterate_cb_t = std::function<ObjectStore::omap_iter_ret_t(std::string_view, std::string_view)>;
-    virtual read_errorator::future<ObjectStore::omap_iter_ret_t> omap_iterate(
+    virtual read_errorator::future<
+      std::pair<ObjectStore::omap_iter_ret_t, onode_info_cache_ref>>
+    omap_iterate(
       CollectionRef c,   ///< [in] collection
       const ghobject_t &oid, ///< [in] object
       ObjectStore::omap_iter_seek_t start_from, ///< [in] where the iterator should point to at the beginning
@@ -138,8 +155,7 @@ public:
     virtual seastar::future<> set_collection_opts(CollectionRef c,
                                         const pool_opts_t& opts) = 0;
 
-    using do_transaction_bare_ret =
-      std::map<hobject_t, onode_info_cache_ref>;
+    using do_transaction_bare_ret = onode_infos_t;
   protected:
     virtual seastar::future<do_transaction_bare_ret>
     do_transaction_no_callbacks(
@@ -186,11 +202,14 @@ public:
     }
 
     using fiemap_ret_t = std::map<uint64_t, uint64_t>;
-    virtual read_errorator::future<fiemap_ret_t> fiemap(
+    virtual read_errorator::future<
+      std::pair<fiemap_ret_t, onode_info_cache_ref>>
+    fiemap(
       CollectionRef ch,
       const ghobject_t& oid,
       uint64_t off,
       uint64_t len,
+      onode_info_cache_ref cached_onode,
       uint32_t op_flags = 0) = 0;
 
     virtual unsigned get_max_attr_name_length() const = 0;

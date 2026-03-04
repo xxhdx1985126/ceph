@@ -43,7 +43,8 @@ seastar::future<epoch_t> PGMeta::get_epoch()
                                  pgid.make_pgmeta_oid(),
                                  {string{infover_key},
                                   string{epoch_key}}).safe_then(
-    [](auto&& values) {
+    [](auto &&r) {
+      auto &values = r.first;
       {
         // sanity check
         auto infover = find_value<__u8>(values, infover_key);
@@ -74,7 +75,8 @@ seastar::future<std::tuple<pg_info_t, PastIntervals>> PGMeta::load()
                                   string{info_key},
                                   string{biginfo_key},
                                   string{fastinfo_key}});
-  }).safe_then([](auto&& values) {
+  }).safe_then([](auto &&r) {
+    auto &values = r.first;
     {
       // sanity check
       auto infover = find_value<__u8>(values, infover_key);

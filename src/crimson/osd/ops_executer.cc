@@ -602,19 +602,31 @@ OpsExecuter::do_execute_op(OSDOp& osd_op)
     [[fallthrough]];
   case CEPH_OSD_OP_READ:
     return do_read_op([this, &osd_op](auto& backend, const auto& os) {
-      return backend.read(os, osd_op, delta_stats);
+      return backend.read(os, osd_op, delta_stats, onode_cache
+      ).si_then([this](auto onode) {
+	onode_cache = onode;
+      });
     });
   case CEPH_OSD_OP_SPARSE_READ:
     return do_read_op([this, &osd_op](auto& backend, const auto& os) {
-      return backend.sparse_read(os, osd_op, delta_stats);
+      return backend.sparse_read(os, osd_op, delta_stats, onode_cache
+      ).si_then([this](auto onode) {
+	onode_cache = onode;
+      });
     });
   case CEPH_OSD_OP_CHECKSUM:
-    return do_read_op([&osd_op](auto& backend, const auto& os) {
-      return backend.checksum(os, osd_op);
+    return do_read_op([this, &osd_op](auto& backend, const auto& os) {
+      return backend.checksum(os, osd_op, onode_cache
+      ).si_then([this](auto onode) {
+	onode_cache = onode;
+      });
     });
   case CEPH_OSD_OP_CMPEXT:
-    return do_read_op([&osd_op](auto& backend, const auto& os) {
-      return backend.cmp_ext(os, osd_op);
+    return do_read_op([this, &osd_op](auto& backend, const auto& os) {
+      return backend.cmp_ext(os, osd_op, onode_cache
+      ).si_then([this](auto onode) {
+	onode_cache = onode;
+      });
     });
   case CEPH_OSD_OP_GETXATTR:
     return do_read_op([this, &osd_op](auto& backend, const auto& os) {
@@ -729,21 +741,28 @@ OpsExecuter::do_execute_op(OSDOp& osd_op)
     });
   case CEPH_OSD_OP_TMAPUP:
     return do_write_op([this, &osd_op](auto& backend, auto& os, auto &txn) {
-      return backend.tmapup(os, osd_op, txn, delta_stats, *osd_op_params);
+      return backend.tmapup(
+	os, osd_op, txn, delta_stats, *osd_op_params, onode_cache);
     });
   case CEPH_OSD_OP_TMAPGET:
     return do_read_op([this, &osd_op](auto& backend, const auto& os) {
-      return backend.tmapget(os, osd_op, delta_stats);
+      return backend.tmapget(os, osd_op, delta_stats, onode_cache);
     });
 
   // OMAP
   case CEPH_OSD_OP_OMAPGETKEYS:
     return do_read_op([this, &osd_op](auto& backend, const auto& os) {
-      return backend.omap_get_keys(os, osd_op, delta_stats);
+      return backend.omap_get_keys(os, osd_op, delta_stats
+      ).si_then([this](auto onode) {
+	onode_cache = onode;
+      });
     });
   case CEPH_OSD_OP_OMAPGETVALS:
     return do_read_op([this, &osd_op](auto& backend, const auto& os) {
-      return backend.omap_get_vals(os, osd_op, delta_stats);
+      return backend.omap_get_vals(os, osd_op, delta_stats
+      ).si_then([this](auto onode) {
+	onode_cache = onode;
+      });
     });
   case CEPH_OSD_OP_OMAP_CMP:
     return  do_read_op([this, &osd_op](auto& backend, const auto& os) {
@@ -868,8 +887,9 @@ OpsExecuter::flush_changes_and_submit(
     if (auto log_rit = log_entries.rbegin(); log_rit != log_entries.rend()) {
       ceph_assert(log_rit->version == osd_op_params->at_version);
     }
-    ceph_assert(this->onode_cache != nullptr);
-    txn.set_onode_cache_info(this->onode_cache);
+    if (this->onode_cache) {
+      txn.set_onode_cache_info(this->onode_cache);
+    }
     auto [_submitted, _all_completed] = co_await pg->submit_transaction(
       std::move(obc),
       cloning_ctx ? std::move(cloning_ctx->clone_obc) : nullptr,
@@ -1200,8 +1220,10 @@ static PG::interruptible_future<hobject_t> pgls_filter(
   if (const auto xattr = filter.get_xattr(); !xattr.empty()) {
     logger().debug("pgls_filter: filter is interested in xattr={} for obj={}",
                    xattr, sobj);
-    return backend.getxattr(sobj, std::move(xattr)).safe_then_interruptible(
-      [&filter, sobj] (ceph::bufferlist val) {
+    return backend.getxattr(sobj, std::move(xattr)
+    ).safe_then_interruptible(
+      [&filter, sobj] (auto r) {
+	ceph::bufferlist &val = r.first;
         logger().debug("pgls_filter: got xvalue for obj={}", sobj);
 
         const bool filtered = filter.filter(sobj, val);

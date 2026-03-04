@@ -15,14 +15,17 @@ ECBackend::ECBackend(shard_id_t shard,
   // todo
 }
 
-ECBackend::ll_read_ierrorator::future<ceph::bufferlist>
+ECBackend::ll_read_ierrorator::future<
+  std::pair<ceph::bufferlist, onode_info_cache_ref>>
 ECBackend::_read(const hobject_t& hoid,
                  const uint64_t off,
                  const uint64_t len,
-                 const uint32_t flags)
+                 const uint32_t flags,
+		 onode_info_cache_ref &cached_onode)
 {
   // todo
-  return seastar::make_ready_future<bufferlist>();
+  return seastar::make_ready_future<
+    std::pair<bufferlist, onode_info_cache_ref>>();
 }
 
 ECBackend::rep_op_fut_t

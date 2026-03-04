@@ -85,14 +85,16 @@ public:
     ::crimson::interruptible::interruptible_errorator<
       ::crimson::osd::IOInterruptCondition,
       read_errorator>;
-  read_ierrorator::future<> read(
+  read_ierrorator::future<onode_info_cache_ref> read(
     const ObjectState& os,
     OSDOp& osd_op,
-    object_stat_sum_t& delta_stats);
-  read_ierrorator::future<> sparse_read(
+    object_stat_sum_t& delta_stats,
+    onode_info_cache_ref &cached_onode);
+  read_ierrorator::future<onode_info_cache_ref> sparse_read(
     const ObjectState& os,
     OSDOp& osd_op,
-    object_stat_sum_t& delta_stats);
+    object_stat_sum_t& delta_stats,
+    onode_info_cache_ref &cached_onode);
   using checksum_errorator = ll_read_errorator::extend<
     crimson::ct_error::object_corrupted,
     crimson::ct_error::invarg>;
@@ -100,9 +102,10 @@ public:
     ::crimson::interruptible::interruptible_errorator<
       ::crimson::osd::IOInterruptCondition,
       checksum_errorator>;
-  checksum_ierrorator::future<> checksum(
+  checksum_ierrorator::future<onode_info_cache_ref> checksum(
     const ObjectState& os,
-    OSDOp& osd_op);
+    OSDOp& osd_op,
+    onode_info_cache_ref &cached_onode);
   using cmp_ext_errorator = ll_read_errorator::extend<
     crimson::ct_error::invarg,
     crimson::ct_error::cmp_fail>;
@@ -110,9 +113,10 @@ public:
     ::crimson::interruptible::interruptible_errorator<
       ::crimson::osd::IOInterruptCondition,
       cmp_ext_errorator>;
-  cmp_ext_ierrorator::future<> cmp_ext(
+  cmp_ext_ierrorator::future<onode_info_cache_ref> cmp_ext(
     const ObjectState& os,
-    OSDOp& osd_op);
+    OSDOp& osd_op,
+    onode_info_cache_ref &cached_onode);
   using stat_errorator = crimson::errorator<crimson::ct_error::enoent>;
   using stat_ierrorator =
     ::crimson::interruptible::interruptible_errorator<
@@ -279,10 +283,14 @@ public:
     const ObjectState& os,
     OSDOp& osd_op,
     object_stat_sum_t& delta_stats) const;
-  get_attr_ierrorator::future<ceph::bufferlist> getxattr(
+  get_attr_ierrorator::future<
+    std::pair<ceph::bufferlist, onode_info_cache_ref>>
+  getxattr(
     const hobject_t& soid,
     std::string_view key) const;
-  get_attr_ierrorator::future<ceph::bufferlist> getxattr(
+  get_attr_ierrorator::future<
+    std::pair<ceph::bufferlist, onode_info_cache_ref>>
+  getxattr(
     const hobject_t& soid,
     std::string&& key) const;
   get_attr_ierrorator::future<> get_xattrs(
@@ -309,14 +317,17 @@ public:
     ObjectState& os,
     const OSDOp& osd_op,
     ceph::os::Transaction& trans);
-  interruptible_future<struct stat> stat(
+  interruptible_future<std::pair<struct stat, onode_info_cache_ref>> stat(
     CollectionRef c,
     const ghobject_t& oid) const;
-  read_errorator::future<std::map<uint64_t, uint64_t>> fiemap(
+  read_errorator::future<
+    std::pair<std::map<uint64_t, uint64_t>, onode_info_cache_ref>>
+  fiemap(
     CollectionRef c,
     const ghobject_t& oid,
     uint64_t off,
     uint64_t len,
+    onode_info_cache_ref cache_onode,
     uint32_t op_flags = 0);
 
   write_iertr::future<> tmapput(
@@ -337,15 +348,17 @@ public:
     const OSDOp& osd_op,
     ceph::os::Transaction& trans,
     object_stat_sum_t& delta_stats,
-    osd_op_params_t& osd_op_params);
+    osd_op_params_t& osd_op_params,
+    onode_info_cache_ref &cached_onode);
 
   read_ierrorator::future<> tmapget(
     const ObjectState& os,
     OSDOp& osd_op,
-    object_stat_sum_t& delta_stats);
+    object_stat_sum_t& delta_stats,
+    onode_info_cache_ref &cached_onode);
 
   // OMAP
-  ll_read_ierrorator::future<> omap_get_keys(
+  ll_read_ierrorator::future<onode_info_cache_ref> omap_get_keys(
     const ObjectState& os,
     OSDOp& osd_op,
     object_stat_sum_t& delta_stats) const;
@@ -361,7 +374,7 @@ public:
     const ObjectState& os,
     OSDOp& osd_op,
     object_stat_sum_t& delta_stats) const;
-  ll_read_ierrorator::future<> omap_get_vals(
+  ll_read_ierrorator::future<onode_info_cache_ref> omap_get_vals(
     const ObjectState& os,
     OSDOp& osd_op,
     object_stat_sum_t& delta_stats) const;
@@ -456,11 +469,13 @@ public:
     const hobject_t &oid);
 
 private:
-  virtual ll_read_ierrorator::future<ceph::bufferlist> _read(
+  virtual ll_read_ierrorator::future<
+    std::pair<ceph::bufferlist, onode_info_cache_ref>> _read(
     const hobject_t& hoid,
     size_t offset,
     size_t length,
-    uint32_t flags) = 0;
+    uint32_t flags,
+    onode_info_cache_ref &cached_onode) = 0;
   write_iertr::future<> _writefull(
     ObjectState& os,
     off_t truncate_size,

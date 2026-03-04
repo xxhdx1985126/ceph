@@ -38,13 +38,15 @@ ReplicatedBackend::ReplicatedBackend(pg_t pgid,
     })
 {}
 
-ReplicatedBackend::ll_read_ierrorator::future<ceph::bufferlist>
+ReplicatedBackend::ll_read_ierrorator::future<
+  std::pair<ceph::bufferlist, onode_info_cache_ref>>
 ReplicatedBackend::_read(const hobject_t& hoid,
                          const uint64_t off,
                          const uint64_t len,
-                         const uint32_t flags)
+                         const uint32_t flags,
+			 onode_info_cache_ref &cached_onode)
 {
-  return store->read(coll, ghobject_t{hoid}, off, len, flags);
+  return store->read(coll, ghobject_t{hoid}, off, len, cached_onode, flags);
 }
 
 MURef<MOSDRepOp> ReplicatedBackend::new_repop_msg(

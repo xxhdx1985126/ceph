@@ -45,6 +45,7 @@ struct object_info_cache {
   omap_root_t xattr_root;
   uint32_t extent_len;
   uint64_t version;
+  bool onode_info_valid = false;
 
 
   object_info_cache() : snap(0), size(0) {}
@@ -67,6 +68,7 @@ struct object_info_cache {
     ceph::encode(xattr_root, bl);
     ceph::encode(extent_len, bl);
     ceph::encode(version, bl);
+    ceph::encode(onode_info_valid, bl);
     ENCODE_FINISH(bl);
   }
   void decode(ceph::buffer::list::const_iterator& bl) {
@@ -78,6 +80,7 @@ struct object_info_cache {
     ceph::decode(xattr_root, bl);
     ceph::decode(extent_len, bl);
     ceph::decode(version, bl);
+    ceph::decode(onode_info_valid, bl);
     DECODE_FINISH(bl);
   }
   // inline void encode(const object_info_cache& obj, ceph::buffer::list& bl) {

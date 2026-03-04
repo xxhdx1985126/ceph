@@ -189,13 +189,15 @@ ScrubScan::ifut<> ScrubScan::scan_object(
     pg.shard_services.get_store().stat(
       pg.get_collection_ref(),
       obj)
-  ).then_interruptible([FNAME, &pg, &obj, &entry](struct stat obj_stat) {
+  ).then_interruptible([FNAME, &pg, &obj, &entry](auto r) {
+    struct stat &obj_stat = r.first;
     DEBUGDPP("obj: {}, stat complete, size {}", pg, obj, obj_stat.st_size);
     entry.size = obj_stat.st_size;
     return pg.shard_services.get_store().get_attrs(
       pg.get_collection_ref(),
       obj);
-  }).safe_then_interruptible([FNAME, &pg, &obj, &entry](auto &&attrs) {
+  }).safe_then_interruptible([FNAME, &pg, &obj, &entry](auto &&r) {
+    auto &attrs = r.first;
     DEBUGDPP("obj: {}, got {} attrs", pg, obj, attrs.size());
     for (auto &i : attrs) {
       i.second.rebuild();
@@ -248,8 +250,10 @@ ScrubScan::ifut<> ScrubScan::deep_scan_object(
         pg.get_collection_ref(),
         obj,
         *(progress.offset),
-        stride
-      ).safe_then([this, FNAME, stride, &obj, &progress, &entry, &pg](auto bl) {
+        stride,
+	{}
+      ).safe_then([this, FNAME, stride, &obj, &progress, &entry, &pg](auto r) {
+	auto &bl = r.first;
         size_t offset = *progress.offset;
         DEBUGDPP("op: {}, obj: {}, progress: {} got offset {}",
                   pg, *this, obj, progress, offset);
@@ -324,7 +328,8 @@ ScrubScan::ifut<> ScrubScan::deep_scan_object(
         obj,
         start_from,
         callback
-      ).safe_then([FNAME, this, &obj, &progress, &entry, &pg](auto result) {
+      ).safe_then([FNAME, this, &obj, &progress, &entry, &pg](auto r) {
+	auto &result = r.first;
         assert(result == ObjectStore::omap_iter_ret_t::NEXT);
         DEBUGDPP("op: {}, obj: {}, progress: {} omap done",
                   pg, *this, obj, progress);

@@ -282,12 +282,14 @@ CyanStore::Shard::set_collection_opts(CollectionRef ch,
   return seastar::now();
 }
 
-CyanStore::Shard::read_errorator::future<ceph::bufferlist>
+CyanStore::Shard::read_errorator::future<
+  std::pair<ceph::bufferlist, onode_info_cache_ref>>
 CyanStore::Shard::read(
   CollectionRef ch,
   const ghobject_t& oid,
   uint64_t offset,
   size_t len,
+  onode_info_cache_ref cached_onode,
   uint32_t op_flags)
 {
   auto c = static_cast<Collection*>(ch.get());
@@ -301,37 +303,45 @@ CyanStore::Shard::read(
     return crimson::ct_error::enoent::make();
   }
   if (offset >= o->get_size())
-    return read_errorator::make_ready_future<ceph::bufferlist>();
+    return read_errorator::make_ready_future<
+      std::pair<ceph::bufferlist, onode_info_cache_ref>>();
   size_t l = len;
   if (l == 0 && offset == 0)  // note: len == 0 means read the entire object
     l = o->get_size();
   else if (offset + l > o->get_size())
     l = o->get_size() - offset;
-  return read_errorator::make_ready_future<ceph::bufferlist>(o->read(offset, l));
+  return read_errorator::make_ready_future<
+    std::pair<ceph::bufferlist, onode_info_cache_ref>>(
+      o->read(offset, l), onode_info_cache_ref{});
 }
 
-CyanStore::Shard::read_errorator::future<ceph::bufferlist>
+CyanStore::Shard::read_errorator::future<
+  std::pair<ceph::bufferlist, onode_info_cache_ref>>
 CyanStore::Shard::readv(
   CollectionRef ch,
   const ghobject_t& oid,
   interval_set<uint64_t>& m,
+  onode_info_cache_ref cached_onode,
   uint32_t op_flags)
 {
   return seastar::do_with(ceph::bufferlist{},
     [this, ch, oid, &m, op_flags](auto& bl) {
     return crimson::do_for_each(m,
       [this, ch, oid, op_flags, &bl](auto& p) {
-      return read(ch, oid, p.first, p.second, op_flags)
+      return read(ch, oid, p.first, p.second, {}, op_flags)
       .safe_then([&bl](auto ret) {
-	bl.claim_append(ret);
+	bl.claim_append(ret.first);
       });
     }).safe_then([&bl] {
-      return read_errorator::make_ready_future<ceph::bufferlist>(std::move(bl));
+      return read_errorator::make_ready_future<
+	std::pair<ceph::bufferlist, onode_info_cache_ref>>(
+	  std::move(bl), onode_info_cache_ref{});
     });
   });
 }
 
-CyanStore::Shard::get_attr_errorator::future<ceph::bufferlist>
+CyanStore::Shard::get_attr_errorator::future<
+  std::pair<ceph::bufferlist, onode_info_cache_ref>>
 CyanStore::Shard::get_attr(
   CollectionRef ch,
   const ghobject_t& oid,
@@ -346,13 +356,16 @@ CyanStore::Shard::get_attr(
     return crimson::ct_error::enoent::make();
   }
   if (auto found = o->xattr.find(name); found != o->xattr.end()) {
-    return get_attr_errorator::make_ready_future<ceph::bufferlist>(found->second);
+    return get_attr_errorator::make_ready_future<
+      std::pair<ceph::bufferlist, onode_info_cache_ref>>(
+	found->second, onode_info_cache_ref{});
   } else {
     return crimson::ct_error::enodata::make();
   }
 }
 
-CyanStore::Shard::get_attrs_ertr::future<CyanStore::Shard::attrs_t>
+CyanStore::Shard::get_attrs_ertr::future<
+  std::pair<CyanStore::Shard::attrs_t, onode_info_cache_ref>>
 CyanStore::Shard::get_attrs(
   CollectionRef ch,
   const ghobject_t& oid,
@@ -365,7 +378,9 @@ CyanStore::Shard::get_attrs(
   if (!o) {
     return crimson::ct_error::enoent::make();
   }
-  return get_attrs_ertr::make_ready_future<attrs_t>(o->xattr);
+  return get_attrs_ertr::make_ready_future<
+    std::pair<attrs_t, onode_info_cache_ref>>(
+      o->xattr, onode_info_cache_ref{});
 }
 
 auto CyanStore::Shard::omap_get_values(
@@ -373,7 +388,7 @@ auto CyanStore::Shard::omap_get_values(
   const ghobject_t& oid,
   const omap_keys_t& keys,
   uint32_t op_flags)
-  -> read_errorator::future<omap_values_t>
+  -> read_errorator::future<std::pair<omap_values_t, onode_info_cache_ref>>
 {
   auto c = static_cast<Collection*>(ch.get());
   logger().debug("{} {} {}", __func__, c->get_cid(), oid);
@@ -387,7 +402,9 @@ auto CyanStore::Shard::omap_get_values(
       values.insert(*found);
     }
   }
-  return seastar::make_ready_future<omap_values_t>(std::move(values));
+  return seastar::make_ready_future<
+    std::pair<omap_values_t, onode_info_cache_ref>>(
+      std::move(values), onode_info_cache_ref{});
 }
 
 auto CyanStore::Shard::omap_iterate(
@@ -396,7 +413,8 @@ auto CyanStore::Shard::omap_iterate(
   ObjectStore::omap_iter_seek_t start_from,
   omap_iterate_cb_t callback,
   uint32_t op_flags)
-  -> CyanStore::Shard::read_errorator::future<ObjectStore::omap_iter_ret_t>
+  -> CyanStore::Shard::read_errorator::future<
+      std::pair<ObjectStore::omap_iter_ret_t, onode_info_cache_ref>>
 {
   auto c = static_cast<Collection*>(ch.get());
   logger().debug("{} {} {}", __func__, c->get_cid(), oid);
@@ -415,7 +433,9 @@ auto CyanStore::Shard::omap_iterate(
     if (ret == ObjectStore::omap_iter_ret_t::STOP)
       break;
   }
-  return read_errorator::make_ready_future<ObjectStore::omap_iter_ret_t>(ret);
+  return read_errorator::make_ready_future<
+    std::pair<ObjectStore::omap_iter_ret_t, onode_info_cache_ref>>(
+      ret, onode_info_cache_ref{});
 }
 auto CyanStore::Shard::omap_get_header(
   CollectionRef ch,
@@ -984,12 +1004,14 @@ unsigned CyanStore::Shard::get_max_attr_name_length() const
   return 256;
 }
 
-CyanStore::Shard::read_errorator::future<std::map<uint64_t, uint64_t>>
+CyanStore::Shard::read_errorator::future<
+  std::pair<std::map<uint64_t, uint64_t>, onode_info_cache_ref>>
 CyanStore::Shard::fiemap(
   CollectionRef ch,
   const ghobject_t& oid,
   uint64_t off,
   uint64_t len,
+  onode_info_cache_ref cached_onode,
   uint32_t op_flags)
 {
   auto c = static_cast<Collection*>(ch.get());
@@ -999,10 +1021,12 @@ CyanStore::Shard::fiemap(
     throw std::runtime_error(fmt::format("object does not exist: {}", oid));
   }
   std::map<uint64_t, uint64_t> m{{0, o->get_size()}};
-  return seastar::make_ready_future<std::map<uint64_t, uint64_t>>(std::move(m));
+  return seastar::make_ready_future<
+    std::pair<std::map<uint64_t, uint64_t>, onode_info_cache_ref>>(
+      std::move(m), onode_info_cache_ref());
 }
 
-seastar::future<struct stat>
+seastar::future<std::pair<struct stat, onode_info_cache_ref>>
 CyanStore::Shard::stat(
   CollectionRef ch,
   const ghobject_t& oid,
@@ -1015,7 +1039,9 @@ CyanStore::Shard::stat(
   }
   struct stat st;
   st.st_size = o->get_size();
-  return seastar::make_ready_future<struct stat>(std::move(st));
+  return seastar::make_ready_future<
+    std::pair<struct stat, onode_info_cache_ref>>(
+      std::move(st), onode_info_cache_ref{});
 }
 
 }

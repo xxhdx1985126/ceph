@@ -1125,12 +1125,14 @@ SeaStore::Shard::_read(
   });
 }
 
-SeaStore::Shard::read_errorator::future<ceph::bufferlist>
+SeaStore::Shard::read_errorator::future<
+  std::pair<ceph::bufferlist, onode_info_cache_ref>>
 SeaStore::Shard::read(
   CollectionRef ch,
   const ghobject_t& oid,
   uint64_t offset,
   size_t len,
+  onode_info_cache_ref cached_onode,
   uint32_t op_flags)
 {
   ++(shard_stats.read_num);
@@ -1143,6 +1145,7 @@ SeaStore::Shard::read(
     "read",
     op_type_t::READ,
     op_flags,
+    cached_onode,
     [this, offset, len, op_flags](auto &t, auto &onode) {
     return _read(t, onode, offset, len, op_flags);
   }).finally([this] {
@@ -1168,26 +1171,33 @@ SeaStore::Shard::exists(
     "exists",
     op_type_t::READ,
     op_flags,
+    {},
     [FNAME](auto& t, auto&) {
     DEBUGT("exists", t);
-    return seastar::make_ready_future<bool>(true);
+    return base_iertr::make_ready_future<bool>(true);
   }).handle_error(
     crimson::ct_error::enoent::handle([FNAME] {
       DEBUG("not exists");
-      return seastar::make_ready_future<bool>(false);
+      return base_iertr::make_ready_future<
+	std::pair<bool, onode_info_cache_ref>>(
+	  false, onode_info_cache_ref{});
     }),
     crimson::ct_error::assert_all{"unexpected error"}
-  ).finally([this] {
+  ).safe_then([](auto &&r) {
+    return r.first;
+  }).finally([this] {
     assert(shard_stats.pending_read_num);
     --(shard_stats.pending_read_num);
   });
 }
 
-SeaStore::Shard::read_errorator::future<ceph::bufferlist>
+SeaStore::Shard::read_errorator::future<
+  std::pair<ceph::bufferlist, onode_info_cache_ref>>
 SeaStore::Shard::readv(
   CollectionRef ch,
   const ghobject_t& _oid,
   interval_set<uint64_t>& m,
+  onode_info_cache_ref cached_onode,
   uint32_t op_flags)
 {
   LOG_PREFIX(SeaStoreS::readv);
@@ -1196,20 +1206,22 @@ SeaStore::Shard::readv(
 
   return seastar::do_with(
     _oid,
-    ceph::bufferlist{},
-    [ch, op_flags, this, FNAME, &m](auto &oid, auto &ret) {
+    std::pair<ceph::bufferlist, onode_info_cache_ref>{},
+    [ch, op_flags, this, cached_onode, FNAME, &m](auto &oid, auto &ret) {
     return crimson::do_for_each(
       m,
-      [ch, op_flags, this, &oid, &ret](auto &p) {
+      [ch, op_flags, this, &oid, cached_onode, &ret](auto &p) {
       return read(
-	ch, oid, p.first, p.second, op_flags
-	).safe_then([&ret](auto bl) {
-        ret.claim_append(bl);
+	ch, oid, p.first, p.second, cached_onode, op_flags
+	).safe_then([&ret](auto r) {
+        ret.first.claim_append(r.first);
+	ret.second = r.second;
       });
     }).safe_then([&ret, FNAME] {
-      DEBUG("got bl length=0x{:x}", ret.length());
-      return read_errorator::make_ready_future<ceph::bufferlist>
-        (std::move(ret));
+      DEBUG("got bl length=0x{:x}", ret.first.length());
+      return read_errorator::make_ready_future<
+	std::pair<ceph::bufferlist, onode_info_cache_ref>>
+	  (std::move(ret));
     });
   });
 }
@@ -1223,7 +1235,8 @@ SeaStore::Shard::_get_attr(
   return omaptree_get_value(t, get_omap_root(omap_type_t::XATTR, onode), name);
 }
 
-SeaStore::Shard::get_attr_errorator::future<ceph::bufferlist>
+SeaStore::Shard::get_attr_errorator::future<
+  std::pair<ceph::bufferlist, onode_info_cache_ref>>
 SeaStore::Shard::get_attr(
   CollectionRef ch,
   const ghobject_t& oid,
@@ -1240,6 +1253,7 @@ SeaStore::Shard::get_attr(
     "get_attr",
     op_type_t::GET_ATTR,
     op_flags,
+    {},
     [this, name](auto &t, auto& onode) {
     return _get_attr(t, onode, name);
   }).handle_error(
@@ -1265,7 +1279,8 @@ SeaStore::Shard::_get_attrs(
   });
 }
 
-SeaStore::Shard::get_attrs_ertr::future<SeaStore::Shard::attrs_t>
+SeaStore::Shard::get_attrs_ertr::future<
+  std::pair<SeaStore::Shard::attrs_t, onode_info_cache_ref>>
 SeaStore::Shard::get_attrs(
   CollectionRef ch,
   const ghobject_t& oid,
@@ -1281,6 +1296,7 @@ SeaStore::Shard::get_attrs(
     "get_attrs",
     op_type_t::GET_ATTRS,
     op_flags,
+    {},
     [this](auto &t, auto& onode) {
     return _get_attrs(t, onode);
   }).handle_error(
@@ -1309,7 +1325,8 @@ seastar::future<struct stat> SeaStore::Shard::_stat(
   return seastar::make_ready_future<struct stat>(st);
 }
 
-seastar::future<struct stat> SeaStore::Shard::stat(
+seastar::future<std::pair<struct stat, onode_info_cache_ref>>
+SeaStore::Shard::stat(
   CollectionRef c,
   const ghobject_t& oid,
   uint32_t op_flags)
@@ -1324,7 +1341,9 @@ seastar::future<struct stat> SeaStore::Shard::stat(
     "stat",
     op_type_t::STAT,
     op_flags,
-    [this, oid](auto &t, auto &onode) {
+    {},
+    [this, oid](auto &t, auto &onode)
+    -> base_iertr::future<struct stat> {
     return _stat(t, onode, oid);
   }).handle_error(
     crimson::ct_error::assert_all{
@@ -1342,7 +1361,10 @@ SeaStore::Shard::omap_get_header(
   const ghobject_t& oid,
   uint32_t op_flags)
 {
-  return get_attr(ch, oid, OMAP_HEADER_XATTR_KEY, op_flags);
+  return get_attr(ch, oid, OMAP_HEADER_XATTR_KEY, op_flags
+  ).safe_then([](auto r) {
+    return r.first;
+  });
 }
 
 omap_root_t SeaStore::Shard::select_log_omap_root(Onode& onode) const
@@ -1356,7 +1378,8 @@ omap_root_t SeaStore::Shard::select_log_omap_root(Onode& onode) const
   }
 }
 
-SeaStore::Shard::read_errorator::future<SeaStore::Shard::omap_values_t>
+SeaStore::Shard::read_errorator::future<
+  std::pair<SeaStore::Shard::omap_values_t, onode_info_cache_ref>>
 SeaStore::Shard::omap_get_values(
   CollectionRef ch,
   const ghobject_t &oid,
@@ -1373,6 +1396,7 @@ SeaStore::Shard::omap_get_values(
     "omap_get_values",
     op_type_t::OMAP_GET_VALUES,
     op_flags,
+    {},
     [this, keys](auto &t, auto &onode)
   {
     auto root = select_log_omap_root(onode);
@@ -1384,7 +1408,8 @@ SeaStore::Shard::omap_get_values(
   });
 }
 
-SeaStore::Shard::read_errorator::future<ObjectStore::omap_iter_ret_t>
+SeaStore::Shard::read_errorator::future<
+  std::pair<ObjectStore::omap_iter_ret_t, onode_info_cache_ref>>
 SeaStore::Shard::omap_iterate(
   CollectionRef ch,
   const ghobject_t &oid,
@@ -1405,6 +1430,7 @@ SeaStore::Shard::omap_iterate(
       "omap_iterate",
       op_type_t::OMAP_ITERATE,
       op_flags,
+      {},
       [this, &start_from, callback](auto &t, auto &onode)
     {
       auto root = select_log_omap_root(onode);
@@ -1453,12 +1479,14 @@ SeaStore::Shard::_fiemap(
   });
 }
 
-SeaStore::Shard::read_errorator::future<SeaStore::Shard::fiemap_ret_t>
+SeaStore::Shard::read_errorator::future<
+  std::pair<SeaStore::Shard::fiemap_ret_t, onode_info_cache_ref>>
 SeaStore::Shard::fiemap(
   CollectionRef ch,
   const ghobject_t& oid,
   uint64_t off,
   uint64_t len,
+  onode_info_cache_ref cached_onode,
   uint32_t op_flags)
 {
   ++(shard_stats.read_num);
@@ -1471,6 +1499,7 @@ SeaStore::Shard::fiemap(
     "fiemap",
     op_type_t::READ,
     op_flags,
+    cached_onode,
     [this, off, len](auto &t, auto &onode) {
     return _fiemap(t, onode, off, len);
   }).finally([this] {

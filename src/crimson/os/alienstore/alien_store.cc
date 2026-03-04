@@ -294,11 +294,13 @@ seastar::future<> AlienStore::set_collection_opts(CollectionRef ch,
   });
 }
 
-AlienStore::read_errorator::future<ceph::bufferlist>
+AlienStore::read_errorator::future<
+  std::pair<ceph::bufferlist, onode_info_cache_ref>>
 AlienStore::read(CollectionRef ch,
                  const ghobject_t& oid,
                  uint64_t offset,
                  size_t len,
+		 onode_info_cache_ref cached_onode,
                  uint32_t op_flags)
 {
   logger().debug("{}", __func__);
@@ -307,23 +309,27 @@ AlienStore::read(CollectionRef ch,
     return tp->submit(ch->get_cid().hash_to_shard(tp->size()), [=, this, &bl] {
       auto c = static_cast<AlienCollection*>(ch.get());
       return store->read(c->collection, oid, offset, len, bl, op_flags);
-    }).then([&bl] (int r) -> read_errorator::future<ceph::bufferlist> {
+    }).then([&bl] (int r) -> read_errorator::future<
+	std::pair<ceph::bufferlist, onode_info_cache_ref>> {
       if (r == -ENOENT) {
         return crimson::ct_error::enoent::make();
       } else if (r == -EIO) {
         return crimson::ct_error::input_output_error::make();
       } else {
-        return read_errorator::make_ready_future<ceph::bufferlist>(
-          std::move(bl));
+        return read_errorator::make_ready_future<
+	  std::pair<ceph::bufferlist, onode_info_cache_ref>>(
+	    std::move(bl), onode_info_cache_ref{});
       }
     });
   });
 }
 
-AlienStore::read_errorator::future<ceph::bufferlist>
+AlienStore::read_errorator::future<
+  std::pair<ceph::bufferlist, onode_info_cache_ref>>
 AlienStore::readv(CollectionRef ch,
 		  const ghobject_t& oid,
 		  interval_set<uint64_t>& m,
+		  onode_info_cache_ref cached_onode,
 		  uint32_t op_flags)
 {
   logger().debug("{}", __func__);
@@ -334,20 +340,23 @@ AlienStore::readv(CollectionRef ch,
       [this, ch, oid, &m, op_flags, &bl] {
       auto c = static_cast<AlienCollection*>(ch.get());
       return store->readv(c->collection, oid, m, bl, op_flags);
-    }).then([&bl](int r) -> read_errorator::future<ceph::bufferlist> {
+    }).then([&bl](int r) -> read_errorator::future<
+	std::pair<ceph::bufferlist, onode_info_cache_ref>> {
       if (r == -ENOENT) {
         return crimson::ct_error::enoent::make();
       } else if (r == -EIO) {
         return crimson::ct_error::input_output_error::make();
       } else {
-        return read_errorator::make_ready_future<ceph::bufferlist>(
-	  std::move(bl));
+        return read_errorator::make_ready_future<
+	  std::pair<ceph::bufferlist, onode_info_cache_ref>>(
+	    std::move(bl), onode_info_cache_ref{});
       }
     });
   });
 }
 
-AlienStore::get_attr_errorator::future<ceph::bufferlist>
+AlienStore::get_attr_errorator::future<
+  std::pair<ceph::bufferlist, onode_info_cache_ref>>
 AlienStore::get_attr(CollectionRef ch,
                      const ghobject_t& oid,
                      std::string_view name,
@@ -364,20 +373,23 @@ AlienStore::get_attr(CollectionRef ch,
       // after-free issue.
       auto c = static_cast<AlienCollection*>(ch.get());
       return store->getattr(c->collection, oid, name.c_str(), value);
-    }).then([oid, &value](int r) -> get_attr_errorator::future<ceph::bufferlist> {
+    }).then([oid, &value](int r) -> get_attr_errorator::future<
+	std::pair<ceph::bufferlist, onode_info_cache_ref>> {
       if (r == -ENOENT) {
         return crimson::ct_error::enoent::make();
       } else if (r == -ENODATA) {
         return crimson::ct_error::enodata::make();
       } else {
-        return get_attr_errorator::make_ready_future<ceph::bufferlist>(
-          std::move(value));
+        return get_attr_errorator::make_ready_future<
+	  std::pair<ceph::bufferlist, onode_info_cache_ref>>(
+	    std::move(value), onode_info_cache_ref{});
       }
     });
   });
 }
 
-AlienStore::get_attrs_ertr::future<AlienStore::attrs_t>
+AlienStore::get_attrs_ertr::future<
+  std::pair<AlienStore::attrs_t, onode_info_cache_ref>>
 AlienStore::get_attrs(CollectionRef ch,
                       const ghobject_t& oid,
 		      uint32_t op_flags)
@@ -389,11 +401,14 @@ AlienStore::get_attrs(CollectionRef ch,
       auto c = static_cast<AlienCollection*>(ch.get());
       const auto r = store->getattrs(c->collection, oid, aset);
       return r;
-    }).then([&aset] (int r) -> get_attrs_ertr::future<attrs_t> {
+    }).then([&aset] (int r) -> get_attrs_ertr::future<
+	std::pair<AlienStore::attrs_t, onode_info_cache_ref>> {
       if (r == -ENOENT) {
         return crimson::ct_error::enoent::make();
       } else {
-        return get_attrs_ertr::make_ready_future<attrs_t>(std::move(aset));
+        return get_attrs_ertr::make_ready_future<
+	  std::pair<attrs_t, onode_info_cache_ref>>(
+	    std::move(aset), onode_info_cache_ref{});
       }
     });
   });
@@ -403,7 +418,7 @@ auto AlienStore::omap_get_values(CollectionRef ch,
                                  const ghobject_t& oid,
                                  const set<string>& keys,
 				 uint32_t op_flags)
-  -> read_errorator::future<omap_values_t>
+  -> read_errorator::future<std::pair<omap_values_t, onode_info_cache_ref>>
 {
   logger().debug("{}", __func__);
   assert(tp);
@@ -412,19 +427,22 @@ auto AlienStore::omap_get_values(CollectionRef ch,
       auto c = static_cast<AlienCollection*>(ch.get());
       return store->omap_get_values(c->collection, oid, keys,
 		                    reinterpret_cast<map<string, bufferlist>*>(&values));
-    }).then([&values] (int r) -> read_errorator::future<omap_values_t> {
+    }).then([&values] (int r) -> read_errorator::future<
+	std::pair<omap_values_t, onode_info_cache_ref>> {
       if (r == -ENOENT) {
         return crimson::ct_error::enoent::make();
       } else {
         assert(r == 0);
-        return read_errorator::make_ready_future<omap_values_t>(
-	  std::move(values));
+        return read_errorator::make_ready_future<
+	  std::pair<omap_values_t, onode_info_cache_ref>>(
+	    std::move(values), onode_info_cache_ref{});
       }
     });
   });
 }
 
-AlienStore::read_errorator::future<ObjectStore::omap_iter_ret_t>
+AlienStore::read_errorator::future<
+  std::pair<ObjectStore::omap_iter_ret_t, onode_info_cache_ref>>
 AlienStore::omap_iterate(CollectionRef ch,
                          const ghobject_t &oid,
                          ObjectStore::omap_iter_seek_t start_from,
@@ -439,14 +457,18 @@ AlienStore::omap_iterate(CollectionRef ch,
       return store->omap_iterate(
         c->collection, oid, start_from, callback);
     }).then([] (int r)
-      -> read_errorator::future<ObjectStore::omap_iter_ret_t> {
+      -> read_errorator::future<std::pair<ObjectStore::omap_iter_ret_t, onode_info_cache_ref>> {
       if (r == -ENOENT) {
         return crimson::ct_error::enoent::make();
       } else {
         if (r == 1) {
-          return read_errorator::make_ready_future<ObjectStore::omap_iter_ret_t>(ObjectStore::omap_iter_ret_t::STOP);
+          return read_errorator::make_ready_future<
+	    std::pair<ObjectStore::omap_iter_ret_t, onode_info_cache_ref>>(
+	      ObjectStore::omap_iter_ret_t::STOP, onode_info_cache_ref{});
         } else {
-          return read_errorator::make_ready_future<ObjectStore::omap_iter_ret_t>(ObjectStore::omap_iter_ret_t::NEXT);
+          return read_errorator::make_ready_future<
+	    std::pair<ObjectStore::omap_iter_ret_t, onode_info_cache_ref>>(
+	      ObjectStore::omap_iter_ret_t::NEXT, onode_info_cache_ref{});
         }
       }
     });
@@ -586,7 +608,8 @@ unsigned AlienStore::get_max_attr_name_length() const
   return 256;
 }
 
-seastar::future<struct stat> AlienStore::stat(
+seastar::future<std::pair<struct stat, onode_info_cache_ref>>
+AlienStore::stat(
   CollectionRef ch,
   const ghobject_t& oid,
   uint32_t op_flags)
@@ -596,7 +619,7 @@ seastar::future<struct stat> AlienStore::stat(
     return tp->submit(ch->get_cid().hash_to_shard(tp->size()), [this, ch, oid, &st] {
       auto c = static_cast<AlienCollection*>(ch.get());
       store->stat(c->collection, oid, &st);
-      return st;
+      return std::make_pair(st, onode_info_cache_ref{});
     });
   });
 }
@@ -638,11 +661,14 @@ auto AlienStore::omap_get_header(CollectionRef ch,
   });
 }
 
-AlienStore::read_errorator::future<std::map<uint64_t, uint64_t>> AlienStore::fiemap(
+AlienStore::read_errorator::future<
+  std::pair<std::map<uint64_t, uint64_t>, onode_info_cache_ref>>
+AlienStore::fiemap(
   CollectionRef ch,
   const ghobject_t& oid,
   uint64_t off,
   uint64_t len,
+  onode_info_cache_ref cached_onode,
   uint32_t op_flags)
 {
   assert(tp);
@@ -651,12 +677,14 @@ AlienStore::read_errorator::future<std::map<uint64_t, uint64_t>> AlienStore::fie
       auto c = static_cast<AlienCollection*>(ch.get());
       return store->fiemap(c->collection, oid, off, len, destmap);
     }).then([&destmap](int r)
-      -> read_errorator::future<std::map<uint64_t, uint64_t>> {
+      -> read_errorator::future<
+	std::pair<std::map<uint64_t, uint64_t>, onode_info_cache_ref>> {
       if (r == -ENOENT) {
         return crimson::ct_error::enoent::make();
       } else {
-        return read_errorator::make_ready_future<std::map<uint64_t, uint64_t>>(
-          std::move(destmap));
+        return read_errorator::make_ready_future<
+	  std::pair<std::map<uint64_t, uint64_t>, onode_info_cache_ref>>(
+	    std::move(destmap), onode_info_cache_ref{});
       }
     });
   });

@@ -580,15 +580,17 @@ ClientRequest::do_process(
 
   OpsExecuter ox(pg, obc, op_info, *m, get_remote_connection(), snapc);
   // 在这里解析m里面的onode相关的数据，存到OpsExecuter里面
-  ox.onode_cache = new onode_info_cache(
-    m->get_hobj(),
-    m->target_cached_data.object_data_laddr,
-    m->target_cached_data.omap_root,
-    m->target_cached_data.xattr_root,
-    omap_root_t{},
-    m->target_cached_data.extent_len,
-    0,
-    false);
+  if (m->target_cached_data.onode_info_valid) {
+    ox.onode_cache = new onode_info_cache(
+      m->get_hobj(),
+      m->target_cached_data.object_data_laddr,
+      m->target_cached_data.omap_root,
+      m->target_cached_data.xattr_root,
+      omap_root_t{},
+      m->target_cached_data.extent_len,
+      0,
+      false);
+  }
   DEBUGDPP("{} object_data: {}, xattr_root: {}, omap_root {}",
     *pg, *this,
     m->target_cached_data.object_data_laddr,
@@ -623,6 +625,9 @@ ClientRequest::do_process(
 
   size_t inb = 0, outb = 0;
   std::map<hobject_t, onode_info_cache_ref> onode_cache;
+  if (ox.onode_cache) {
+    onode_cache.emplace(ox.onode_cache->oid, ox.onode_cache);
+  }
   {
     if (ret) {
       auto all_completed = interruptor::now();
@@ -734,6 +739,7 @@ ClientRequest::do_process(
       cachedata_target.object_data_laddr = onode_info.object_data_laddr;
       cachedata_target.omap_root = onode_info.omap_root;
       cachedata_target.xattr_root = onode_info.xattr_root;
+      cachedata_target.onode_info_valid = true;
       reply->has_target_cache_data = true;
       reply->target_cached_data = cachedata_target;
     } else if (!m->has_target_cache_data) {

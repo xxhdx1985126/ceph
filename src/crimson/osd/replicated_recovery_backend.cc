@@ -612,9 +612,13 @@ ReplicatedRecoveryBackend::read_metadata_for_push_op(
 	crimson::os::FuturizedStore::Shard::get_attrs_ertr::all_same_way(
 	  [FNAME, this, oid] (const std::error_code& e) {
 	  DEBUGDPP("error {} when getting attrs: {}", pg, e, oid);
-	  return seastar::make_ready_future<crimson::os::FuturizedStore::Shard::attrs_t>();
+	  return seastar::make_ready_future<
+            std::pair<crimson::os::FuturizedStore::Shard::attrs_t,
+                      onode_info_cache_ref>>();
 	}))
-  )).then_unpack_interruptible([FNAME, this, &new_progress, push_op](auto bl, auto attrs) {
+  )).then_unpack_interruptible([FNAME, this, &new_progress, push_op]
+    (auto bl, auto r) {
+    auto &attrs = r.first;
     if (bl.length() == 0) {
       WARNDPP("fail to read omap header", pg);
     } else if (attrs.empty()) {
@@ -653,9 +657,10 @@ ReplicatedRecoveryBackend::read_object_for_push_op(
       ghobject_t{oid},
       0,
       copy_subset.range_end(),
+      {},
       CEPH_OSD_OP_FLAG_FADVISE_DONTNEED)
-  ).safe_then_interruptible(
-    [=, this](auto&& fiemap_included) mutable {
+  ).safe_then_interruptible([=, this](auto&& r) mutable {
+    auto &fiemap_included = r.first;
     interval_set<uint64_t> extents;
     try {
       extents.intersection_of(copy_subset, std::move(fiemap_included));
@@ -675,8 +680,10 @@ ReplicatedRecoveryBackend::read_object_for_push_op(
         coll,
         ghobject_t{oid},
         push_op->data_included,
+        {},
         CEPH_OSD_OP_FLAG_FADVISE_DONTNEED));
-  }).safe_then_interruptible([push_op, range_end=copy_subset.range_end()](auto &&bl) {
+  }).safe_then_interruptible([push_op, range_end=copy_subset.range_end()](auto &&r) {
+    auto &bl = r.first;
     push_op->data.claim_append(std::move(bl));
     uint64_t recovered_to = 0;
     if (push_op->data_included.empty()) {
@@ -744,7 +751,8 @@ ReplicatedRecoveryBackend::read_omap_for_push_op(
   co_await interruptor::make_interruptible(
     shard_services.get_store().omap_iterate(
       coll, ghobject_t{oid}, start_from, callback
-    ).safe_then([&new_progress](auto ret) {
+    ).safe_then([&new_progress](auto r) {
+      auto &ret = r.first;
       if (ret == ObjectStore::omap_iter_ret_t::NEXT) {
         new_progress.omap_complete = true;
       } else {
@@ -787,7 +795,8 @@ ReplicatedRecoveryBackend::handle_pull(Ref<MOSDPGPull> m)
       const hobject_t& soid = pull_op.soid;
       DEBUGDPP("{}", pg, soid);
       return backend->stat(coll, ghobject_t(soid)).then_interruptible(
-        [this, &pull_op](auto st) {
+        [this, &pull_op](auto r) {
+        auto &st = r.first;
         ObjectRecoveryInfo &recovery_info = pull_op.recovery_info;
         ObjectRecoveryProgress &progress = pull_op.recovery_progress;
         if (progress.first && recovery_info.size == ((uint64_t) -1)) {
@@ -1213,8 +1222,9 @@ ReplicatedRecoveryBackend::prep_push_target(
   }
 
   // clone overlap content in local object if using a new object
-  auto st = co_await interruptor::make_interruptible(
+  auto r = co_await interruptor::make_interruptible(
     store->stat(coll, ghobject_t(recovery_info.soid)));
+  auto &st = r.first;
 
   // TODO: pg num bytes counting
   uint64_t local_size = std::min(recovery_info.size, (uint64_t)st.st_size);

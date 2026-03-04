@@ -25,8 +25,10 @@ public:
   }
   void on_actingset_changed(bool same_primary) final {}
 private:
-  ll_read_ierrorator::future<ceph::bufferlist>
-  _read(const hobject_t& hoid, uint64_t off, uint64_t len, uint32_t flags) override;
+  ll_read_ierrorator::future<
+    std::pair<ceph::bufferlist, onode_info_cache_ref>>
+  _read(const hobject_t& hoid, uint64_t off, uint64_t len, uint32_t flags,
+	onode_info_cache_ref &cached_onode) override;
   rep_op_fut_t
   submit_transaction(const std::set<pg_shard_t> &pg_shards,
 		     const hobject_t& hoid,

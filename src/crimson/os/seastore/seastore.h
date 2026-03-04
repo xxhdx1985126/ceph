@@ -97,22 +97,29 @@ public:
       bool is_test);
     ~Shard() = default;
 
-    seastar::future<struct stat> stat(
+    seastar::future<std::pair<struct stat, onode_info_cache_ref>>
+    stat(
       CollectionRef c,
       const ghobject_t& oid,
       uint32_t op_flags = 0) final;
 
-    read_errorator::future<ceph::bufferlist> read(
+    read_errorator::future<
+      std::pair<ceph::bufferlist, onode_info_cache_ref>>
+    read(
       CollectionRef c,
       const ghobject_t& oid,
       uint64_t offset,
       size_t len,
+      onode_info_cache_ref cached_onode,
       uint32_t op_flags = 0) final;
 
-    read_errorator::future<ceph::bufferlist> readv(
+    read_errorator::future<
+      std::pair<ceph::bufferlist, onode_info_cache_ref>>
+    readv(
       CollectionRef c,
       const ghobject_t& oid,
       interval_set<uint64_t>& m,
+      onode_info_cache_ref cached_onode,
       uint32_t op_flags = 0) final;
 
     base_errorator::future<bool> exists(
@@ -120,24 +127,30 @@ public:
       const ghobject_t& oid,
       uint32_t op_flags = 0) final;
 
-    get_attr_errorator::future<ceph::bufferlist> get_attr(
+    get_attr_errorator::future<
+      std::pair<ceph::bufferlist, onode_info_cache_ref>>
+    get_attr(
       CollectionRef c,
       const ghobject_t& oid,
       std::string_view name,
       uint32_t op_flags = 0) const final;
 
-    get_attrs_ertr::future<attrs_t> get_attrs(
+    get_attrs_ertr::future<std::pair<attrs_t, onode_info_cache_ref>> get_attrs(
       CollectionRef c,
       const ghobject_t& oid,
       uint32_t op_flags = 0) final;
 
-    read_errorator::future<omap_values_t> omap_get_values(
+    read_errorator::future<
+      std::pair<omap_values_t, onode_info_cache_ref>>
+    omap_get_values(
       CollectionRef c,
       const ghobject_t& oid,
       const omap_keys_t& keys,
       uint32_t op_flags = 0) final;
 
-    read_errorator::future<ObjectStore::omap_iter_ret_t> omap_iterate(
+    read_errorator::future<
+      std::pair<ObjectStore::omap_iter_ret_t, onode_info_cache_ref>>
+    omap_iterate(
       CollectionRef c,
       const ghobject_t &oid,
       ObjectStore::omap_iter_seek_t start_from,
@@ -171,11 +184,14 @@ public:
      * stages and locks as do_transaction. */
     seastar::future<> flush(CollectionRef ch) final;
 
-    read_errorator::future<fiemap_ret_t> fiemap(
+    read_errorator::future<
+      std::pair<SeaStore::Shard::fiemap_ret_t, onode_info_cache_ref>>
+    fiemap(
       CollectionRef ch,
       const ghobject_t& oid,
       uint64_t off,
       uint64_t len,
+      onode_info_cache_ref cached_onode,
       uint32_t op_flags = 0) final;
 
     unsigned get_max_attr_name_length() const final {
@@ -321,14 +337,16 @@ public:
       const char* tname,
       op_type_t op_type,
       cache_hint_t cache_hint_flags,
+      onode_info_cache_ref cached_onode,
       F &&f) const {
       auto begin_time = std::chrono::steady_clock::now();
       return seastar::do_with(
-        oid, Ret{}, std::forward<F>(f),
-        [this, ch, src, op_type, begin_time, tname, cache_hint_flags
-        ](auto &oid, auto &ret, auto &f)
+        oid, std::pair<Ret, onode_info_cache_ref>{}, std::forward<F>(f),
+        [this, ch, src, op_type, begin_time, tname, cache_hint_flags,
+        cached_onode](auto &oid, auto &ret, auto &f)
       {
-        return repeat_eagain([&, this, ch, src, tname, cache_hint_flags] {
+        return repeat_eagain([&, this, ch, src, tname,
+			      cache_hint_flags, cached_onode] {
           assert(src == Transaction::src_t::READ);
           ++(shard_stats.repeat_read_num);
 
@@ -336,24 +354,38 @@ public:
             src,
             tname,
 	    cache_hint_flags,
-            [&, this, ch, tname](auto& t)
+            [&, this, ch, tname, cached_onode](auto& t)
           {
             LOG_PREFIX(SeaStoreS::repeat_with_onode);
             SUBDEBUGT(seastore, "{} cid={} oid={} ...",
                       t, tname, ch->get_cid(), oid);
-            return onode_manager->get_onode(t, oid
-            ).si_then([&](auto onode) {
+	    auto fut = OnodeManager::get_onode_iertr::make_ready_future<OnodeRef>();
+	    if (cached_onode) {
+	      CachedOnode cachedOnode;
+	      cachedOnode.set_onode_info(*cached_onode);
+	      fut = OnodeManager::get_onode_iertr::make_ready_future<
+		OnodeRef>(new CachedOnode((std::move(cachedOnode))));
+	    } else {
+	      fut = onode_manager->get_onode(t, oid);
+	    }
+            return fut.si_then([&](auto onode) {
               return seastar::do_with(std::move(onode), [&](auto& onode) {
-                return f(t, *onode);
+                return f(t, *onode
+		).si_then([&onode](auto ret) {
+		  return std::make_pair<Ret, onode_info_cache_ref>(
+		    std::move(ret),
+		    new onode_info_cache(onode->get_onode_info_cache()));
+		});
               });
             }).si_then([&ret](auto _ret) {
-              ret = _ret;
+              ret = std::move(_ret);
             });
           });
         }).safe_then([&ret, op_type, begin_time, this] {
           const_cast<Shard*>(this)->add_latency_sample(op_type,
                      std::chrono::steady_clock::now() - begin_time);
-          return seastar::make_ready_future<Ret>(ret);
+          return seastar::make_ready_future<
+	    std::pair<Ret, onode_info_cache_ref>>(ret);
         });
       });
     }

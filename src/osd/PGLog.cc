@@ -1177,7 +1177,7 @@ namespace {
       co_await store.omap_iterate(
         ch, pgmeta_oid, start_from, callback
       ).safe_then([] (auto ret) {
-        ceph_assert (ret == ObjectStore::omap_iter_ret_t::NEXT);
+        ceph_assert (ret.first == ObjectStore::omap_iter_ret_t::NEXT);
       }).handle_error(
         crimson::os::FuturizedStore::Shard::read_errorator::assert_all{}
       );

@@ -32,7 +32,8 @@ public:
     Shard(std::string path)
       :path(path){}
 
-    seastar::future<struct stat> stat(
+    seastar::future<std::pair<struct stat, onode_info_cache_ref>>
+    stat(
       CollectionRef c,
       const ghobject_t& oid,
       uint32_t op_flags = 0) final;
@@ -42,37 +43,49 @@ public:
       const ghobject_t& oid,
       uint32_t op_flags = 0) final;
 
-    read_errorator::future<ceph::bufferlist> read(
+    read_errorator::future<
+      std::pair<ceph::bufferlist, onode_info_cache_ref>> read(
       CollectionRef c,
       const ghobject_t& oid,
       uint64_t offset,
       size_t len,
+      onode_info_cache_ref cached_onode,
       uint32_t op_flags = 0) final;
 
-    read_errorator::future<ceph::bufferlist> readv(
+    read_errorator::future<
+      std::pair<ceph::bufferlist, onode_info_cache_ref>> readv(
       CollectionRef c,
       const ghobject_t& oid,
       interval_set<uint64_t>& m,
+      onode_info_cache_ref cached_onode,
       uint32_t op_flags = 0) final;
 
-    get_attr_errorator::future<ceph::bufferlist> get_attr(
+    get_attr_errorator::future<
+      std::pair<ceph::bufferlist, onode_info_cache_ref>>
+    get_attr(
       CollectionRef c,
       const ghobject_t& oid,
       std::string_view name,
       uint32_t op_flags = 0) const final;
 
-    get_attrs_ertr::future<attrs_t> get_attrs(
+    get_attrs_ertr::future<
+      std::pair<attrs_t, onode_info_cache_ref>>
+    get_attrs(
       CollectionRef c,
       const ghobject_t& oid,
       uint32_t op_flags = 0) final;
 
-    read_errorator::future<omap_values_t> omap_get_values(
+    read_errorator::future<
+      std::pair<omap_values_t, onode_info_cache_ref>>
+    omap_get_values(
       CollectionRef c,
       const ghobject_t& oid,
       const omap_keys_t& keys,
       uint32_t op_flags = 0) final;
 
-    read_errorator::future<ObjectStore::omap_iter_ret_t> omap_iterate(
+    read_errorator::future<
+      std::pair<ObjectStore::omap_iter_ret_t, onode_info_cache_ref>>
+    omap_iterate(
       CollectionRef c,
       const ghobject_t &oid,
       ObjectStore::omap_iter_seek_t start_from,
@@ -106,12 +119,14 @@ public:
       CollectionRef ch,
       ceph::os::Transaction&& txn) final;
 
-    read_errorator::future<std::map<uint64_t, uint64_t>>
+    read_errorator::future<
+      std::pair<std::map<uint64_t, uint64_t>, onode_info_cache_ref>>
     fiemap(
       CollectionRef c,
       const ghobject_t& oid,
       uint64_t off,
       uint64_t len,
+      onode_info_cache_ref cached_onode,
       uint32_t op_flags) final;
 
     unsigned get_max_attr_name_length() const final;

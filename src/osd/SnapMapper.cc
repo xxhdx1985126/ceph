@@ -92,7 +92,8 @@ int OSDriver::get_keys(
   using crimson::os::FuturizedStore;
   return interruptor::green_get(os->omap_get_values(
     ch, hoid, keys
-  ).safe_then([out] (FuturizedStore::Shard::omap_values_t&& vals) {
+  ).safe_then([out] (auto &&r) {
+    FuturizedStore::Shard::omap_values_t &vals = r.first;
     // just the difference in comparator (`std::less<>` in omap_values_t`)
     reinterpret_cast<FuturizedStore::Shard::omap_values_t&>(*out) = std::move(vals);
     return 0;
@@ -132,7 +133,8 @@ int OSDriver::get_next(
   };
   return interruptor::green_get(
     os->omap_iterate(ch, hoid, start_from, callback
-    ).safe_then([key] (auto ret) {
+    ).safe_then([key] (auto r) {
+      auto &ret = r.first;
       if (ret == ObjectStore::omap_iter_ret_t::NEXT) {
         CRIMSON_DEBUG("OSDriver::get_next key {} no more values", key);
         return -ENOENT;
@@ -155,7 +157,8 @@ int OSDriver::get_next_or_current(
   // let's try to get current first
   return interruptor::green_get(os->omap_get_values(
     ch, hoid, FuturizedStore::Shard::omap_keys_t{key}
-  ).safe_then([&key, next_or_current] (FuturizedStore::Shard::omap_values_t&& vals) {
+  ).safe_then([&key, next_or_current] (auto &&r) {
+    FuturizedStore::Shard::omap_values_t& vals = r.first;
     CRIMSON_DEBUG("OSDriver::get_next_or_current returning {}", key);
     ceph_assert(vals.size() == 1);
     *next_or_current = std::make_pair(key, std::move(vals.begin()->second));

@@ -91,7 +91,8 @@ PGBackend::load_metadata(const hobject_t& oid)
   return interruptor::make_interruptible(store->get_attrs(
     coll,
     ghobject_t{oid, ghobject_t::NO_GEN, shard})).safe_then_interruptible(
-      [oid](auto &&attrs) -> load_metadata_ertr::future<loaded_object_md_t::ref>{
+      [oid](auto &&r) -> load_metadata_ertr::future<loaded_object_md_t::ref>{
+	auto &attrs = r.first;
         loaded_object_md_t::ref ret(new loaded_object_md_t());
         if (auto oiiter = attrs.find(OI_ATTR); oiiter != attrs.end()) {
           bufferlist bl = std::move(oiiter->second);
@@ -174,9 +175,10 @@ static inline bool _read_verify_data(
   return true;
 }
 
-PGBackend::read_ierrorator::future<>
+PGBackend::read_ierrorator::future<onode_info_cache_ref>
 PGBackend::read(const ObjectState& os, OSDOp& osd_op,
-                object_stat_sum_t& delta_stats)
+                object_stat_sum_t& delta_stats,
+		onode_info_cache_ref &cached_onode)
 {
   const auto& oi = os.oi;
   const ceph_osd_op& op = osd_op.op;
@@ -202,17 +204,22 @@ PGBackend::read(const ObjectState& os, OSDOp& osd_op,
   }
   if (offset >= size) {
     // read size was trimmed to zero and it is expected to do nothing,
-    return read_errorator::now();
+    return read_errorator::make_ready_future<onode_info_cache_ref>();
   } else if (offset + length > size) {
     length = size - op.extent.offset;
     if (!length) {
       // this is the second trimmed_read case
-      return read_errorator::now();
+    return read_errorator::make_ready_future<onode_info_cache_ref>();
     }
   }
   // oi.soid是hobject_t类型的
-  return _read(oi.soid, offset, length, op.flags).safe_then_interruptible_tuple(
-    [&delta_stats, &oi, &osd_op](auto&& bl) -> read_errorator::future<> {
+  return _read(oi.soid, offset,
+	       length, op.flags,
+	       cached_onode
+  ).safe_then_interruptible_tuple(
+    [&delta_stats, &oi, &osd_op](auto&& r) 
+      -> read_errorator::future<onode_info_cache_ref> {
+    auto &bl = r.first;
     if (!_read_verify_data(oi, bl)) {
       // crc mismatches
       return crimson::ct_error::object_corrupted::make();
@@ -223,16 +230,21 @@ PGBackend::read(const ObjectState& os, OSDOp& osd_op,
     delta_stats.num_rd++;
     delta_stats.num_rd_kb += shift_round_up(bl.length(), 10);
     osd_op.outdata = std::move(bl);
-    return read_errorator::now();
+    return read_errorator::make_ready_future<
+      onode_info_cache_ref>(std::move(r.second));
   }, crimson::ct_error::input_output_error::handle([] {
-    return read_errorator::future<>{crimson::ct_error::object_corrupted::make()};
+    return read_errorator::future<
+      onode_info_cache_ref>{crimson::ct_error::object_corrupted::make()};
   }),
   read_errorator::pass_further{});
 }
 
-PGBackend::read_ierrorator::future<>
-PGBackend::sparse_read(const ObjectState& os, OSDOp& osd_op,
-                object_stat_sum_t& delta_stats)
+PGBackend::read_ierrorator::future<onode_info_cache_ref>
+PGBackend::sparse_read(
+  const ObjectState& os,
+  OSDOp& osd_op,
+  object_stat_sum_t& delta_stats,
+  onode_info_cache_ref &cached_onode)
 {
   if (!os.exists || os.oi.is_whiteout()) {
     logger().debug("{}: {} DNE", __func__, os.oi.soid);
@@ -260,14 +272,23 @@ PGBackend::sparse_read(const ObjectState& os, OSDOp& osd_op,
   }
   logger().trace("sparse_read: {} {}~{}",
                  os.oi.soid, (uint64_t)op.extent.offset, (uint64_t)op.extent.length);
-  return interruptor::make_interruptible(store->fiemap(coll, ghobject_t{os.oi.soid},
-    offset, adjusted_length)).safe_then_interruptible(
-    [&delta_stats, &os, &osd_op, this](auto&& m) {
-    return seastar::do_with(interval_set<uint64_t>{std::move(m)},
-			    [&delta_stats, &os, &osd_op, this](auto&& extents) {
-      return interruptor::make_interruptible(store->readv(coll, ghobject_t{os.oi.soid},
-                          extents, osd_op.op.flags)).safe_then_interruptible_tuple(
-        [&delta_stats, &os, &osd_op, &extents](auto&& bl) -> read_errorator::future<> {
+  return interruptor::make_interruptible(
+    store->fiemap(coll, ghobject_t{os.oi.soid}, offset,
+		  adjusted_length, cached_onode)
+  ).safe_then_interruptible(
+    [&delta_stats, &os, &osd_op, this](auto&& r) {
+    return seastar::do_with(
+      interval_set<uint64_t>{std::move(r.first)},
+      std::move(r.second),
+      [&delta_stats, &os, &osd_op, this]
+      (auto&& extents, auto &cached_onode) mutable {
+      return interruptor::make_interruptible(store->readv(
+	coll, ghobject_t{os.oi.soid}, extents, cached_onode, osd_op.op.flags)
+      ).safe_then_interruptible_tuple(
+        [&delta_stats, &os, &osd_op, &extents](auto &&r)
+	  -> read_errorator::future<onode_info_cache_ref> {
+	auto &bl = r.first;
+	auto &cached_onode = r.second;
         if (_read_verify_data(os.oi, bl)) {
           osd_op.op.extent.length = bl.length();
           // re-encode since it might be modified
@@ -275,15 +296,17 @@ PGBackend::sparse_read(const ObjectState& os, OSDOp& osd_op,
           encode_destructively(bl, osd_op.outdata);
           logger().trace("sparse_read got {} bytes from object {}",
                          (uint64_t)osd_op.op.extent.length, os.oi.soid);
-         delta_stats.num_rd++;
-         delta_stats.num_rd_kb += shift_round_up(osd_op.op.extent.length, 10);
-          return read_errorator::make_ready_future<>();
+	  delta_stats.num_rd++;
+	  delta_stats.num_rd_kb += shift_round_up(osd_op.op.extent.length, 10);
+	  return read_errorator::make_ready_future<
+	    onode_info_cache_ref>(cached_onode);
         } else {
           // crc mismatches
           return crimson::ct_error::object_corrupted::make();
         }
       }, crimson::ct_error::input_output_error::handle([] {
-        return read_errorator::future<>{crimson::ct_error::object_corrupted::make()};
+        return read_errorator::future<
+	  onode_info_cache_ref>{crimson::ct_error::object_corrupted::make()};
       }),
       read_errorator::pass_further{});
     });
@@ -293,8 +316,7 @@ PGBackend::sparse_read(const ObjectState& os, OSDOp& osd_op,
 namespace {
 
   template<class CSum>
-  PGBackend::checksum_errorator::future<>
-  do_checksum(ceph::bufferlist& init_value_bl,
+  void do_checksum(ceph::bufferlist& init_value_bl,
 	      size_t chunk_size,
 	      const ceph::bufferlist& buf,
 	      ceph::bufferlist& result)
@@ -305,7 +327,7 @@ namespace {
       decode(init_value, init_value_p);
     } catch (const ceph::buffer::end_of_buffer&) {
       logger().warn("{}: init value not provided", __func__);
-      return crimson::ct_error::invarg::make();
+      std::rethrow_exception(crimson::ct_error::invarg::make().exception_ptr());
     }
     const uint32_t chunk_count = buf.length() / chunk_size;
     ceph::bufferptr csum_data{
@@ -314,12 +336,14 @@ namespace {
       init_value, chunk_size, 0, buf.length(), buf, &csum_data);
     encode(chunk_count, result);
     result.append(std::move(csum_data));
-    return PGBackend::checksum_errorator::now();
   }
 }
 
-PGBackend::checksum_ierrorator::future<>
-PGBackend::checksum(const ObjectState& os, OSDOp& osd_op)
+PGBackend::checksum_ierrorator::future<onode_info_cache_ref>
+PGBackend::checksum(
+  const ObjectState& os,
+  OSDOp& osd_op,
+  onode_info_cache_ref &cached_onode)
 {
   // sanity tests and normalize the argments
   auto& checksum = osd_op.op.checksum;
@@ -329,7 +353,8 @@ PGBackend::checksum(const ObjectState& os, OSDOp& osd_op)
   } else if (checksum.offset >= os.oi.size) {
     // read size was trimmed to zero, do nothing,
     // see PGBackend::read()
-    return checksum_errorator::now();
+    return checksum_errorator::make_ready_future<
+      onode_info_cache_ref>();
   }
   if (checksum.chunk_size > 0) {
     if (checksum.length == 0) {
@@ -346,13 +371,21 @@ PGBackend::checksum(const ObjectState& os, OSDOp& osd_op)
   if (checksum.length == 0) {
     uint32_t count = 0;
     encode(count, osd_op.outdata);
-    return checksum_errorator::now();
+    return checksum_errorator::make_ready_future<onode_info_cache_ref>();
   }
 
   // read the chunk to be checksum'ed
-  return _read(os.oi.soid, checksum.offset, checksum.length, osd_op.op.flags)
-  .safe_then_interruptible(
-    [&osd_op](auto&& read_bl) mutable -> checksum_errorator::future<> {
+  return _read(
+    os.oi.soid,
+    checksum.offset,
+    checksum.length,
+    osd_op.op.flags,
+    cached_onode
+  ).safe_then_interruptible(
+    [&osd_op](auto&& r) mutable
+      -> checksum_errorator::future<onode_info_cache_ref> {
+    auto &read_bl = r.first;
+    auto &cached_onode = r.second;
     auto& checksum = osd_op.op.checksum;
     if (read_bl.length() != checksum.length) {
       logger().warn("checksum: bytes read {} != {}",
@@ -362,30 +395,34 @@ PGBackend::checksum(const ObjectState& os, OSDOp& osd_op)
     // calculate its checksum and put the result in outdata
     switch (checksum.type) {
     case CEPH_OSD_CHECKSUM_OP_TYPE_XXHASH32:
-      return do_checksum<Checksummer::xxhash32>(osd_op.indata,
-                                                checksum.chunk_size,
-                                                read_bl,
-                                                osd_op.outdata);
+      do_checksum<Checksummer::xxhash32>(osd_op.indata,
+					 checksum.chunk_size,
+					 read_bl,
+					 osd_op.outdata);
     case CEPH_OSD_CHECKSUM_OP_TYPE_XXHASH64:
-      return do_checksum<Checksummer::xxhash64>(osd_op.indata,
-                                                checksum.chunk_size,
-                                                read_bl,
-                                                osd_op.outdata);
+      do_checksum<Checksummer::xxhash64>(osd_op.indata,
+					 checksum.chunk_size,
+					 read_bl,
+					 osd_op.outdata);
     case CEPH_OSD_CHECKSUM_OP_TYPE_CRC32C:
-      return do_checksum<Checksummer::crc32c>(osd_op.indata,
-                                              checksum.chunk_size,
-                                              read_bl,
-                                              osd_op.outdata);
+      do_checksum<Checksummer::crc32c>(osd_op.indata,
+				       checksum.chunk_size,
+				       read_bl,
+				       osd_op.outdata);
     default:
       logger().warn("checksum: unknown crc type ({})",
 		    static_cast<uint32_t>(checksum.type));
-      return crimson::ct_error::invarg::make();
     }
+    return checksum_errorator::make_ready_future<
+      onode_info_cache_ref>(cached_onode);
   });
 }
 
-PGBackend::cmp_ext_ierrorator::future<>
-PGBackend::cmp_ext(const ObjectState& os, OSDOp& osd_op)
+PGBackend::cmp_ext_ierrorator::future<onode_info_cache_ref>
+PGBackend::cmp_ext(
+  const ObjectState& os,
+  OSDOp& osd_op,
+  onode_info_cache_ref &cached_onode)
 {
   const ceph_osd_op& op = osd_op.op;
   uint64_t obj_size = os.oi.size;
@@ -401,16 +438,18 @@ PGBackend::cmp_ext(const ObjectState& os, OSDOp& osd_op)
   } else {
     ext_len = op.extent.length;
   }
-  auto read_ext = ll_read_ierrorator::make_ready_future<ceph::bufferlist>();
+  auto read_ext = ll_read_ierrorator::make_ready_future<
+    std::pair<ceph::bufferlist, onode_info_cache_ref>>();
   if (ext_len == 0) {
     logger().debug("{}: zero length extent", __func__);
   } else if (!os.exists || os.oi.is_whiteout()) {
     logger().debug("{}: {} DNE", __func__, os.oi.soid);
   } else {
-    read_ext = _read(os.oi.soid, op.extent.offset, ext_len, 0);
+    read_ext = _read(os.oi.soid, op.extent.offset, ext_len, 0, cached_onode);
   }
-  return read_ext.safe_then_interruptible([&osd_op](auto&& read_bl)
-    -> cmp_ext_errorator::future<> {
+  return read_ext.safe_then_interruptible([&osd_op](auto&& r)
+    -> cmp_ext_errorator::future<onode_info_cache_ref> {
+    auto &read_bl = r.first;
     for (unsigned index = 0; index < osd_op.indata.length(); index++) {
       char byte_in_op = osd_op.indata[index];
       char byte_from_disk = (index < read_bl.length() ? read_bl[index] : 0);
@@ -423,7 +462,8 @@ PGBackend::cmp_ext(const ObjectState& os, OSDOp& osd_op)
       }
     }
     osd_op.rval = 0;
-    return cmp_ext_errorator::make_ready_future<>();
+    return cmp_ext_errorator::make_ready_future<
+      onode_info_cache_ref>(std::move(r.second));
   });
 }
 
@@ -1116,7 +1156,8 @@ PGBackend::get_attr_ierrorator::future<> PGBackend::getxattr(
   }
   logger().debug("getxattr on obj={} for attr={}", os.oi.soid, name);
   return getxattr(os.oi.soid, std::move(name)).safe_then_interruptible(
-    [&delta_stats, &osd_op] (ceph::bufferlist&& val) {
+    [&delta_stats, &osd_op] (auto &&r) {
+    ceph::bufferlist &val = r.first;
     osd_op.outdata = std::move(val);
     osd_op.op.xattr.value_len = osd_op.outdata.length();
     delta_stats.num_rd++;
@@ -1125,7 +1166,8 @@ PGBackend::get_attr_ierrorator::future<> PGBackend::getxattr(
   });
 }
 
-PGBackend::get_attr_ierrorator::future<ceph::bufferlist>
+PGBackend::get_attr_ierrorator::future<
+  std::pair<ceph::bufferlist, onode_info_cache_ref>>
 PGBackend::getxattr(
   const hobject_t& soid,
   std::string_view key) const
@@ -1133,7 +1175,8 @@ PGBackend::getxattr(
   return store->get_attr(coll, ghobject_t{soid}, key);
 }
 
-PGBackend::get_attr_ierrorator::future<ceph::bufferlist>
+PGBackend::get_attr_ierrorator::future<
+  std::pair<ceph::bufferlist, onode_info_cache_ref>>
 PGBackend::getxattr(
   const hobject_t& soid,
   std::string&& key) const
@@ -1149,7 +1192,8 @@ PGBackend::get_attr_ierrorator::future<> PGBackend::get_xattrs(
   object_stat_sum_t& delta_stats) const
 {
   return store->get_attrs(coll, ghobject_t{os.oi.soid}).safe_then(
-    [&delta_stats, &osd_op](auto&& attrs) {
+    [&delta_stats, &osd_op](auto&& r) {
+    auto &attrs = r.first;
     std::vector<std::pair<std::string, bufferlist>> user_xattrs;
     ceph::bufferlist bl;
     for (auto& [key, val] : attrs) {
@@ -1218,7 +1262,8 @@ PGBackend::cmp_xattr_ierrorator::future<> PGBackend::cmp_xattr(
  
   logger().debug("cmpxattr on obj={} for attr={}", os.oi.soid, name);
   return getxattr(os.oi.soid, std::move(name)).safe_then_interruptible(
-    [&delta_stats, &osd_op] (auto &&xattr) -> cmp_xattr_ierrorator::future<> {
+    [&delta_stats, &osd_op] (auto &&r) -> cmp_xattr_ierrorator::future<> {
+    auto &xattr = r.first;
     delta_stats.num_rd++;
     delta_stats.num_rd_kb += shift_round_up(osd_op.op.xattr.value_len, 10);
 
@@ -1299,7 +1344,8 @@ using get_omap_iertr =
     get_omap_ertr>;
 static
 get_omap_iertr::future<
-  crimson::os::FuturizedStore::Shard::omap_values_t>
+  std::pair<crimson::os::FuturizedStore::Shard::omap_values_t,
+	    onode_info_cache_ref>>
 maybe_get_omap_vals_by_keys(
   crimson::os::FuturizedStore::Shard* store,
   const crimson::os::CollectionRef& coll,
@@ -1318,7 +1364,8 @@ using get_omap_iterate_ertr =
     crimson::ct_error::enodata>;
 using omap_iterate_cb_t = crimson::os::FuturizedStore::Shard::omap_iterate_cb_t;
 static
-get_omap_iterate_ertr::future<ObjectStore::omap_iter_ret_t>
+get_omap_iterate_ertr::future<
+  std::pair<ObjectStore::omap_iter_ret_t, onode_info_cache_ref>>
 maybe_do_omap_iterate(
   crimson::os::FuturizedStore::Shard* store,
   const crimson::os::CollectionRef& coll,
@@ -1372,7 +1419,7 @@ PGBackend::omap_get_header(
   }
 }
 
-PGBackend::ll_read_ierrorator::future<>
+PGBackend::ll_read_ierrorator::future<onode_info_cache_ref>
 PGBackend::omap_get_keys(
   const ObjectState& os,
   OSDOp& osd_op,
@@ -1411,8 +1458,9 @@ PGBackend::omap_get_keys(
     return ObjectStore::omap_iter_ret_t::NEXT;
   };
 
-  co_await maybe_do_omap_iterate(store, coll, os.oi, start_from, callback
-  ).safe_then([&delta_stats, &osd_op, &result, &num, &truncated](auto ret){
+  auto cached_onode = co_await maybe_do_omap_iterate(store, coll, os.oi, start_from, callback
+  ).safe_then([&delta_stats, &osd_op, &result, &num, &truncated](auto r){
+    auto &ret = r.first;
     if (ret != ObjectStore::omap_iter_ret_t::STOP) {
       logger().warn("omap_iterate not meet a stop condition");
     }
@@ -1421,6 +1469,8 @@ PGBackend::omap_get_keys(
     encode(truncated, osd_op.outdata);
     delta_stats.num_rd_kb += shift_round_up(osd_op.outdata.length(), 10);
     delta_stats.num_rd++;
+    return ll_read_errorator::make_ready_future<
+      onode_info_cache_ref>(std::move(r.second));
   }).handle_error(
     crimson::ct_error::enodata::handle([&osd_op] {
       uint32_t num = 0;
@@ -1428,10 +1478,11 @@ PGBackend::omap_get_keys(
       encode(num, osd_op.outdata);
       encode(truncated, osd_op.outdata);
       osd_op.rval = 0;
-      return seastar::now();
+      return ll_read_errorator::make_ready_future<onode_info_cache_ref>();
     }),
     ll_read_errorator::pass_further{}
   );
+  co_return cached_onode;
 }
 
 static
@@ -1492,7 +1543,8 @@ PGBackend::omap_cmp(
       to_get.insert(i.first);
     }
     return store->omap_get_values(coll, ghobject_t{os.oi.soid}, to_get)
-      .safe_then([=, &osd_op] (auto&& out) -> omap_cmp_iertr::future<> {
+      .safe_then([=, &osd_op] (auto&& r) -> omap_cmp_iertr::future<> {
+      auto &out = r.first;
       osd_op.rval = 0;
       return  do_omap_val_cmp(out, assertions);
     });
@@ -1500,7 +1552,7 @@ PGBackend::omap_cmp(
     return crimson::ct_error::ecanceled::make();
   }
 }
-PGBackend::ll_read_ierrorator::future<>
+PGBackend::ll_read_ierrorator::future<onode_info_cache_ref>
 PGBackend::omap_get_vals(
   const ObjectState& os,
   OSDOp& osd_op,
@@ -1550,8 +1602,10 @@ PGBackend::omap_get_vals(
     return ObjectStore::omap_iter_ret_t::NEXT;
   };
 
-  co_await maybe_do_omap_iterate(store, coll, os.oi, start_from, callback
-  ).safe_then([&osd_op, &delta_stats, &result, &num, &truncated](auto ret) {
+  auto cached_onode = co_await maybe_do_omap_iterate(
+    store, coll, os.oi, start_from, callback
+  ).safe_then([&osd_op, &delta_stats, &result, &num, &truncated](auto r) {
+    auto &ret = r.first;
     if (ret != ObjectStore::omap_iter_ret_t::STOP) {
       logger().warn("omap_iterate not meet a stop condition");
     }
@@ -1560,15 +1614,18 @@ PGBackend::omap_get_vals(
     encode(truncated, osd_op.outdata);
     delta_stats.num_rd_kb += shift_round_up(osd_op.outdata.length(), 10);
     delta_stats.num_rd++;
+    return ll_read_errorator::make_ready_future<
+      onode_info_cache_ref>(std::move(r.second));
   }).handle_error(
     crimson::ct_error::enodata::handle([&osd_op] {
       encode(uint32_t{0} /* num */, osd_op.outdata);
       encode(bool{false} /* truncated */, osd_op.outdata);
       osd_op.rval = 0;
-      return ll_read_errorator::now();
+      return ll_read_errorator::make_ready_future<onode_info_cache_ref>();
     }),
     ll_read_errorator::pass_further{}
   );
+  co_return cached_onode;
 }
 
 PGBackend::ll_read_ierrorator::future<>
@@ -1588,7 +1645,8 @@ PGBackend::omap_get_vals_by_keys(
   delta_stats.num_rd++;
   return maybe_get_omap_vals_by_keys(store, coll, os.oi, keys_to_get)
   .safe_then_interruptible(
-    [&osd_op] (crimson::os::FuturizedStore::Shard::omap_values_t&& vals) {
+    [&osd_op] (auto &&r) {
+      crimson::os::FuturizedStore::Shard::omap_values_t& vals = r.first;
       encode(vals, osd_op.outdata);
       return ll_read_errorator::now();
     }).handle_error_interruptible(
@@ -1718,7 +1776,8 @@ PGBackend::omap_clear(
   return omap_clear_ertr::now();
 }
 
-PGBackend::interruptible_future<struct stat>
+PGBackend::interruptible_future<
+  std::pair<struct stat, onode_info_cache_ref>>
 PGBackend::stat(
   CollectionRef c,
   const ghobject_t& oid) const
@@ -1726,15 +1785,17 @@ PGBackend::stat(
   return store->stat(c, oid);
 }
 
-PGBackend::read_errorator::future<std::map<uint64_t, uint64_t>>
+PGBackend::read_errorator::future<
+  std::pair<std::map<uint64_t, uint64_t>, onode_info_cache_ref>>
 PGBackend::fiemap(
   CollectionRef c,
   const ghobject_t& oid,
   uint64_t off,
   uint64_t len,
+  onode_info_cache_ref cached_onode,
   uint32_t op_flags)
 {
-  return store->fiemap(c, oid, off, len);
+  return store->fiemap(c, oid, off, len, cached_onode);
 }
 
 PGBackend::write_iertr::future<> PGBackend::tmapput(
@@ -1768,22 +1829,25 @@ PGBackend::tmapup_iertr::future<> PGBackend::tmapup(
   const OSDOp& osd_op,
   ceph::os::Transaction& txn,
   object_stat_sum_t& delta_stats,
-  osd_op_params_t& osd_op_params)
+  osd_op_params_t& osd_op_params,
+  onode_info_cache_ref &cached_onode)
 {
   logger().debug("PGBackend::tmapup: {}", os.oi.soid);
   return PGBackend::write_iertr::now(
-  ).si_then([this, &os] {
-    return _read(os.oi.soid, 0, os.oi.size, 0);
+  ).si_then([this, &os, cached_onode]() mutable {
+    return _read(os.oi.soid, 0, os.oi.size, 0, cached_onode);
   }).handle_error_interruptible(
     crimson::ct_error::enoent::handle([](auto &) {
-      return seastar::make_ready_future<bufferlist>();
+      return seastar::make_ready_future<
+	std::pair<bufferlist, onode_info_cache_ref>>();
     }),
     PGBackend::write_iertr::pass_further{},
     crimson::ct_error::assert_all{fmt::format(
       "read error in mutate_object_contents of {}", os.oi.soid).c_str()
-    }).si_then([this, &os, &osd_op, &txn,
+  }).si_then([this, &os, &osd_op, &txn,
 	     &delta_stats, &osd_op_params]
-	    (auto &&bl) mutable -> PGBackend::tmapup_iertr::future<> {
+	    (auto &&r) mutable -> PGBackend::tmapup_iertr::future<> {
+    auto &bl = r.first;
     auto result = crimson::common::do_tmap_up(
       osd_op.indata.cbegin(),
       std::move(bl));
@@ -1820,7 +1884,8 @@ PGBackend::tmapup_iertr::future<> PGBackend::tmapup(
 PGBackend::read_ierrorator::future<> PGBackend::tmapget(
   const ObjectState& os,
   OSDOp& osd_op,
-  object_stat_sum_t& delta_stats)
+  object_stat_sum_t& delta_stats,
+  onode_info_cache_ref &cached_onode)
 {
   logger().debug("PGBackend::tmapget: {}", os.oi.soid);
   const auto& oi = os.oi;
@@ -1830,8 +1895,11 @@ PGBackend::read_ierrorator::future<> PGBackend::tmapget(
     return crimson::ct_error::enoent::make();
   }
 
-  return _read(oi.soid, 0, oi.size, 0).safe_then_interruptible_tuple(
-    [&delta_stats, &osd_op](auto&& bl) -> read_errorator::future<> {
+  return _read(
+    oi.soid, 0, oi.size, 0, cached_onode
+  ).safe_then_interruptible_tuple(
+    [&delta_stats, &osd_op](auto&& r) -> read_errorator::future<> {
+      auto &bl = r.first;
       logger().debug("PGBackend::tmapget: data length: {}", bl.length());
       osd_op.op.extent.length = bl.length();
       osd_op.rval = 0;

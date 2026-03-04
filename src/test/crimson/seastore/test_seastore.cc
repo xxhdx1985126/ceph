@@ -178,13 +178,14 @@ struct seastore_test_t :
       SeaStoreShard &sharded_seastore,
       uint64_t off,
       uint64_t len) {
-      return sharded_seastore.fiemap(coll, oid, off, len).unsafe_get();
+      return sharded_seastore.fiemap(coll, oid, off, len, {}).unsafe_get().first;
     }
 
     bufferlist readv(
       SeaStoreShard &sharded_seastore,
       interval_set<uint64_t>&m) {
-      return sharded_seastore.readv(coll, oid, m).unsafe_get();
+      onode_info_cache_ref c;
+      return sharded_seastore.readv(coll, oid, m, c, {}).unsafe_get().first;
     }
 
     void remove(
@@ -384,7 +385,8 @@ struct seastore_test_t :
 	coll,
 	oid,
 	offset,
-	len).unsafe_get();
+	len,
+	{}).unsafe_get().first;
       EXPECT_EQ(ret.length(), to_check.length());
       EXPECT_EQ(ret, to_check);
     }
@@ -392,7 +394,7 @@ struct seastore_test_t :
     void check_size(SeaStoreShard &sharded_seastore) {
       auto st = sharded_seastore.stat(
 	coll,
-	oid).get();
+	oid).get().first;
       EXPECT_EQ(contents.length(), st.st_size);
     }
 
@@ -431,7 +433,7 @@ struct seastore_test_t :
       return sharded_seastore.get_attrs(coll, oid)
 	.handle_error(
 	  SeaStoreShard::get_attrs_ertr::assert_all{"unexpected error"})
-	.get();
+	.get().first;
     }
 
     ceph::bufferlist get_attr(
@@ -440,7 +442,7 @@ struct seastore_test_t :
       return sharded_seastore.get_attr(coll, oid, name)
 	.handle_error(
 	  SeaStoreShard::get_attr_errorator::assert_all{"unexpected error"})
-	.get();
+	.get().first;
     }
 
     void check_omap_key(
@@ -451,7 +453,7 @@ struct seastore_test_t :
       auto result = sharded_seastore.omap_get_values(
 	coll,
 	oid,
-	to_check).unsafe_get();
+	to_check).unsafe_get().first;
       if (result.empty()) {
 	EXPECT_EQ(omap.find(key), omap.end());
       } else {
