@@ -653,7 +653,10 @@ ClientRequest::do_process(
       co_await ihref.enter_stage<interruptor>(
         ihref.obc_orderer->obc_pp().wait_repop, *this);
 
-      onode_cache = co_await std::move(all_completed);
+      auto onode_cache2 = co_await std::move(all_completed);
+      if (!onode_cache2.empty()) {
+        onode_cache = std::move(onode_cache2);
+      }
     }
   }
 
@@ -739,6 +742,7 @@ ClientRequest::do_process(
       cachedata_target.object_data_laddr = onode_info.object_data_laddr;
       cachedata_target.omap_root = onode_info.omap_root;
       cachedata_target.xattr_root = onode_info.xattr_root;
+      cachedata_target.extent_len = onode_info.size;
       cachedata_target.onode_info_valid = true;
       reply->has_target_cache_data = true;
       reply->target_cached_data = cachedata_target;
