@@ -50,6 +50,10 @@ public:
       repi.invalidate_retired_placeholder(t, *retired_placeholder, extent);
     }
   }
+
+  CachedExtentRef get_retired_placeholder() const {
+    return retired_placeholder;
+  }
 private:
   TCachedExtentRef<ParentT> stable_parent;
   btreenode_pos_t pos = std::numeric_limits<btreenode_pos_t>::max();
