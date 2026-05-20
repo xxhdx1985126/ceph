@@ -320,6 +320,9 @@ struct LBALeafNode
         it++;
         continue;
       }
+      if (is_valid_child_ptr(child)) {
+        assert(child->_is_exist_clean() || child->_is_exist_mutation_pending());
+      }
       auto pending_key = it->get_key();
       auto stable_key = iter->get_key();
       auto stable_end = stable_key + v1.len;
@@ -328,9 +331,8 @@ struct LBALeafNode
         assert(pending_end <= stable_end);
         if (pending_key != stable_key) {
           assert(v2.pladdr != v1.pladdr);
-          assert(!is_valid_child_ptr(child) ||
-                 !child->_is_exist_clean() ||
-                 !child->_is_exist_mutation_pending());
+          assert(is_valid_child_ptr(child));
+          assert(child->_is_exist_clean() || child->_is_exist_mutation_pending());
         }
         if (v2.pladdr != v1.pladdr) {
           auto m_v2 = v2;
@@ -340,9 +342,7 @@ struct LBALeafNode
           m_v2.pladdr = paddr;
           SUBTRACET(seastore_lba, "merging to {}, paddr: {} -> {}",
             t, pending_version, m_v2.pladdr, paddr);
-          if (!is_valid_child_ptr(child) ||
-              (!child->_is_exist_clean() &&
-               !child->_is_exist_mutation_pending())) {
+          if (!is_valid_child_ptr(child)) {
             // exclude the mappings whose children are EXIST_CLEAN ones
             SUBTRACET(seastore_lba, "merging to {}, checksum: {} -> {}",
               t, pending_version, m_v2.checksum, v1.checksum);
