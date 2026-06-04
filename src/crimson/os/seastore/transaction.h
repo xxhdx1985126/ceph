@@ -737,7 +737,7 @@ public:
   bool backref_lba_ool_written = false;
 
   using update_copied_lba_key_func_t =
-    std::function<void (laddr_t, paddr_t)>;
+    std::function<void (laddr_t, paddr_t, std::optional<paddr_t>)>;
   void new_lba_key_copied(
     laddr_t src,
     laddr_t dest,
@@ -747,7 +747,8 @@ public:
       update_copied_lba_key = std::move(func);
     }
   }
-  void maybe_sync_copied_lba_key(laddr_t laddr, paddr_t paddr) {
+  void maybe_sync_copied_lba_key(
+    laddr_t laddr, paddr_t paddr, std::optional<paddr_t> shadow) {
     if (likely(copied_lba_keys.empty())) {
       return;
     }
@@ -757,7 +758,7 @@ public:
       return;
     }
     laddr_t key = it->second;
-    update_copied_lba_key(key, paddr);
+    update_copied_lba_key(key, paddr, shadow);
   }
   RootBlockRef peek_root() {
     return root;
