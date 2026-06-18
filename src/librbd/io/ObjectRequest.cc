@@ -24,6 +24,8 @@
 
 #include <boost/optional.hpp>
 
+#include <algorithm>
+#include <map>
 #include <shared_mutex> // for std::shared_lock
 
 #define dout_subsys ceph_subsys_rbd
@@ -910,6 +912,12 @@ void ObjectListSnapsRequest<I>::handle_list_snaps(int r) {
     }
 
     if (exists) {
+      r = intersect_mapped_extents(clone_end_snap_id, &diff_interval);
+      if (r < 0) {
+        this->finish(r);
+        return;
+      }
+
       for (auto& interval : diff_interval) {
         snapshot_delta[{end_snap_id, clone_end_snap_id}].insert(
           interval.first, interval.second,
@@ -940,6 +948,49 @@ void ObjectListSnapsRequest<I>::handle_list_snaps(int r) {
   }
 
   this->finish(0);
+}
+
+template <typename I>
+int ObjectListSnapsRequest<I>::intersect_mapped_extents(
+    librados::snap_t snap_id, interval_set<uint64_t>* diff_interval) {
+  if (diff_interval->empty() ||
+      ((m_list_snaps_flags & LIST_SNAPS_FLAG_WHOLE_OBJECT) != 0)) {
+    return 0;
+  }
+
+  uint64_t map_offset = diff_interval->begin().get_start();
+  uint64_t map_end = map_offset;
+  for (auto& interval : *diff_interval) {
+    map_end = std::max(map_end, interval.first + interval.second);
+  }
+
+  librados::IoCtx data_ctx;
+  data_ctx.dup(this->m_ictx->data_ctx);
+  data_ctx.snap_set_read(snap_id == CEPH_NOSNAP ? librados::SNAP_HEAD :
+                                                snap_id);
+
+  std::map<uint64_t, uint64_t> mapped_extents;
+  int r = data_ctx.mapext(data_object_name(this->m_ictx, this->m_object_no),
+                          map_offset, map_end - map_offset, mapped_extents);
+  if (r == -ENOENT) {
+    diff_interval->clear();
+    return 0;
+  } else if (r == -EOPNOTSUPP) {
+    ldout(this->m_ictx->cct, 5) << "mapext unsupported; "
+                                << "using unrefined diff interval" << dendl;
+    return 0;
+  } else if (r < 0) {
+    lderr(this->m_ictx->cct) << "failed to map object extents: "
+                             << cpp_strerror(r) << dendl;
+    return r;
+  }
+
+  interval_set<uint64_t> mapped_interval;
+  for (auto [offset, length] : mapped_extents) {
+    mapped_interval.insert(offset, length);
+  }
+  diff_interval->intersection_of(mapped_interval);
+  return 0;
 }
 
 template <typename I>

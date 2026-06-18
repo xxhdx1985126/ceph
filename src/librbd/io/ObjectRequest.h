@@ -488,6 +488,8 @@ private:
   void list_from_parent();
   void handle_list_from_parent(int r);
 
+  int intersect_mapped_extents(librados::snap_t snap_id,
+                               interval_set<uint64_t>* diff_interval);
   void zero_extent(uint64_t snap_id, bool dne);
 };
 
