@@ -63,6 +63,24 @@ PGRepopPipeline &LogMissingRequest::repop_pipeline(PG &pg)
   return pg.repop_pipeline;
 }
 
+LogMissingRequest::interruptible_future<>
+LogMissingRequest::with_pg_interruptible(
+  Ref<PG> pg)
+{
+  co_await this->template enter_stage<interruptor>(
+    repop_pipeline(*pg).process);
+  std::ignore = co_await interruptor::make_interruptible(
+    this->template with_blocking_event<
+      PG_OSDMapGate::OSDMapBlocker::BlockingEvent
+    >([this, pg](auto &&trigger) {
+      return pg->osdmap_gate.wait_for_map(
+        std::move(trigger), req->min_epoch);
+    }));
+  co_await pg->do_update_log_missing(req, get_remote_connection());
+  logger().debug("{}: complete", *this);
+  co_await interruptor::make_interruptible(handle.complete());
+}
+
 seastar::future<> LogMissingRequest::with_pg(
   ShardServices &shard_services, Ref<PG> pg)
 {
@@ -73,20 +91,7 @@ seastar::future<> LogMissingRequest::with_pg(
   return interruptor::with_interruption([this, pg] {
     LOG_PREFIX(LogMissingRequest::with_pg);
     DEBUGI("{}: pg present", *this);
-    return this->template enter_stage<interruptor>(repop_pipeline(*pg).process
-    ).then_interruptible([this, pg] {
-      return this->template with_blocking_event<
-        PG_OSDMapGate::OSDMapBlocker::BlockingEvent
-      >([this, pg](auto &&trigger) {
-        return pg->osdmap_gate.wait_for_map(
-          std::move(trigger), req->min_epoch);
-      });
-    }).then_interruptible([this, pg](auto) {
-      return pg->do_update_log_missing(req, get_remote_connection());
-    }).then_interruptible([this] {
-      logger().debug("{}: complete", *this);
-      return handle.complete();
-    });
+    return with_pg_interruptible(pg);
   }, [](std::exception_ptr) {
     return seastar::now();
   }, pg, pg->get_osdmap_epoch()).finally([this, ref=std::move(ref)] {
