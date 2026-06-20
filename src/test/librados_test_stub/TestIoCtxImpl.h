@@ -112,6 +112,9 @@ public:
   virtual int list_snaps(const std::string& o, snap_set_t *out_snaps) = 0;
   virtual int list_watchers(const std::string& o,
                             std::list<obj_watch_t> *out_watchers);
+  virtual int mapext(const std::string& oid, uint64_t off, uint64_t len,
+                     std::map<uint64_t, uint64_t> *m,
+                     uint64_t snap_id) = 0;
   virtual int notify(const std::string& o, bufferlist& bl,
                      uint64_t timeout_ms, bufferlist *pbl);
   virtual void notify_ack(const std::string& o, uint64_t notify_id,

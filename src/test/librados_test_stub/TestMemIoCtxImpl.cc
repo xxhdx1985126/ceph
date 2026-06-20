@@ -242,6 +242,32 @@ int TestMemIoCtxImpl::list_snaps(const std::string& oid, snap_set_t *out_snaps) 
 
 }
 
+int TestMemIoCtxImpl::mapext(const std::string& oid, uint64_t off,
+                             uint64_t len,
+                             std::map<uint64_t, uint64_t> *m,
+                             uint64_t snap_id) {
+  if (m_client->is_blocklisted()) {
+    return -EBLOCKLISTED;
+  }
+
+  TestMemCluster::SharedFile file;
+  {
+    std::shared_lock l{m_pool->file_lock};
+    file = get_file(oid, false, snap_id, {});
+    if (file == NULL) {
+      return -ENOENT;
+    }
+  }
+
+  std::shared_lock l{file->lock};
+  len = clip_io(off, len, file->data.length());
+  m->clear();
+  if (len > 0) {
+    (*m)[off] = len;
+  }
+  return m->size();
+}
+
 int TestMemIoCtxImpl::omap_get_vals2(const std::string& oid,
                                     const std::string& start_after,
                                     const std::string &filter_prefix,
