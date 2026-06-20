@@ -60,6 +60,17 @@ LogMissingRequestReply::interruptible_future<>
 LogMissingRequestReply::with_pg_interruptible(
   Ref<PG> pg)
 {
+  co_await interruptor::make_interruptible(this->template with_blocking_event<
+    PG_OSDMapGate::OSDMapBlocker::BlockingEvent
+    >([this, pg](auto &&trigger) {
+      return pg->osdmap_gate.wait_for_map(
+	std::move(trigger), req->min_epoch);
+    }));
+
+  if (pg->can_discard_replica_op(*req)) {
+    co_return;
+  }
+
   co_await pg->do_update_log_missing_reply(req);
   logger().debug("{}: complete", *this);
   co_await interruptor::make_interruptible(handle.complete());
