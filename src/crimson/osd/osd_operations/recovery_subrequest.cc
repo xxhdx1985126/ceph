@@ -27,6 +27,17 @@ SET_SUBSYS(osd);
 
 namespace crimson::osd {
 
+RecoverySubRequest::interruptible_future<>
+RecoverySubRequest::with_pg_interruptible(
+  Ref<PG> pg)
+{
+  co_await pg->get_recovery_backend()->handle_recovery_op(
+    m, get_remote_connection());
+  LOG_PREFIX(RecoverySubRequest::with_pg);
+  DEBUGI("{}: complete", *this);
+  co_await interruptor::make_interruptible(handle.complete());
+}
+
 seastar::future<> RecoverySubRequest::with_pg(
   ShardServices &shard_services, Ref<PG> pgref)
 {
@@ -35,13 +46,7 @@ seastar::future<> RecoverySubRequest::with_pg(
   return interruptor::with_interruption([this, pgref] {
     LOG_PREFIX(RecoverySubRequest::with_pg);
     DEBUGI("{}: {}", "RecoverySubRequest::with_pg", *this);
-    return pgref->get_recovery_backend()->handle_recovery_op(
-      m, get_remote_connection()
-    ).then_interruptible([this] {
-      LOG_PREFIX(RecoverySubRequest::with_pg);
-      DEBUGI("{}: complete", *this);
-      return handle.complete();
-    });
+    return with_pg_interruptible(pgref);
   }, [](std::exception_ptr) {
     return seastar::now();
   }, pgref, pgref->get_osdmap_epoch()).finally([this, opref=std::move(opref), pgref] {
