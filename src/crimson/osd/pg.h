@@ -40,6 +40,7 @@
 #include "crimson/osd/osd_operations/logmissing_request_reply.h"
 #include "crimson/osd/osd_operations/peering_event.h"
 #include "crimson/osd/osd_operations/replicated_request.h"
+#include "crimson/osd/osd_operations/recovery_subrequest.h"
 #include "crimson/osd/shard_services.h"
 #include "crimson/osd/osdmap_gate.h"
 #include "crimson/osd/pg_activation_blocker.h"
@@ -1256,6 +1257,7 @@ private:
   friend class SnapTrimEvent;
   friend class SnapTrimObjSubEvent;
   friend class SnapTrimInitiate;
+  friend class RecoverySubRequest;
   friend ECBackend;
 private:
 

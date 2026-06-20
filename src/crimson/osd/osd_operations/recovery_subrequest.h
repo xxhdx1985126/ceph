@@ -59,7 +59,7 @@ public:
     ConnectionPipeline::GetPGMapping::BlockingEvent,
     PerShardPipeline::CreateOrWaitPG::BlockingEvent,
     PGMap::PGCreationBlockingEvent,
-    OSD_OSDMapGate::OSDMapBlocker::BlockingEvent,
+    PG_OSDMapGate::OSDMapBlocker::BlockingEvent,
     CompletionEvent
   > tracking_events;
 

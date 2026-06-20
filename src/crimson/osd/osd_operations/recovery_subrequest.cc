@@ -31,6 +31,17 @@ RecoverySubRequest::interruptible_future<>
 RecoverySubRequest::with_pg_interruptible(
   Ref<PG> pg)
 {
+  co_await interruptor::make_interruptible(this->template with_blocking_event<
+    PG_OSDMapGate::OSDMapBlocker::BlockingEvent
+    >([this, pg](auto &&trigger) {
+      return pg->osdmap_gate.wait_for_map(
+	std::move(trigger), m->get_min_epoch());
+    }));
+
+  if (pg->can_discard_replica_op(*m)) {
+    co_return;
+  }
+
   co_await pg->get_recovery_backend()->handle_recovery_op(
     m, get_remote_connection());
   LOG_PREFIX(RecoverySubRequest::with_pg);
