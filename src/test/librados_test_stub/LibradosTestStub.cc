@@ -1563,13 +1563,40 @@ int cls_gen_rand_base64(char *, int) {
   return -ENOTSUP;
 }
 
+int cls_gen_random_bytes(char *, int) {
+  return -ENOTSUP;
+}
+
 int cls_cxx_chunk_write_and_set(cls_method_handle_t, int,
 				int, bufferlist *,
 				uint32_t, bufferlist *, int) {
   return -ENOTSUP;
 }
 
+int cls_cxx_map_get_vals_by_keys(cls_method_context_t,
+                                 const std::set<std::string>&,
+                                 std::map<std::string, bufferlist> *) {
+  return -ENOTSUP;
+}
+
 int cls_cxx_map_read_header(cls_method_handle_t, bufferlist *) {
+  return -ENOTSUP;
+}
+
+int cls_cxx_map_write_header(cls_method_context_t, bufferlist *) {
+  return -ENOTSUP;
+}
+
+const ConfigProxy& cls_get_config(cls_method_context_t) {
+  return g_ceph_context->_conf;
+}
+
+const object_info_t& cls_get_object_info(cls_method_context_t) {
+  static object_info_t object_info;
+  return object_info;
+}
+
+int cls_get_manifest_ref_count(cls_method_context_t, std::string) {
   return -ENOTSUP;
 }
 
