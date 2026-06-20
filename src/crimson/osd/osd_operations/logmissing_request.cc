@@ -76,6 +76,11 @@ LogMissingRequest::with_pg_interruptible(
       return pg->osdmap_gate.wait_for_map(
         std::move(trigger), req->min_epoch);
     }));
+
+  if (pg->can_discard_replica_op(*req)) {
+    co_return;
+  }
+
   co_await pg->do_update_log_missing(req, get_remote_connection());
   logger().debug("{}: complete", *this);
   co_await interruptor::make_interruptible(handle.complete());
