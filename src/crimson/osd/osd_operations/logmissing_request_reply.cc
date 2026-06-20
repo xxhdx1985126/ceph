@@ -56,6 +56,15 @@ PerShardPipeline &LogMissingRequestReply::get_pershard_pipeline(
   return shard_services.get_replicated_request_pipeline();
 }
 
+LogMissingRequestReply::interruptible_future<>
+LogMissingRequestReply::with_pg_interruptible(
+  Ref<PG> pg)
+{
+  co_await pg->do_update_log_missing_reply(req);
+  logger().debug("{}: complete", *this);
+  co_await interruptor::make_interruptible(handle.complete());
+}
+
 seastar::future<> LogMissingRequestReply::with_pg(
   ShardServices &shard_services, Ref<PG> pg)
 {
@@ -63,11 +72,7 @@ seastar::future<> LogMissingRequestReply::with_pg(
 
   IRef ref = this;
   return interruptor::with_interruption([this, pg] {
-    return pg->do_update_log_missing_reply(req
-    ).then_interruptible([this] {
-      logger().debug("{}: complete", *this);
-      return handle.complete();
-    });
+    return with_pg_interruptible(pg);
   }, [](std::exception_ptr) {
     return seastar::now();
   }, pg, pg->get_osdmap_epoch()).finally([this, ref=std::move(ref)] {

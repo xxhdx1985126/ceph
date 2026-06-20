@@ -63,6 +63,8 @@ private:
   // must be after `conn` to ensure the ConnectionPipeline's is alive
   PipelineHandle handle;
   Ref<MOSDPGUpdateLogMissingReply> req;
+
+  interruptible_future<> with_pg_interruptible(Ref<PG> pg);
 };
 
 }
