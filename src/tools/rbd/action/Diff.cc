@@ -8,6 +8,7 @@
 #include "common/Formatter.h"
 #include "common/TextTable.h"
 #include <iostream>
+#include <vector>
 #include <boost/program_options.hpp>
 
 namespace rbd {
@@ -22,6 +23,12 @@ struct output_method {
   Formatter *f;
   TextTable *t;
   bool empty;
+};
+
+struct diff_extent {
+  uint64_t offset;
+  uint64_t length;
+  bool exists;
 };
 
 static int diff_cb(uint64_t ofs, size_t len, int exists, void *arg)
@@ -41,16 +48,15 @@ static int diff_cb(uint64_t ofs, size_t len, int exists, void *arg)
   return 0;
 }
 
-static int do_diff(librbd::Image& image, const char *fromsnapname,
-                   bool whole_object, Formatter *f)
-{
-  int r;
-  librbd::image_info_t info;
+static int collect_diff_extents_cb(uint64_t offset, size_t length, int exists,
+                                   void *arg) {
+  auto diff_extents = reinterpret_cast<std::vector<diff_extent> *>(arg);
+  diff_extents->push_back({offset, length, exists != 0});
+  return 0;
+}
 
-  r = image.stat(info, sizeof(info));
-  if (r < 0)
-    return r;
-
+static int output_diff_extents(const std::vector<diff_extent>& diff_extents,
+                               Formatter *f) {
   output_method om;
   if (f) {
     om.f = f;
@@ -62,8 +68,15 @@ static int do_diff(librbd::Image& image, const char *fromsnapname,
     om.t->define_column("Type", TextTable::LEFT, TextTable::LEFT);
   }
 
-  r = image.diff_iterate2(fromsnapname, 0, info.size, true, whole_object,
-                          diff_cb, &om);
+  int r = 0;
+  for (auto& diff_extent : diff_extents) {
+    r = diff_cb(diff_extent.offset, diff_extent.length, diff_extent.exists,
+                &om);
+    if (r < 0) {
+      break;
+    }
+  }
+
   if (f) {
     f->close_section();
     f->flush(std::cout);
@@ -72,7 +85,28 @@ static int do_diff(librbd::Image& image, const char *fromsnapname,
       std::cout << *om.t;
     delete om.t;
   }
+
   return r;
+}
+
+static int do_diff(librbd::Image& image, const char *fromsnapname,
+                   bool whole_object, Formatter *f)
+{
+  int r;
+  librbd::image_info_t info;
+
+  r = image.stat(info, sizeof(info));
+  if (r < 0)
+    return r;
+
+  std::vector<diff_extent> diff_extents;
+  r = image.diff_iterate2(fromsnapname, 0, info.size, true, whole_object,
+                          collect_diff_extents_cb, &diff_extents);
+  if (r < 0) {
+    return r;
+  }
+
+  return output_diff_extents(diff_extents, f);
 }
 
 void get_arguments(po::options_description *positional,

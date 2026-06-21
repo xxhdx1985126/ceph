@@ -230,7 +230,8 @@ static int do_disk_usage(librbd::RBD &rbd, librados::IoCtx &io_ctx,
       if (imgname == nullptr || found_from_snap ||
          (found_from_snap && snapname != nullptr && snap->name == snapname)) {
 
-        r = get_image_disk_usage(image_spec.name, snap->name, last_snap_name, snap_image, exact, snap->size, &used_size);
+        r = get_image_disk_usage(image_spec.name, snap->name, last_snap_name,
+                                 snap_image, exact, snap->size, &used_size);
         if (r < 0) {
           goto out;
         }
@@ -259,7 +260,8 @@ static int do_disk_usage(librbd::RBD &rbd, librados::IoCtx &io_ctx,
     }
 
     if (snapname == NULL) {
-      r = get_image_disk_usage(image_spec.name, "", last_snap_name, image, exact, info.size, &used_size);
+      r = get_image_disk_usage(image_spec.name, "", last_snap_name, image,
+                               exact, info.size, &used_size);
       if (r < 0) {
         goto out;
       }
