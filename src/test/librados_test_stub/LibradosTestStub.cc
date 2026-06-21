@@ -635,9 +635,10 @@ int IoCtx::read(const std::string& oid, bufferlist& bl, size_t len,
 int IoCtx::mapext(const std::string& oid, uint64_t off, size_t len,
                   std::map<uint64_t, uint64_t>& m) {
   TestIoCtxImpl *ctx = reinterpret_cast<TestIoCtxImpl*>(io_ctx_impl);
+  bufferlist data_bl;
   return ctx->execute_operation(
-    oid, std::bind(&TestIoCtxImpl::mapext, _1, _2, off, len, &m,
-                   ctx->get_snap_read()));
+    oid, std::bind(&TestIoCtxImpl::sparse_read, _1, _2, off, len, &m,
+                   &data_bl, ctx->get_snap_read()));
 }
 
 int IoCtx::remove(const std::string& oid) {

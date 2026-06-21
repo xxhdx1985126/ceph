@@ -1756,6 +1756,8 @@ TEST_F(TestMockIoObjectRequest, ListSnaps) {
   snap_set.clones.push_back(clone_info);
 
   expect_list_snaps(mock_image_ctx, snap_set, 0);
+  EXPECT_CALL(librados::get_mock_io_ctx(mock_image_ctx.data_ctx),
+              clone()).Times(0);
 
   SnapshotDelta snapshot_delta;
   C_SaferCond ctx;
@@ -2761,4 +2763,3 @@ TEST(SparseBufferlist, Merge) {
 
 } // namespace io
 } // namespace librbd
-

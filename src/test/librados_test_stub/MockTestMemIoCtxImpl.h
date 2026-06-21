@@ -120,14 +120,6 @@ public:
     return TestMemIoCtxImpl::list_watchers(o, out_watchers);
   }
 
-  MOCK_METHOD5(mapext, int(const std::string& oid, uint64_t off,
-                           uint64_t len, std::map<uint64_t, uint64_t> *m,
-                           uint64_t snap_id));
-  int do_mapext(const std::string& oid, uint64_t off, uint64_t len,
-                std::map<uint64_t, uint64_t> *m, uint64_t snap_id) {
-    return TestMemIoCtxImpl::mapext(oid, off, len, m, snap_id);
-  }
-
   MOCK_METHOD4(notify, int(const std::string& o, bufferlist& bl,
                            uint64_t timeout_ms, bufferlist *pbl));
   int do_notify(const std::string& o, bufferlist& bl,
@@ -235,7 +227,6 @@ public:
     ON_CALL(*this, get_instance_id()).WillByDefault(Invoke(this, &MockTestMemIoCtxImpl::do_get_instance_id));
     ON_CALL(*this, list_snaps(_, _)).WillByDefault(Invoke(this, &MockTestMemIoCtxImpl::do_list_snaps));
     ON_CALL(*this, list_watchers(_, _)).WillByDefault(Invoke(this, &MockTestMemIoCtxImpl::do_list_watchers));
-    ON_CALL(*this, mapext(_, _, _, _, _)).WillByDefault(Invoke(this, &MockTestMemIoCtxImpl::do_mapext));
     ON_CALL(*this, notify(_, _, _, _)).WillByDefault(Invoke(this, &MockTestMemIoCtxImpl::do_notify));
     ON_CALL(*this, read(_, _, _, _, _, _)).WillByDefault(Invoke(this, &MockTestMemIoCtxImpl::do_read));
     ON_CALL(*this, set_snap_read(_)).WillByDefault(Invoke(this, &MockTestMemIoCtxImpl::do_set_snap_read));

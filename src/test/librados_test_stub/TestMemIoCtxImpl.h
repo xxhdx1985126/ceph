@@ -32,9 +32,6 @@ public:
   int create(const std::string& oid, bool exclusive,
              const SnapContext &snapc) override;
   int list_snaps(const std::string& o, snap_set_t *out_snaps) override;
-  int mapext(const std::string& oid, uint64_t off, uint64_t len,
-             std::map<uint64_t, uint64_t> *m,
-             uint64_t snap_id) override;
   int omap_get_vals(const std::string& oid,
                     const std::string& start_after,
                     const std::string &filter_prefix,
