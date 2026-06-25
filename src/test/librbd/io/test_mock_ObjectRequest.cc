@@ -1833,9 +1833,7 @@ TEST_F(TestMockIoObjectRequest, ListSnapsMapExtents) {
 
   SnapshotDelta expected_snapshot_delta;
   expected_snapshot_delta[{1, 1}].insert(
-    0, 512, {SPARSE_EXTENT_STATE_DATA, 512});
-  expected_snapshot_delta[{1, 1}].insert(
-    2048, 1024, {SPARSE_EXTENT_STATE_DATA, 1024});
+    0, 4096, {SPARSE_EXTENT_STATE_DATA, 4096});
   ASSERT_EQ(expected_snapshot_delta, snapshot_delta);
 
   expect_list_snaps(mock_image_ctx, snap_set, 0);
