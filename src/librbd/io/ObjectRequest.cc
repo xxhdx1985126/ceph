@@ -8,6 +8,7 @@
 #include "common/ceph_mutex.h"
 #include "include/Context.h"
 #include "include/err.h"
+#include "include/intarith.h"
 #include "include/neorados/RADOS.hpp"
 #include "osd/osd_types.h"
 #include "librados/snap_set_diff.h"
@@ -43,6 +44,8 @@ using librbd::util::create_context_callback;
 using librbd::util::create_trace;
 
 namespace {
+
+constexpr uint64_t RBD_DIFF_MAPEXT_GRANULARITY = 4096;
 
 template <typename I>
 inline bool is_copy_on_read(I *ictx, const IOContext& io_context) {
@@ -999,7 +1002,12 @@ void ObjectListSnapsRequest<I>::handle_map_extents(int r) {
   } else {
     interval_set<uint64_t> mapped_interval;
     for (auto [offset, length] : m_mapped_extents) {
-      mapped_interval.insert(offset, length);
+      uint64_t end = offset + length;
+      uint64_t rounded_offset = round_down_to(
+        offset, RBD_DIFF_MAPEXT_GRANULARITY);
+      uint64_t rounded_end = round_up_to(end, RBD_DIFF_MAPEXT_GRANULARITY);
+      mapped_interval.union_insert(rounded_offset,
+                                   rounded_end - rounded_offset);
     }
 
     interval_set<uint64_t> diff_interval;
