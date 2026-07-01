@@ -67,6 +67,7 @@ pool_idx = 0
 pool_name = None
 IMG_SIZE = 8 << 20 # 8 MiB
 IMG_ORDER = 22 # 4 MiB objects
+DIFF_MAPEXT_GRANULARITY = 4096
 
 os.environ["RBD_FORCE_ALLOW_V1"] = "1"
 
@@ -1759,11 +1760,33 @@ class TestImageId(object):
         info = self.image2.stat()
         check_stat(info, new_size, IMG_ORDER)
 
+def round_up_to(value, alignment):
+    return ((value + alignment - 1) // alignment) * alignment
+
+def normalize_expected_diff(offset, length, expected, **kwargs):
+    if features is None or kwargs.get('whole_object', False):
+        return expected
+
+    normalized = []
+    end = offset + length
+    for extent_offset, extent_length, exists in expected:
+        if exists:
+            extent_end = extent_offset + extent_length
+            extent_offset -= extent_offset % DIFF_MAPEXT_GRANULARITY
+            extent_end = round_up_to(extent_end, DIFF_MAPEXT_GRANULARITY)
+            extent_offset = max(extent_offset, offset)
+            extent_end = min(extent_end, end)
+            extent_length = extent_end - extent_offset
+        if extent_length > 0:
+            normalized.append((extent_offset, extent_length, exists))
+    return normalized
+
 def check_diff_one(image, offset, length, from_snapshot, expected, **kwargs):
     extents = []
     def cb(offset, length, exists):
         extents.append((offset, length, exists))
     image.diff_iterate(offset, length, from_snapshot, cb, **kwargs)
+    expected = normalize_expected_diff(offset, length, expected, **kwargs)
     eq(extents, expected)
 
 def check_diff(image, offset, length, from_snap_name, from_snap_id, expected,
