@@ -17,6 +17,7 @@
  */
 
 #include "include/types.h"
+#include "osd/BackfillReservation.h"
 #include "osd/osd_types.h"
 #include "osd/OSDMap.h"
 #include "gtest/gtest.h"
@@ -29,6 +30,83 @@
 #include <sstream>
 
 using namespace std;
+
+TEST(backfill_reservation_space_info_t, usage_ratio)
+{
+  constexpr auto scale = backfill_reservation_space_info_t::RATIO_SCALE;
+
+  ASSERT_EQ(0u, backfill_reservation_space_info_t::encode_usage_ratio(0, 100));
+  ASSERT_EQ(scale / 2,
+	    backfill_reservation_space_info_t::encode_usage_ratio(50, 100));
+  ASSERT_EQ(scale,
+	    backfill_reservation_space_info_t::encode_usage_ratio(100, 100));
+  ASSERT_EQ(scale,
+	    backfill_reservation_space_info_t::encode_usage_ratio(150, 100));
+  ASSERT_EQ(0u, backfill_reservation_space_info_t::encode_usage_ratio(1, 0));
+}
+
+TEST(backfill_osd_space_usage_t, projected_usage_ratio)
+{
+  constexpr auto scale = backfill_reservation_space_info_t::RATIO_SCALE;
+  backfill_osd_space_usage_t usage{800, 1000};
+
+  ASSERT_EQ(scale * 8 / 10, usage.usage_ratio());
+  ASSERT_EQ(scale * 7 / 10, usage.projected_usage_ratio(-100));
+  ASSERT_EQ(scale, usage.projected_usage_ratio(300));
+  ASSERT_EQ(0u, usage.projected_usage_ratio(-900));
+}
+
+TEST(backfill_reservation_space_info_t, priority_boost)
+{
+  backfill_reservation_space_info_t info;
+  info.relieved_usage_before = 800000;
+  info.relieved_usage_after = 700000;
+  info.target_usage_after = 650000;
+
+  ASSERT_EQ(100000, info.raw_score());
+  ASSERT_EQ(10u, info.priority_boost(100));
+  ASSERT_EQ(5u, info.priority_boost(5));
+
+  info.target_usage_after = 850000;
+  ASSERT_EQ(-50000, info.raw_score());
+  ASSERT_EQ(0u, info.priority_boost(100));
+}
+
+TEST(backfill_reservation_space_info_t, encode_decode)
+{
+  backfill_reservation_space_info_t in;
+  in.relieved_usage_before = 810000;
+  in.relieved_usage_after = 760000;
+  in.target_usage_before = 300000;
+  in.target_usage_after = 360000;
+
+  bufferlist bl;
+  encode(in, bl);
+
+  auto p = bl.cbegin();
+  backfill_reservation_space_info_t out;
+  decode(out, p);
+
+  ASSERT_EQ(in.relieved_usage_before, out.relieved_usage_before);
+  ASSERT_EQ(in.relieved_usage_after, out.relieved_usage_after);
+  ASSERT_EQ(in.target_usage_before, out.target_usage_before);
+  ASSERT_EQ(in.target_usage_after, out.target_usage_after);
+}
+
+TEST(backfill_osd_space_usage_t, encode_decode)
+{
+  backfill_osd_space_usage_t in{12345, 67890};
+
+  bufferlist bl;
+  encode(in, bl);
+
+  auto p = bl.cbegin();
+  backfill_osd_space_usage_t out;
+  decode(out, p);
+
+  ASSERT_EQ(in.used_bytes, out.used_bytes);
+  ASSERT_EQ(in.total_bytes, out.total_bytes);
+}
 
 void compare_pg_pool_t(const pg_pool_t l, const pg_pool_t r)
 {
