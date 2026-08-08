@@ -227,12 +227,10 @@ fi
 declare -a block_devs
 declare -a bluestore_db_devs
 declare -a bluestore_wal_devs
-declare -a secondary_block_devs
+declare -a cache_block_devs
 declare -a cpu_table
-seastore_hot_device_type="SSD"
-seastore_hot_backend_type="SEGMENTED"
-seastore_cold_device_type="SSD"
-seastore_cold_backend_type="SEGMENTED"
+seastore_cache_device_type="SSD"
+seastore_data_device_type="RANDOM_BLOCK_SSD"
 
 VSTART_SEC="client.vstart.sh"
 
@@ -301,11 +299,9 @@ options:
 	--jaeger: use jaegertracing for tracing
 	--seastore-device-size: set total size of seastore
 	--seastore-devs: comma-separated list of blockdevs to use for seastore
-	--seastore-secondary-devs: comma-separated list of secondary blockdevs to use for seastore
-	--seastore-main-device-type: device type of main blockdevs. (SSD or RANDOM_BLOCK_SSD)
-	--seastore-main-backend-type: the driver used by main blockdevs (SEGMENTED or RANDOM_BLOCK)
-	--seastore-secondary-device-type: device type of all secondary blockdevs. HDD, SSD(default), ZNS or RANDOM_BLOCK_SSD
-	--seastore-secondary-backend-type: the driver used by secondary blockdevs (SEGMENTED or RANDOM_BLOCK)
+	--seastore-cache-devs: comma-separated list of cache blockdevs to use for seastore
+	--seastore-cache-device-type: device type of cache blockdevs. (SSD or RANDOM_BLOCK_SSD)
+	--seastore-cache-device-type: device type of all cache blockdevs. HDD, SSD(default), ZNS or RANDOM_BLOCK_SSD
 	--crimson-smp: number of cores to use for crimson
 	--crimson-alien-num-threads: number of alien-tp threads
 	--crimson-reactor-physical-only: use only one cpu per physical core for seastar reactors
@@ -370,14 +366,14 @@ parse_bluestore_wal_devs() {
     done
 }
 
-parse_secondary_devs() {
+parse_cache_devs() {
     local opt_name=$1
     shift
     local devs=$1
     shift
     local dev
-    IFS=',' read -r -a secondary_block_devs <<< "$devs"
-    for dev in "${secondary_block_devs[@]}"; do
+    IFS=',' read -r -a cache_block_devs <<< "$devs"
+    for dev in "${cache_block_devs[@]}"; do
         if [ ! -b $dev ] || [ ! -w $dev ]; then
             echo "All $opt_name must refer to writable block devices, check device: $dev"
             exit 1
@@ -640,24 +636,16 @@ case $1 in
         parse_block_devs --seastore-devs "$2"
         shift
         ;;
-    --seastore-main-device-type)
-        seastore_hot_device_type="$2"
+    --seastore-cache-device-type)
+        seastore_cache_device_type="$2"
         shift
         ;;
-    --seastore-main-backend-type)
-        seastore_hot_backend_type="$2"
+    --seastore-cache-devs)
+        parse_cache_devs --seastore-devs "$2"
         shift
         ;;
-    --seastore-secondary-devs)
-        parse_secondary_devs --seastore-devs "$2"
-        shift
-        ;;
-    --seastore-secondary-device-type)
-        seastore_cold_device_type="$2"
-        shift
-        ;;
-    --seastore-secondary-backend-type)
-        seastore_cold_backend_type="$2"
+    --seastore-cache-device-type)
+        seastore_data_device_type="$2"
         shift
         ;;
     --crimson-smp)
@@ -978,10 +966,8 @@ EOF
         seastore device size = $seastore_size"
       fi
       SEASTORE_OPTS+="
-        seastore_hot_device_type=$seastore_hot_device_type
-        seastore_hot_backend_type=$seastore_hot_backend_type
-        seastore_cold_device_type=$seastore_cold_device_type
-        seastore_cold_backend_type=$seastore_cold_backend_type"
+        seastore_cache_device_type=$seastore_cache_device_type
+        seastore_data_device_type=$seastore_data_device_type"
     fi
 
     wconf <<EOF
@@ -1072,6 +1058,12 @@ $DAEMONOPTS
 
         bluestore fsck on mount = true
         bluestore block create = true
+        debug_osd = 20
+        debug_seastore_t = 25
+        debug_seastore = 25
+        debug_seastore_tm = 25
+        debug_seastore_cache = 25
+        debug_seastore_lba = 25
         
 $BLUESTORE_OPTS
 
@@ -1337,7 +1329,11 @@ EOF
             mkdir -p $CEPH_DEV_DIR/osd$osd
             if [ -n "${block_devs[$osd]}" ]; then
                 dd if=/dev/zero of=${block_devs[$osd]} bs=1M count=1
-                ln -s ${block_devs[$osd]} $CEPH_DEV_DIR/osd$osd/block
+                if [ "$ceph_osd" == "crimson-osd" ]; then
+                    ln -s ${block_devs[$osd]} $CEPH_DEV_DIR/osd$osd/block.0
+                else
+                    ln -s ${block_devs[$osd]} $CEPH_DEV_DIR/osd$osd/block
+                fi
             fi
             if [ -n "${bluestore_db_devs[$osd]}" ]; then
                 dd if=/dev/zero of=${bluestore_db_devs[$osd]} bs=1M count=1
@@ -1347,10 +1343,10 @@ EOF
                 dd if=/dev/zero of=${bluestore_wal_devs[$osd]} bs=1M count=1
                 ln -s ${bluestore_wal_devs[$osd]} $CEPH_DEV_DIR/osd$osd/block.wal
             fi
-            if [ -n "${secondary_block_devs[$osd]}" ]; then
-                dd if=/dev/zero of=${secondary_block_devs[$osd]} bs=1M count=1
-                mkdir -p $CEPH_DEV_DIR/osd$osd/block.1
-                ln -s ${secondary_block_devs[$osd]} $CEPH_DEV_DIR/osd$osd/block.1/block
+            if [ -n "${cache_block_devs[$osd]}" ]; then
+                dd if=/dev/zero of=${cache_block_devs[$osd]} bs=1M count=1
+                mkdir -p $CEPH_DEV_DIR/osd$osd/block.cache
+                ln -s ${cache_block_devs[$osd]} $CEPH_DEV_DIR/osd$osd/block.cache/block.0
             fi
             if [ "$objectstore" == "bluestore" ]; then
                 wconf <<EOF

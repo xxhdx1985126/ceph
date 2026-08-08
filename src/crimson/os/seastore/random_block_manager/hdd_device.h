@@ -10,8 +10,10 @@ class RotationalDevice : public RBMDevice {
 public:
   RotationalDevice(
     std::string device_path,
+    device_type_t dtype,
+    device_id_t id,
     store_index_t store_index = 0)
-    : RBMDevice(store_index),
+    : RBMDevice(device_path, dtype, id, store_index),
       device_path(device_path)
   {}
   ~RotationalDevice() = default;
@@ -32,10 +34,6 @@ public:
   mkfs_ret mkfs(device_config_t config) final;
 
   mount_ret mount() final;
-
-  device_type_t get_device_type() const final {
-    return device_type_t::RANDOM_BLOCK_HDD;
-  }
 
   close_ertr::future<> close() final {
     return device.close();

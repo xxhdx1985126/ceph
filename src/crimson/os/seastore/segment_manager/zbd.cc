@@ -471,6 +471,8 @@ read_metadata(seastar::file &device, seastar::stat_data sd)
           ceph_abort_msg("failed to decode superblock");
         }
         ret.validate();
+        ceph_assert(ret.config.spec.id == device_id);
+        ceph_assert(ret.config.spec.dtype == dtype);
 	return ZBDSegmentManager::access_ertr::future<device_superblock_t>(
 	  ZBDSegmentManager::access_ertr::ready_future_marker{},
 	  ret);
@@ -608,6 +610,7 @@ ZBDSegmentManager::mkfs_ret ZBDSegmentManager::primary_mkfs(
 	    zone_capacity_sects,
 	    nr_cnv_zones,
 	    nr_zones);
+          ceph_assert(sb.config.spec.id == device_id);
 	  metadata = sb;
 	  stats.metadata_write.increment(
 	    ceph::encoded_sizeof<device_superblock_t>(sb));
@@ -854,11 +857,6 @@ Segment::write_ertr::future<> ZBDSegmentManager::segment_write(
     std::move(bl), 
     metadata.block_size);
 }
-
-device_id_t ZBDSegmentManager::get_device_id() const
-{
-  return metadata.config.spec.id;
-};
 
 secondary_device_set_t& ZBDSegmentManager::get_secondary_devices()
 {

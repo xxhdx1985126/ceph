@@ -128,8 +128,10 @@ public:
   BlockSegmentManager(
     const std::string &path,
     device_type_t dtype,
+    device_id_t id,
     store_index_t store_index = 0)
-  : device_path(path),
+  : SegmentManager(path, dtype, id),
+    device_path(path),
     store_index(store_index) {
     ceph_assert(get_device_type() == device_type_t::NONE);
     superblock.config.spec.dtype = dtype;
@@ -151,9 +153,6 @@ public:
 
   read_ertr::future<uint32_t> get_shard_nums() override;
 
-  device_type_t get_device_type() const override {
-    return superblock.config.spec.dtype;
-  }
   size_t get_available_size() const override {
     return shard_info.size;
   }
@@ -164,12 +163,8 @@ public:
     return superblock.segment_size;
   }
 
-  device_id_t get_device_id() const override {
-    assert(device_id <= DEVICE_ID_MAX_VALID);
-    return device_id;
-  }
-  secondary_device_set_t& get_secondary_devices() override {
-    return superblock.config.secondary_devices;
+  cache_device_set_t& get_cache_devices() override {
+    return superblock.config.cache_devices;
   }
   // public so tests can bypass segment interface when simpler
   Segment::write_ertr::future<> segment_write(
@@ -224,14 +219,6 @@ private:
   device_superblock_t superblock;
   seastar::file device;
 
-  void set_device_id(device_id_t id) {
-    assert(id <= DEVICE_ID_MAX_VALID);
-    assert(device_id == DEVICE_ID_NULL ||
-           device_id == id);
-    device_id = id;
-  }
-  device_id_t device_id = DEVICE_ID_NULL;
-
   size_t get_offset(paddr_t addr) {
     auto& seg_addr = addr.as_seg_paddr();
     return shard_info.first_segment_offset +
@@ -269,12 +256,13 @@ private:
     public:
     MultiShardDevices(size_t count,
                       const std::string path,
-                      device_type_t dtype)
+                      device_type_t dtype,
+                      device_id_t id)
     : mshard_devices() {
       mshard_devices.reserve(count);
       for (size_t store_index = 0; store_index < count; ++store_index) {
         mshard_devices.emplace_back(std::make_unique<BlockSegmentManager>(
-          path, dtype, store_index));
+          path, dtype, id, store_index));
       }
     }
     ~MultiShardDevices() {
