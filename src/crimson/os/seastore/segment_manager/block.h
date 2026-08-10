@@ -133,7 +133,6 @@ public:
   : SegmentManager(path, dtype, id),
     device_path(path),
     store_index(store_index) {
-    ceph_assert(get_device_type() == device_type_t::NONE);
     superblock.config.spec.dtype = dtype;
   }
 

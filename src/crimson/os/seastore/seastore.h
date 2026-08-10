@@ -819,8 +819,9 @@ private:
   };
   std::string root;
   MDStoreRef mdstore;
-  Device* primary_device; // the lowest-id device in cache_devices or
-                          // data_devices if cache_devices is empty.
+  Device* primary_device = nullptr; // the lowest-id device in
+                                    // cache_devices or data_devices
+                                    // if cache_devices is empty.
   std::vector<DeviceRef> cache_devices;
   std::vector<DeviceRef> data_devices;
   seastar::sharded<SeaStore::MultiShardStores> shard_stores;

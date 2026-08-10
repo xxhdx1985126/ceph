@@ -141,7 +141,7 @@ std::optional<device_id_t> parse_device_id(
   const seastar::sstring &name,
   device_id_t base);
 
-constexpr std::string CACHE_DEV_PREFIX = "block.cache";
+constexpr std::string CACHE_DEV_PREFIX = "block_cache";
 
 // 1 bit in paddr_t to identify the absolute physical address type
 enum class paddr_types_t {

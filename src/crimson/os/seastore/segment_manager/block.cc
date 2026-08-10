@@ -617,7 +617,6 @@ BlockSegmentManager::mkfs_ret BlockSegmentManager::primary_mkfs(
 {
   LOG_PREFIX(BlockSegmentManager::primary_mkfs);
   ceph_assert(sm_config.spec.dtype == superblock.config.spec.dtype);
-  ceph_assert(device_id == superblock.config.spec.id);
   INFO("{} path={}, {}",
        device_id_printer_t{get_device_id()}, device_path, sm_config);
 

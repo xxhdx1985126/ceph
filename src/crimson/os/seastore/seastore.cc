@@ -382,8 +382,10 @@ seastar::future<> SeaStore::shard_stores_start(bool is_test)
   auto num_shard_services =
     (store_shard_nums + seastar::this_smp_shard_count() - 1 ) /
       seastar::this_smp_shard_count();
-  INFO("store_shard_nums={} seastar::smp={}, num_shard_services={}",
-    store_shard_nums, seastar::this_smp_shard_count(), num_shard_services);
+  INFO("store_shard_nums={} seastar::smp={}, num_shard_services={}, "
+    "cache_devices: {}, data_devices: {}",
+    store_shard_nums, seastar::this_smp_shard_count(), num_shard_services,
+    cache_devices.size(), data_devices.size());
 
   std::vector<Device*> cache_devs;
   for (auto &dev : cache_devices) {
@@ -430,10 +432,10 @@ seastar::future<uint32_t> SeaStore::start()
   INFO("cache device type: {}, cache backend type: {}", dtype, btype);
 
   using crimson::common::get_conf;
-  auto cache_dev_path = root + CACHE_DEV_PREFIX;
+  auto cache_dev_path = fmt::format("{}/{}", root, CACHE_DEV_PREFIX);
   bool cache_exists = co_await seastar::file_exists(cache_dev_path);
   if (cache_exists) {
-    seastar::file rdir = co_await seastar::open_directory(root);
+    seastar::file rdir = co_await seastar::open_directory(cache_dev_path);
     auto lister = rdir.experimental_list_directory();
     while (auto de = co_await lister()) {
       auto& entry = *de;
@@ -470,10 +472,10 @@ seastar::future<uint32_t> SeaStore::start()
     primary_device = p_cache_dev;
   }
 
-  INFO("data device type: {}, data backend type: {}", dtype, btype);
   type = get_conf<std::string>("seastore_data_device_type");
   dtype = string_to_device_type(type);
   btype = get_default_backend_of_device(dtype);
+  INFO("data device type: {}, data backend type: {}", dtype, btype);
   seastar::file rdir = co_await seastar::open_directory(root);
   auto lister = rdir.experimental_list_directory();
   while (auto de = co_await lister()) {
@@ -486,6 +488,7 @@ seastar::future<uint32_t> SeaStore::start()
     std::string path = fmt::format("{}/{}", root, entry.name);
     DeviceRef data_dev = co_await Device::make_device(
       path, dtype, btype, *p);
+    ceph_assert(data_dev);
     auto *p_data_dev = data_dev.get();
     data_devices.emplace_back(std::move(data_dev));
     co_await get_shard_nums(*p_data_dev);
@@ -547,8 +550,6 @@ seastar::future<> SeaStore::stop()
   for (auto& data_dev : data_devices) {
     co_await data_dev->stop();
   }
-  cache_devices.clear();
-  data_devices.clear();
   co_await shard_stores_stop();
   INFO("done");
 }
@@ -648,8 +649,6 @@ base_ertr::future<> SeaStore::Shard::umount()
   for (auto &data_dev : data_devices) {
     co_await data_dev->close();
   }
-  cache_devices.clear();
-  data_devices.clear();
   transaction_manager.reset();
   collection_manager.reset();
   onode_manager.reset();

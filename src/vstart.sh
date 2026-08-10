@@ -1345,8 +1345,8 @@ EOF
             fi
             if [ -n "${cache_block_devs[$osd]}" ]; then
                 dd if=/dev/zero of=${cache_block_devs[$osd]} bs=1M count=1
-                mkdir -p $CEPH_DEV_DIR/osd$osd/block.cache
-                ln -s ${cache_block_devs[$osd]} $CEPH_DEV_DIR/osd$osd/block.cache/block.0
+                mkdir -p $CEPH_DEV_DIR/osd$osd/block_cache
+                ln -s ${cache_block_devs[$osd]} $CEPH_DEV_DIR/osd$osd/block_cache/block.0
             fi
             if [ "$objectstore" == "bluestore" ]; then
                 wconf <<EOF
