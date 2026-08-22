@@ -25,3 +25,4 @@ overrides:
         err to stderr: true
         log flush on exit: true
         log to file: false
+        debug osd: 20
