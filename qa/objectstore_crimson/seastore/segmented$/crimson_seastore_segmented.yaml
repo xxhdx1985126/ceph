@@ -6,6 +6,7 @@ overrides:
         osd objectstore: seastore
         seastore data device type: HDD
         seastore data backend type: RANDOM_BLOCK
+        debug osd: 25
         debug seastore: 25
         debug seastore onode: 25
         debug seastore odata: 25

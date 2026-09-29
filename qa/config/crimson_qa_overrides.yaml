@@ -12,6 +12,7 @@ overrides:
       osd:
         crimson osd obc lru size: 10
         debug ms: 20
+        debug osd: 25
         seastore cachepin size pershard: 64M
         seastore max concurrent transactions: 8
       client:
