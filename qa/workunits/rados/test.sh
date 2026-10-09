@@ -52,7 +52,7 @@ VALGRIND_TESTS=(
 # ../qa/workunits/rados/test.sh --vstart           # Run tests locally from `ceph/build` dir
 
 # First argument must be either --serial or --crimson or nothing
-parallel=1
+parallel=0
 crimson=0
 if [ "$1" = "--serial" ]; then
     parallel=0
